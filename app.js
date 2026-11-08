@@ -16,7 +16,14 @@
   const state = {
     svgText: '',
     fileName: 'b1 caja americana.svg',
-    dieline: null,          // Resultado de DielineEngine.buildDielineModel()
+    baseDieline: null,      // Modelo base sin deformar para el redimensionador paramétrico 60 FPS
+    dieline: null,          // Resultado actual (escalado o FEFCO) en 2D y 3D
+    activeFefcoEntry: null, // Si el modelo cargado pertenece al catálogo de 116 modelos FEFCO
+    paramL: 157.5,          // Largo paramétrico actual (mm)
+    paramW: 105.3,          // Ancho paramétrico actual (mm)
+    paramH: 115.6,          // Alto paramétrico actual (mm)
+    fefcoFilter: 'ALL',
+    fefcoSearch: '',
     boardId: 'M-125B',      // Cartón seleccionado de la base de datos ArtiosCAD
     caliper: 3.0,           // Espesor actual en mm (escala 1:1)
     insideLoss: 1.5,        // Pérdida interior de plegado (mm)
@@ -286,38 +293,160 @@
   }
 
   // ============================================================================
-  // PROCESAMIENTO DEL ARCHIVO SVG Y CONSTRUCCIÓN DEL MODELO 3D
+  // PROCESAMIENTO DEL ARCHIVO SVG, MODELOS FEFCO Y REDIMENSIONAMIENTO PARAMÉTRICO
   // ============================================================================
+  let livePacdoraTimer = null;
+
+  function syncParametricInputsUI(model) {
+    if (!model || !model.boxDimensionsMm) return;
+    state.paramL = +(model.boxDimensionsMm.length || 200).toFixed(1);
+    state.paramW = +(model.boxDimensionsMm.width || 150).toFixed(1);
+    state.paramH = +(model.boxDimensionsMm.depth || 100).toFixed(1);
+
+    const setPair = (numId, sliderId, val) => {
+      const nEl = document.getElementById(numId);
+      const sEl = document.getElementById(sliderId);
+      if (nEl && document.activeElement !== nEl) nEl.value = val;
+      if (sEl) sEl.value = Math.min(parseFloat(sEl.max) || 1200, val);
+    };
+    setPair('param-l-num', 'param-l-slider', state.paramL);
+    setPair('param-w-num', 'param-w-slider', state.paramW);
+    setPair('param-h-num', 'param-h-slider', state.paramH);
+  }
+
+  function applyNewDielineModel(model, displayTitle, animateIntro = false) {
+    state.fileName = displayTitle;
+    state.baseDieline = model;
+    state.dieline = model;
+    state.selectedFaceId = model.rootFaceId;
+
+    state.hingeAngles = {};
+    for (const h of model.hinges) {
+      state.hingeAngles[h.id] = 0;
+    }
+
+    syncParametricInputsUI(model);
+    updateDielineInfoUI(model);
+    buildHingeSlidersUI(model);
+    rebuild3DMesh();
+    reset2DView();
+
+    if (animateIntro) {
+      state.masterFold = 0;
+      setMasterFold(0.75);
+      fitCameraToModel(true);
+    } else {
+      setMasterFold(state.masterFold || 0.75);
+      fitCameraToModel(false);
+    }
+  }
+
   function loadSVGString(svgString, fileName, animateIntro = false) {
     try {
       state.svgText = svgString;
-      state.fileName = fileName || 'troquel.svg';
+      state.activeFefcoEntry = null;
+      const quickSel = document.getElementById('fefco-quick-select');
+      if (quickSel) quickSel.value = '__SVG__';
 
       const model = DielineEngine.buildDielineModel(svgString);
-      state.dieline = model;
-      state.selectedFaceId = model.rootFaceId;
-
-      state.hingeAngles = {};
-      for (const h of model.hinges) {
-        state.hingeAngles[h.id] = 0;
-      }
-
-      updateDielineInfoUI(model);
-      buildHingeSlidersUI(model);
-      rebuild3DMesh();
-      reset2DView();
-
-      if (animateIntro) {
-        state.masterFold = 0;
-        setMasterFold(0.75);
-        fitCameraToModel(true);
-      } else {
-        applyFoldAngles();
-        fitCameraToModel(false);
-      }
+      applyNewDielineModel(model, fileName || 'troquel.svg', animateIntro);
     } catch (err) {
       console.error('Error procesando el archivo SVG:', err);
       alert('Error al procesar el archivo SVG: ' + err.message);
+    }
+  }
+
+  function loadFefcoModel(fefcoEntry, animateIntro = true) {
+    if (!fefcoEntry || !fefcoEntry.knifeData) return;
+    try {
+      state.activeFefcoEntry = fefcoEntry;
+      const quickSel = document.getElementById('fefco-quick-select');
+      if (quickSel) quickSel.value = String(fefcoEntry.num);
+
+      const model = DielineEngine.buildDielineModelFromPacdora(fefcoEntry.knifeData, fefcoEntry);
+      const title = `${fefcoEntry.fefcoCode} · ${fefcoEntry.name.replace(/dieline/i, '').trim()}`;
+      applyNewDielineModel(model, title, animateIntro);
+    } catch (err) {
+      console.error('Error cargando modelo FEFCO:', err);
+      alert('Error al construir el modelo FEFCO: ' + err.message);
+    }
+  }
+
+  /**
+   * Redimensiona en tiempo real el modelo actual (tanto .SVG como los 116 modelos FEFCO)
+   * al alterar Largo (L), Ancho (W) o Alto (H) en la vista 2D, actualizando al instante el 2D y el 3D.
+   */
+  function applyParametricResizeRealTime(newL, newW, newH) {
+    if (!state.baseDieline) return;
+    state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
+    state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
+    state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
+
+    // 1. Deformación paramétrica instantánea por tramos a 60 FPS (funciona 100% offline para SVG y FEFCO)
+    const statusPill = document.getElementById('param-sync-status');
+    if (statusPill) {
+      statusPill.textContent = '⚡ Escalando 2D + 3D (60 FPS)';
+    }
+
+    const resized = DielineEngine.resizeDielineParametric(
+      state.baseDieline,
+      state.paramL,
+      state.paramW,
+      state.paramH
+    );
+
+    if (resized) {
+      state.dieline = resized;
+      updateDielineInfoUI(resized);
+      rebuild3DMesh();
+      setMasterFold(state.masterFold);
+    }
+
+    // 2. Si es un modelo FEFCO y el servidor proxy local está disponible, consultar el solver exacto de Pacdora tras 260ms
+    if (state.activeFefcoEntry && state.activeFefcoEntry.id) {
+      if (livePacdoraTimer) clearTimeout(livePacdoraTimer);
+      const targetEntry = state.activeFefcoEntry;
+      const reqL = state.paramL;
+      const reqW = state.paramW;
+      const reqH = state.paramH;
+      const reqT = state.caliper;
+
+      livePacdoraTimer = setTimeout(() => {
+        fetch('/api/pacdora/knife', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: targetEntry.id,
+            length: reqL,
+            width: reqW,
+            height: reqH,
+            thickness: reqT
+          })
+        })
+          .then(r => r.ok ? r.json() : null)
+          .then(res => {
+            if (res && res.knifeData && state.activeFefcoEntry === targetEntry) {
+              const exactModel = DielineEngine.buildDielineModelFromPacdora(res.knifeData, {
+                ...targetEntry,
+                length: reqL,
+                width: reqW,
+                height: reqH,
+                thickness: reqT
+              });
+              state.baseDieline = exactModel;
+              state.dieline = exactModel;
+              updateDielineInfoUI(exactModel);
+              rebuild3DMesh();
+              setMasterFold(state.masterFold);
+              if (statusPill) statusPill.textContent = '✓ Solver FEFCO Exacto (1:1 mm)';
+            } else if (statusPill) {
+              statusPill.textContent = '⚡ Paramétrico Activo (1:1 mm)';
+            }
+          })
+          .catch(() => {
+            if (statusPill) statusPill.textContent = '⚡ Paramétrico Activo (1:1 mm)';
+          });
+      }, 260);
     }
   }
 
@@ -861,16 +990,30 @@
    * para alojarse detrás de la Cara Cuerpo 4 usando rotación pura sobre el centro del espesor.
    */
   function computeHingeAngleAtProgress(hinge, childFace, progressT, sequenceMode) {
-    let maxDeg = hinge.defaultAngle || 90;
-    if (childFace) {
+    // Si el modelo proviene del catálogo FEFCO / Pacdora y tiene pasos de animación exactos (animSteps),
+    // reproducir su secuencia cinemática multicapa (incluyendo pliegues de 120° -> -30° en fondos automáticos)
+    if (sequenceMode === 'phased' && hinge.animSteps && hinge.animSteps.length > 0) {
+      let angleSum = 0;
+      for (const st of hinge.animSteps) {
+        if (progressT <= st.start) continue;
+        if (progressT >= st.end) {
+          angleSum += st.deltaDeg;
+        } else {
+          const raw = (progressT - st.start) / Math.max(1e-5, st.end - st.start);
+          const clamped = Math.max(0, Math.min(1, raw));
+          const smooth = clamped * clamped * (3 - 2 * clamped);
+          angleSum += st.deltaDeg * smooth;
+        }
+      }
+      return +angleSum.toFixed(2);
+    }
+
+    let maxDeg = hinge.defaultAngle !== undefined ? hinge.defaultAngle : 90;
+    if (!state.dieline?.isPacdoraModel && childFace) {
       if (childFace.role === 'GLUE_FLAP') {
-        // Ángulo adicional calculado en función del espesor para que entre por el interior de Cara 4
-        // manteniendo el eje de rotación estrictamente en el centro del espesor (z = 0)
         const extraDeg = THREE.MathUtils.radToDeg(Math.atan2(state.caliper * 1.02, Math.max(8, childFace.bounds.width * 0.55)));
         maxDeg = 90 + extraDeg;
       } else if (childFace.role === 'FLAP_INNER_TOP' || childFace.role === 'FLAP_INNER_BOTTOM') {
-        // Si el espesor del cartón supera el decalaje de ranura (2 mm), las solapas interiores
-        // ceden ligeramente hacia adentro para quedar completamente debajo de las solapas exteriores
         const clearance = Math.max(0.25, state.caliper - 1.75);
         const extraFlapDeg = THREE.MathUtils.radToDeg(Math.atan2(clearance, Math.max(20, childFace.bounds.height * 0.65)));
         maxDeg = 90 + extraFlapDeg;
@@ -1191,9 +1334,11 @@
   }
 
   function get2DTransform(canvas, bounds) {
-    const pad = 48;
-    const availW = Math.max(50, canvas.width - pad * 2);
-    const availH = Math.max(50, canvas.height - pad * 2 - 28);
+    const padX = 48;
+    const topReserve = 104;
+    const botReserve = 42;
+    const availW = Math.max(50, canvas.width - padX * 2);
+    const availH = Math.max(50, canvas.height - topReserve - botReserve);
     const baseScale = Math.min(availW / bounds.width, availH / bounds.height);
     const scale = baseScale * state.view2D.zoom;
 
@@ -1201,7 +1346,7 @@
     const cy = bounds.minY + bounds.height / 2;
 
     const offsetX = canvas.width / 2 - cx * scale + state.view2D.panX;
-    const offsetY = (canvas.height + 18) / 2 - cy * scale + state.view2D.panY;
+    const offsetY = topReserve + availH / 2 - cy * scale + state.view2D.panY;
 
     return {
       scale,
@@ -1849,7 +1994,7 @@
     const btnReset2D = document.getElementById('btn-reset-2d');
     if (btnReset2D) btnReset2D.addEventListener('click', reset2DView);
 
-    // 10. Botones de Exportación (.GLB con animación para Blender, .OBJ y .PNG)
+    // 10. Botones de Exportación (.GLB con animación para Blender, .OBJ, .PNG y .SVG 1:1 mm)
     const btnGlb = document.getElementById('btn-export-glb');
     if (btnGlb) {
       btnGlb.addEventListener('click', exportGLBForBlender);
@@ -1862,6 +2007,230 @@
     if (btnObj) {
       btnObj.addEventListener('click', exportOBJModel);
     }
+    const btnExportSvg = document.getElementById('btn-export-svg');
+    if (btnExportSvg) {
+      btnExportSvg.addEventListener('click', () => {
+        if (!state.dieline || !DielineEngine.exportDielineToSVG) return;
+        const svgStr = DielineEngine.exportDielineToSVG(state.dieline);
+        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const cleanName = state.fileName.replace(/\.svg$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+        a.download = `${cleanName}_${state.paramL}x${state.paramW}x${state.paramH}mm_1_1.svg`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+    }
+
+    // 11. Controles Paramétricos en Tiempo Real (Largo L, Ancho W, Alto H en la Vista 2D)
+    const lSlider = document.getElementById('param-l-slider');
+    const lNum = document.getElementById('param-l-num');
+    const wSlider = document.getElementById('param-w-slider');
+    const wNum = document.getElementById('param-w-num');
+    const hSlider = document.getElementById('param-h-slider');
+    const hNum = document.getElementById('param-h-num');
+
+    bindSliderAndNumeric(lSlider, lNum, 15, 2000, 1, 1, (val) => {
+      applyParametricResizeRealTime(val, state.paramW, state.paramH);
+    });
+    bindSliderAndNumeric(wSlider, wNum, 15, 2000, 1, 1, (val) => {
+      applyParametricResizeRealTime(state.paramL, val, state.paramH);
+    });
+    bindSliderAndNumeric(hSlider, hNum, 15, 2000, 1, 1, (val) => {
+      applyParametricResizeRealTime(state.paramL, state.paramW, val);
+    });
+
+    const btnResetParams = document.getElementById('btn-reset-params');
+    if (btnResetParams) {
+      btnResetParams.addEventListener('click', () => {
+        if (state.activeFefcoEntry) {
+          loadFefcoModel(state.activeFefcoEntry, false);
+        } else if (state.svgText) {
+          loadSVGString(state.svgText, state.fileName, false);
+        }
+      });
+    }
+
+    // 12. Catálogo Oficial Completo de 116 Modelos FEFCO (Selector Rápido + Modal con Vista Previa 2D)
+    initFefcoCatalogUI();
+  }
+
+  function drawMiniDielinePreview(canvas, knifeData) {
+    if (!canvas || !knifeData || !knifeData.faces) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width = 210;
+    const h = canvas.height = 112;
+    ctx.clearRect(0, 0, w, h);
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const f of knifeData.faces) {
+      for (const c of (f.dlist || [])) {
+        if (typeof c.x === 'number' && typeof c.y === 'number') {
+          if (c.x < minX) minX = c.x;
+          if (c.y < minY) minY = c.y;
+          if (c.x > maxX) maxX = c.x;
+          if (c.y > maxY) maxY = c.y;
+        }
+      }
+    }
+    if (!isFinite(minX)) return;
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    const pad = 10;
+    const scale = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
+    const ox = (w - bw * scale) * 0.5 - minX * scale;
+    const oy = (h - bh * scale) * 0.5 - minY * scale;
+
+    // Caras
+    ctx.fillStyle = 'rgba(198, 156, 109, 0.17)';
+    ctx.strokeStyle = '#009ee3';
+    ctx.lineWidth = 1.1;
+    for (const f of knifeData.faces) {
+      ctx.beginPath();
+      let started = false;
+      for (const c of (f.dlist || [])) {
+        if (typeof c.x === 'number' && typeof c.y === 'number') {
+          const sx = c.x * scale + ox;
+          const sy = c.y * scale + oy;
+          if (!started) { ctx.moveTo(sx, sy); started = true; }
+          else ctx.lineTo(sx, sy);
+        }
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Líneas rojas de hendido
+    ctx.strokeStyle = '#e5007d';
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    for (const fl of (knifeData.folds || [])) {
+      ctx.moveTo(fl.x1 * scale + ox, fl.y1 * scale + oy);
+      ctx.lineTo(fl.x2 * scale + ox, fl.y2 * scale + oy);
+    }
+    ctx.stroke();
+  }
+
+  function initFefcoCatalogUI() {
+    const catalog = window.FEFCO_CATALOG || [];
+    const quickSel = document.getElementById('fefco-quick-select');
+
+    if (quickSel) {
+      quickSel.innerHTML = '';
+      const svgOpt = document.createElement('option');
+      svgOpt.value = '__SVG__';
+      svgOpt.textContent = '📄 Troquel .SVG Personalizado (b1 caja americana.svg)';
+      quickSel.appendChild(svgOpt);
+
+      for (const item of catalog) {
+        const opt = document.createElement('option');
+        opt.value = String(item.num);
+        opt.textContent = `${item.fefcoCode} — ${item.name.replace(/FEFCO\s*\d+\s*/i, '').replace(/dieline/i, '').trim()} (${item.length}×${item.width}×${item.height}mm)`;
+        quickSel.appendChild(opt);
+      }
+
+      quickSel.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val === '__SVG__') {
+          if (window.ARTIOS_DEFAULT_SVG) {
+            loadSVGString(window.ARTIOS_DEFAULT_SVG, 'b1 caja americana.svg', true);
+          }
+          return;
+        }
+        const entry = catalog.find(x => String(x.num) === val);
+        if (entry) loadFefcoModel(entry, true);
+      });
+    }
+
+    const modalBackdrop = document.getElementById('fefco-modal-backdrop');
+    const openBtn1 = document.getElementById('btn-open-fefco-catalog');
+    const openBtn2 = document.getElementById('btn-sidebar-fefco');
+    const closeBtn = document.getElementById('btn-close-fefco-modal');
+    const searchInput = document.getElementById('fefco-search-input');
+    const gridEl = document.getElementById('fefco-catalog-grid');
+
+    const renderCatalogGrid = () => {
+      if (!gridEl) return;
+      gridEl.innerHTML = '';
+      const q = (state.fefcoSearch || '').trim().toLowerCase();
+      const filter = state.fefcoFilter || 'ALL';
+
+      const filtered = catalog.filter(item => {
+        if (filter !== 'ALL') {
+          const d2 = (item.fefcoDigits || '').slice(0, 2);
+          if (filter === '05-09') {
+            if (!['01', '05', '06', '07', '08', '09'].includes(d2)) return false;
+          } else if (d2 !== filter) {
+            return false;
+          }
+        }
+        if (q) {
+          const hay = `${item.fefcoCode} ${item.num} ${item.name} ${item.dielineName}`.toLowerCase();
+          return hay.includes(q);
+        }
+        return true;
+      });
+
+      for (const item of filtered) {
+        const card = document.createElement('div');
+        card.className = 'fefco-card' + (state.activeFefcoEntry && state.activeFefcoEntry.num === item.num ? ' active' : '');
+        const cleanDesc = item.name.replace(/FEFCO\s*\d+\s*/i, '').replace(/dieline/i, '').trim();
+        card.innerHTML = `
+          <div class="fefco-card-preview">
+            <canvas width="210" height="112"></canvas>
+          </div>
+          <div class="fefco-card-top">
+            <span class="fefco-code-badge">${item.fefcoCode}</span>
+            <span class="fefco-num-badge">#${item.num}</span>
+          </div>
+          <div class="fefco-card-title">${cleanDesc || item.name}</div>
+          <div class="fefco-card-dims">
+            <span>${item.length} × ${item.width} × ${item.height} mm</span>
+            <span>${item.knifeData.faces.length} caras</span>
+          </div>
+        `;
+        const cvs = card.querySelector('canvas');
+        drawMiniDielinePreview(cvs, item.knifeData);
+
+        card.addEventListener('click', () => {
+          if (modalBackdrop) modalBackdrop.classList.add('hidden');
+          loadFefcoModel(item, true);
+        });
+        gridEl.appendChild(card);
+      }
+    };
+
+    const openModal = () => {
+      if (!modalBackdrop) return;
+      modalBackdrop.classList.remove('hidden');
+      renderCatalogGrid();
+    };
+
+    if (openBtn1) openBtn1.addEventListener('click', openModal);
+    if (openBtn2) openBtn2.addEventListener('click', openModal);
+    if (closeBtn) closeBtn.addEventListener('click', () => modalBackdrop.classList.add('hidden'));
+    if (modalBackdrop) {
+      modalBackdrop.addEventListener('click', (e) => {
+        if (e.target === modalBackdrop) modalBackdrop.classList.add('hidden');
+      });
+    }
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        state.fefcoSearch = e.target.value;
+        renderCatalogGrid();
+      });
+    }
+
+    document.querySelectorAll('[data-fefco-filter]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('[data-fefco-filter]').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        state.fefcoFilter = tab.getAttribute('data-fefco-filter');
+        renderCatalogGrid();
+      });
+    });
   }
 
   function applyCustomArtworkFile(file) {

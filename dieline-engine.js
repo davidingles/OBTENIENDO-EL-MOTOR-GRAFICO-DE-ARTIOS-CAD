@@ -1,8 +1,9 @@
 /**
- * ARTIOS-LIKE 3D PACKAGING ENGINE - CORE GEOMETRY, TOPOLOGY & BOARD CATALOG
- * Parses 1:1 mm SVG dielines (Blue = Cut, Red/Magenta = Fold, Black = Dimension/Cota),
- * performs Planar Half-Edge Subdivision (DCEL) with CAD intersection & T-junction splitting,
- * extracts exact 2D panels with curved slot relief geometry, and builds the 3D kinematic tree.
+ * ARTIOS-LIKE 3D PACKAGING ENGINE - CORE GEOMETRY, TOPOLOGY, FEFCO & PARAMETRIC SOLVER
+ * Parses 1:1 mm SVG dielines (Blue = Cut, Red/Magenta = Fold, Black = Dimension/Cota)
+ * AND Pacdora / FEFCO parametric knifeData models (faces, dlist M/L/A/Q/Z, holes, cuts, folds, animations),
+ * performs Planar Half-Edge Subdivision (DCEL) or direct parametric topology extraction,
+ * and supports real-time 2D + 3D Parametric Resizing (Largo L × Ancho W × Alto H) for any model.
  */
 
 (function (root, factory) {
@@ -253,12 +254,6 @@
     return null;
   }
 
-  /**
-   * Classify stroke color according to user specification:
-   * - Red / Magenta (#e5007d, #ff0000, etc.) -> 'FOLD' (doblez / hendido)
-   * - Blue / Cyan (#009ee3, #0000ff, etc.)   -> 'CUT'  (corte)
-   * - Black / Gray                           -> 'DIMENSION' (cota)
-   */
   function classifyStrokeColor(strokeStr) {
     const rgb = parseHexOrRgb(strokeStr);
     if (!rgb) return 'IGNORE';
@@ -276,8 +271,84 @@
   }
 
   // ============================================================================
-  // 2. LIGHTWEIGHT REGEX/DOM-FREE SVG PARSER
+  // 2. SVG ARC TESSELLATOR & LIGHTWEIGHT REGEX SVG PARSER
   // ============================================================================
+
+  /**
+   * Tessellates an SVG elliptical arc from (x1, y1) to (x2, y2) into linear points.
+   */
+  function sampleSvgArc(x1, y1, rxIn, ryIn, phiDeg, largeArcFlag, sweepFlag, x2, y2, steps = 10) {
+    const dx2 = (x1 - x2) / 2.0;
+    const dy2 = (y1 - y2) / 2.0;
+    if (Math.hypot(dx2, dy2) < 1e-5) return [{ x: x2, y: y2 }];
+
+    let rx = Math.abs(rxIn || 0);
+    let ry = Math.abs(ryIn || 0);
+    if (rx < 1e-5 || ry < 1e-5) return [{ x: x2, y: y2 }];
+
+    const phi = ((phiDeg || 0) * Math.PI) / 180.0;
+    const cosPhi = Math.cos(phi);
+    const sinPhi = Math.sin(phi);
+
+    const x1p = cosPhi * dx2 + sinPhi * dy2;
+    const y1p = -sinPhi * dx2 + cosPhi * dy2;
+
+    let rxSq = rx * rx;
+    let rySq = ry * ry;
+    const x1pSq = x1p * x1p;
+    const y1pSq = y1p * y1p;
+
+    const lambda = x1pSq / rxSq + y1pSq / rySq;
+    if (lambda > 1.0) {
+      const sqrtL = Math.sqrt(lambda);
+      rx *= sqrtL;
+      ry *= sqrtL;
+      rxSq = rx * rx;
+      rySq = ry * ry;
+    }
+
+    const fa = largeArcFlag ? 1 : 0;
+    const fs = sweepFlag ? 1 : 0;
+    const sign = fa === fs ? -1 : 1;
+    const num = Math.max(0, rxSq * rySq - rxSq * y1pSq - rySq * x1pSq);
+    const den = rxSq * y1pSq + rySq * x1pSq;
+    const coef = sign * Math.sqrt(den > 1e-12 ? num / den : 0);
+
+    const cxp = coef * ((rx * y1p) / ry);
+    const cyp = coef * (-(ry * x1p) / rx);
+
+    const cx = cosPhi * cxp - sinPhi * cyp + (x1 + x2) / 2.0;
+    const cy = sinPhi * cxp + cosPhi * cyp + (y1 + y2) / 2.0;
+
+    function vecAngle(ux, uy, vx, vy) {
+      const dot = ux * vx + uy * vy;
+      const len = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+      const ang = Math.acos(Math.max(-1, Math.min(1, len > 1e-12 ? dot / len : 1)));
+      return ux * vy - uy * vx < 0 ? -ang : ang;
+    }
+
+    const ux = (x1p - cxp) / rx;
+    const uy = (y1p - cyp) / ry;
+    const vx = (-x1p - cxp) / rx;
+    const vy = (-y1p - cyp) / ry;
+
+    const theta1 = vecAngle(1, 0, ux, uy);
+    let dTheta = vecAngle(ux, uy, vx, vy);
+    if (!fs && dTheta > 0) dTheta -= 2 * Math.PI;
+    else if (fs && dTheta < 0) dTheta += 2 * Math.PI;
+
+    const arcLenApprox = Math.abs(dTheta) * Math.max(rx, ry);
+    const nSteps = Math.max(3, Math.min(steps, Math.ceil(arcLenApprox / 2.2)));
+    const pts = [];
+    for (let i = 1; i <= nSteps; i++) {
+      const t = i / nSteps;
+      const theta = theta1 + dTheta * t;
+      const px = cosPhi * rx * Math.cos(theta) - sinPhi * ry * Math.sin(theta) + cx;
+      const py = sinPhi * rx * Math.cos(theta) + cosPhi * ry * Math.sin(theta) + cy;
+      pts.push({ x: px, y: py });
+    }
+    return pts;
+  }
 
   function parseAttributes(attrString) {
     const attrs = {};
@@ -361,6 +432,24 @@
           }
           break;
         }
+        case 'A':
+        case 'a': {
+          const isRel = cmd === 'a';
+          while (hasNum()) {
+            const rx = nextNum();
+            const ry = nextNum();
+            const xAxisRot = nextNum();
+            const largeArc = nextNum();
+            const sweep = nextNum();
+            const x = nextNum() + (isRel ? cx : 0);
+            const y = nextNum() + (isRel ? cy : 0);
+            const arcPts = sampleSvgArc(cx, cy, rx, ry, xAxisRot, largeArc, sweep, x, y, 10);
+            for (const pt of arcPts) current.push(pt);
+            cx = x;
+            cy = y;
+          }
+          break;
+        }
         case 'C':
         case 'c': {
           const isRel = cmd === 'c';
@@ -371,7 +460,7 @@
             const y2 = nextNum() + (isRel ? cy : 0);
             const x = nextNum() + (isRel ? cx : 0);
             const y = nextNum() + (isRel ? cy : 0);
-            const steps = 12;
+            const steps = 10;
             for (let s = 1; s <= steps; s++) {
               const t = s / steps;
               const mt = 1 - t;
@@ -392,7 +481,7 @@
             const y1 = nextNum() + (isRel ? cy : 0);
             const x = nextNum() + (isRel ? cx : 0);
             const y = nextNum() + (isRel ? cy : 0);
-            const steps = 10;
+            const steps = 8;
             for (let s = 1; s <= steps; s++) {
               const t = s / steps;
               const mt = 1 - t;
@@ -652,7 +741,7 @@
   }
 
   // ============================================================================
-  // 4. PLANAR HALF-EDGE GRAPH (DCEL) & KINEMATIC TREE BUILDER
+  // 4. PLANAR HALF-EDGE GRAPH (DCEL) & KINEMATIC TREE BUILDER FOR ARBITRARY SVG
   // ============================================================================
 
   function buildPlanarSubdivision(parsedDieline) {
@@ -665,7 +754,7 @@
 
     const n = allSegs.length;
     const splits = Array.from({ length: n }, () => [0, 1]);
-    const INTER_TOL = 0.06; // 0.06 mm CAD snap tolerance
+    const INTER_TOL = 0.06;
 
     function pointToSegmentProj(px, py, s) {
       const dx = s.x2 - s.x1;
@@ -767,7 +856,6 @@
       }
     }
 
-    // Prune degree-1 dangling segments (such as fold line overhangs into slots)
     let edges = Array.from(edgeMap.values());
     let changed = true;
     while (changed) {
@@ -871,6 +959,7 @@
         rawFaces.push({
           id: faceId,
           points: pts,
+          holes: [],
           areaMm2: signedArea,
           bbox: {
             minX: fMinX,
@@ -885,7 +974,6 @@
       }
     }
 
-    // Build hinges between adjacent panels
     const hinges = [];
     const adjMap = new Map();
 
@@ -930,7 +1018,6 @@
       });
     }
 
-    // Semantic panel classification
     const midY = blankHeightMm * 0.5;
     const bodyFaces = rawFaces
       .filter(f => f.bbox.minY < midY && f.bbox.maxY > midY)
@@ -944,14 +1031,14 @@
         bf.name = 'Pestaña de Pegado';
         bf.shortName = 'Pegado';
         bf.defaultAngle = 90;
-        bf.foldOrder = 0.15; // Folds early with body
+        bf.foldOrder = 0.15;
       } else {
         bf.role = 'BODY';
         bf.bodyIndex = bodyCounter;
         bf.name = `Cara Cuerpo ${bodyCounter}`;
         bf.shortName = `Cara ${bodyCounter}`;
         bf.defaultAngle = 90;
-        bf.foldOrder = 0.0; // Body folds first
+        bf.foldOrder = 0.0;
         bodyDimensions.push(bf);
         bodyCounter++;
       }
@@ -970,17 +1057,16 @@
         f.name = `Solapa Sup. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
         f.shortName = `Sup. ${idxLabel}`;
         f.defaultAngle = 90;
-        f.foldOrder = isInnerFlap ? 0.55 : 0.75; // Top inner then top outer
+        f.foldOrder = isInnerFlap ? 0.55 : 0.75;
       } else {
         f.role = isInnerFlap ? 'BOTTOM_FLAP_INNER' : 'BOTTOM_FLAP_OUTER';
         f.name = `Solapa Inf. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
         f.shortName = `Inf. ${idxLabel}`;
         f.defaultAngle = 90;
-        f.foldOrder = isInnerFlap ? 0.25 : 0.40; // Bottom inner then bottom outer
+        f.foldOrder = isInnerFlap ? 0.25 : 0.40;
       }
     }
 
-    // Root panel selection: Cara Cuerpo 2 (central long body face)
     const mainBodyCandidates = bodyFaces.filter(f => f.role === 'BODY');
     const rootFace = mainBodyCandidates.length >= 2
       ? mainBodyCandidates[1]
@@ -988,7 +1074,6 @@
     rootFace.isRoot = true;
     rootFace.defaultAngle = 0;
 
-    // Build Kinematic Tree from rootFace via BFS
     const visitedFaces = new Set([rootFace.id]);
     const queue = [rootFace.id];
     const treeHinges = [];
@@ -1009,10 +1094,6 @@
           childFace.parentId = currId;
           childFace.hingeId = h.id;
 
-          // In right-handed 3D (x3d = x_mm, y3d = -y_mm, z3d = +up/inward):
-          // We want (u_3d x v_3d)_z = ux3d * vy3d - uy3d * vx3d > 0
-          // Since x3d = x, y3d = -y, ux3d * vy3d - uy3d * vx3d = -(dx * cy - dy * cx)
-          // So if (dx * cy - dy * cx) > 0 in SVG y-down coords, swap p1 and p2!
           let p1 = { ...h.p1 };
           let p2 = { ...h.p2 };
           const dx = p2.x - p1.x;
@@ -1036,10 +1117,9 @@
       }
     }
 
-    // Calculate 3D assembled box nominal dimensions (L x W x H)
-    let boxLengthMm = rootFace.bbox.width;
-    let boxWidthMm = mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.width : rootFace.bbox.width;
-    let boxDepthMm = mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.height : rootFace.bbox.height;
+    const boxLengthMm = +(rootFace.bbox.width).toFixed(1);
+    const boxWidthMm = +(mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.width : rootFace.bbox.width).toFixed(1);
+    const boxDepthMm = +(mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.height : rootFace.bbox.height).toFixed(1);
 
     return {
       ...parsedDieline,
@@ -1055,17 +1135,115 @@
     };
   }
 
-  // Normalizar catálogo de cartones con alias compatibles
-  for (const b of ARTIOS_BOARDS) {
-    b.id = b.code;
-    b.caliper = b.caliperMm;
-    b.insideLoss = b.insideLossMm;
-    b.outsideGain = b.outsideGainMm;
-    b.grammage = b.grammageGsm;
-    b.surfaceTex = (b.outerTexture || '').replace(/^assets\/textures\//, '');
-    b.innerTex = (b.innerTexture || '').replace(/^assets\/textures\//, '');
-    b.edgeTex = (b.edgeTexture || '').replace(/^assets\/textures\//, '');
-    b.colorHex = parseInt((b.outerColor || '#c69c6d').replace('#', '0x'), 16);
+  // ============================================================================
+  // 5. PACDORA / FEFCO KNIFEDATA NATIVE PARSER & 3D KINEMATIC BUILDER
+  // ============================================================================
+
+  /**
+   * Converts a Pacdora `dlist` array of commands (M, L, A, Q, Z) into a clean 2D polygon
+   * of `{x, y}` points in 1:1 mm, ensuring clockwise winding (positive signed area in Y-down).
+   */
+  function dlistToPolygon(dlist, ensureClockwise = true) {
+    if (!dlist || dlist.length === 0) return [];
+    const pts = [];
+    let cx = 0, cy = 0;
+
+    for (let i = 0; i < dlist.length; i++) {
+      const cmd = dlist[i];
+      if (!cmd || !cmd.mtd) continue;
+      if (cmd.mtd === 'M') {
+        cx = Number(cmd.x) || 0;
+        cy = Number(cmd.y) || 0;
+        if (pts.length === 0) {
+          pts.push({ x: cx, y: cy });
+        } else {
+          // If consecutive M appears at start (like FEFCO 0212 HL), update start point
+          if (pts.length === 1) {
+            pts[0] = { x: cx, y: cy };
+          } else {
+            pts.push({ x: cx, y: cy });
+          }
+        }
+      } else if (cmd.mtd === 'L') {
+        const nx = Number(cmd.x) || 0;
+        const ny = Number(cmd.y) || 0;
+        if (pts.length === 0 || Math.hypot(nx - cx, ny - cy) > 0.01) {
+          pts.push({ x: nx, y: ny });
+        }
+        cx = nx;
+        cy = ny;
+      } else if (cmd.mtd === 'A') {
+        const nx = Number(cmd.x) || 0;
+        const ny = Number(cmd.y) || 0;
+        const arcPts = sampleSvgArc(cx, cy, cmd.rx || 1, cmd.ry || 1, cmd.ang || 0, cmd.arc || 0, cmd.dir || 0, nx, ny, 8);
+        for (const p of arcPts) {
+          if (pts.length === 0 || Math.hypot(p.x - pts[pts.length - 1].x, p.y - pts[pts.length - 1].y) > 0.01) {
+            pts.push(p);
+          }
+        }
+        cx = nx;
+        cy = ny;
+      } else if (cmd.mtd === 'Q') {
+        const nx = Number(cmd.x) || 0;
+        const ny = Number(cmd.y) || 0;
+        const qx = cmd.cx !== undefined ? Number(cmd.cx) : (cx + nx) * 0.5;
+        const qy = cmd.cy !== undefined ? Number(cmd.cy) : (cy + ny) * 0.5;
+        const steps = 6;
+        for (let s = 1; s <= steps; s++) {
+          const t = s / steps;
+          const mt = 1 - t;
+          const px = mt * mt * cx + 2 * mt * t * qx + t * t * nx;
+          const py = mt * mt * cy + 2 * mt * t * qy + t * t * ny;
+          if (pts.length === 0 || Math.hypot(px - pts[pts.length - 1].x, py - pts[pts.length - 1].y) > 0.01) {
+            pts.push({ x: px, y: py });
+          }
+        }
+        cx = nx;
+        cy = ny;
+      }
+    }
+
+    if (pts.length >= 2 && Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 0.05) {
+      pts.pop();
+    }
+    if (pts.length < 3) return pts;
+
+    let area2 = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % pts.length];
+      area2 += p1.x * p2.y - p2.x * p1.y;
+    }
+
+    if (ensureClockwise && area2 < 0) {
+      pts.reverse();
+    } else if (!ensureClockwise && area2 > 0) {
+      pts.reverse();
+    }
+    return pts;
+  }
+
+  /**
+   * Splits a hole command list into one or more closed hole subpaths.
+   */
+  function parseHoleSubpaths(holeCmdList) {
+    if (!holeCmdList || holeCmdList.length === 0) return [];
+    const sublists = [];
+    let cur = [];
+    for (const cmd of holeCmdList) {
+      if (cmd.mtd === 'M') {
+        if (cur.length >= 3) sublists.push(cur);
+        cur = [cmd];
+      } else {
+        cur.push(cmd);
+        if (cmd.mtd === 'Z') {
+          if (cur.length >= 3) sublists.push(cur);
+          cur = [];
+        }
+      }
+    }
+    if (cur.length >= 3) sublists.push(cur);
+    return sublists.map(sl => dlistToPolygon(sl, false)).filter(p => p.length >= 3);
   }
 
   function pointInPolygon(pt, vs) {
@@ -1078,6 +1256,722 @@
       if (intersect) inside = !inside;
     }
     return inside;
+  }
+
+  const PANEL_SPANISH_NAMES = {
+    H: 'Panel Base / Principal (H)',
+    F: 'Panel Frontal / Tapa (F)',
+    B: 'Panel Fondo / Inferior (B)',
+    T: 'Panel Superior (T)',
+    FL: 'Pared Lateral Izq. (FL)',
+    FR: 'Pared Lateral Der. (FR)',
+    HL: 'Pestaña / Lateral Izq. (HL)',
+    HR: 'Pestaña / Lateral Der. (HR)',
+    HT: 'Solapa Sup. Base (HT)',
+    HB: 'Solapa Inf. Base (HB)',
+    FT: 'Solapa Sup. Frontal (FT)',
+    FB: 'Solapa Inf. Frontal (FB)',
+    FLT: 'Solapa Esquina Sup. Izq. (FLT)',
+    FLB: 'Solapa Esquina Inf. Izq. (FLB)',
+    FRT: 'Solapa Esquina Sup. Der. (FRT)',
+    FRB: 'Solapa Esquina Inf. Der. (FRB)',
+    HLT: 'Solapa Esquina Base Sup. (HLT)',
+    HLB: 'Solapa Esquina Base Inf. (HLB)',
+    TT: 'Doble Pared / Pliegue Sup. (TT)',
+    BB: 'Doble Pared / Pliegue Inf. (BB)',
+    L: 'Pared Izquierda (L)',
+    R: 'Pared Derecha (R)'
+  };
+
+  /**
+   * Builds a complete `dieline` model directly from a Pacdora/FEFCO `knifeData` object
+   * (`faces`, `holes`, `cuts`, `folds`, `sizeArrowData`, `animations`) and metadata (`length`, `width`, `height`).
+   */
+  function buildDielineModelFromPacdora(knifeData, meta = {}) {
+    if (!knifeData || !knifeData.faces || knifeData.faces.length === 0) {
+      throw new Error('Datos paramétricos FEFCO (knifeData) vacíos o inválidos.');
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const rawFaces = [];
+    const faceByName = new Map();
+    let totalAreaMm2 = 0;
+
+    // 1. Convert each face's dlist into a 1:1 mm polygon
+    knifeData.faces.forEach((f, idx) => {
+      const poly = dlistToPolygon(f.dlist, true);
+      if (poly.length < 3) return;
+
+      let fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
+      let cx = 0, cy = 0, area2 = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const p1 = poly[i];
+        const p2 = poly[(i + 1) % poly.length];
+        area2 += p1.x * p2.y - p2.x * p1.y;
+        if (p1.x < fMinX) fMinX = p1.x;
+        if (p1.y < fMinY) fMinY = p1.y;
+        if (p1.x > fMaxX) fMaxX = p1.x;
+        if (p1.y > fMaxY) fMaxY = p1.y;
+        if (p1.x < minX) minX = p1.x;
+        if (p1.y < minY) minY = p1.y;
+        if (p1.x > maxX) maxX = p1.x;
+        if (p1.y > maxY) maxY = p1.y;
+        cx += p1.x;
+        cy += p1.y;
+      }
+      cx /= poly.length;
+      cy /= poly.length;
+      const areaMm2 = Math.abs(area2 * 0.5);
+      totalAreaMm2 += areaMm2;
+
+      const label = PANEL_SPANISH_NAMES[f.name] || `Panel ${f.name}`;
+      const faceObj = {
+        id: idx,
+        pacdoraName: f.name,
+        name: label,
+        shortName: f.name,
+        label,
+        role: (f.name === 'H' || f.name === 'F' || f.name === 'B' || f.name === 'T') ? 'BODY' : (f.name === 'HL' && (f.w < 50 || f.h < 50) ? 'GLUE_FLAP' : 'FLAP'),
+        points: poly,
+        polygon: poly,
+        holes: [],
+        areaMm2,
+        area: areaMm2,
+        bbox: {
+          minX: fMinX,
+          minY: fMinY,
+          maxX: fMaxX,
+          maxY: fMaxY,
+          width: fMaxX - fMinX,
+          height: fMaxY - fMinY
+        },
+        bounds: {
+          minX: fMinX,
+          minY: fMinY,
+          maxX: fMaxX,
+          maxY: fMaxY,
+          width: fMaxX - fMinX,
+          height: fMaxY - fMinY
+        },
+        centroid: { x: cx, y: cy },
+        defaultAngle: 90
+      };
+      rawFaces.push(faceObj);
+      faceByName.set(f.name, faceObj);
+    });
+
+    // Normalize coordinates so global minX = 0, minY = 0
+    if (isFinite(minX) && isFinite(minY) && (Math.abs(minX) > 1e-4 || Math.abs(minY) > 1e-4)) {
+      for (const f of rawFaces) {
+        for (const p of f.polygon) {
+          p.x -= minX;
+          p.y -= minY;
+        }
+        f.centroid.x -= minX;
+        f.centroid.y -= minY;
+        f.bbox.minX -= minX;
+        f.bbox.maxX -= minX;
+        f.bbox.minY -= minY;
+        f.bbox.maxY -= minY;
+        f.bounds = { ...f.bbox };
+      }
+    } else {
+      minX = 0;
+      minY = 0;
+    }
+
+    const blankWidthMm = Math.max(1, maxX - minX);
+    const blankHeightMm = Math.max(1, maxY - minY);
+
+    // 2. Parse interior holes and assign them to the containing face (if strictly interior and not already cut into face perimeter)
+    const allHolePolys = [];
+    for (const hCmds of (knifeData.holes || [])) {
+      const subPolys = parseHoleSubpaths(hCmds);
+      for (const hp of subPolys) {
+        const shifted = hp.map(p => ({ x: p.x - minX, y: p.y - minY }));
+        allHolePolys.push(shifted);
+        let hcx = 0, hcy = 0;
+        for (const p of shifted) { hcx += p.x; hcy += p.y; }
+        hcx /= shifted.length;
+        hcy /= shifted.length;
+
+        const hostFace = rawFaces.find(f => pointInPolygon({ x: hcx, y: hcy }, f.polygon));
+        if (hostFace) {
+          hostFace.holes.push(shifted);
+        }
+      }
+    }
+
+    // 3. Extract 2D Cut Segments (from `cuts` + `holes` or face perimeters) and Fold Segments
+    const cutSegmentsMm = [];
+    let totalCutLengthMm = 0;
+
+    if (knifeData.cuts && knifeData.cuts.length > 0) {
+      let cx = 0, cy = 0, sx = 0, sy = 0;
+      const pushCutPoly = (pts) => {
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          const len = Math.hypot(b.x - a.x, b.y - a.y);
+          if (len > 0.01) {
+            totalCutLengthMm += len;
+            cutSegmentsMm.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, type: 'CUT' });
+          }
+        }
+      };
+      let currPts = [];
+      for (const cmd of knifeData.cuts) {
+        if (cmd.mtd === 'M') {
+          if (currPts.length > 1) pushCutPoly(currPts);
+          cx = sx = (Number(cmd.x) || 0) - minX;
+          cy = sy = (Number(cmd.y) || 0) - minY;
+          currPts = [{ x: cx, y: cy }];
+        } else if (cmd.mtd === 'L') {
+          cx = (Number(cmd.x) || 0) - minX;
+          cy = (Number(cmd.y) || 0) - minY;
+          currPts.push({ x: cx, y: cy });
+        } else if (cmd.mtd === 'A') {
+          const nx = (Number(cmd.x) || 0) - minX;
+          const ny = (Number(cmd.y) || 0) - minY;
+          const arcPts = sampleSvgArc(cx, cy, cmd.rx || 1, cmd.ry || 1, cmd.ang || 0, cmd.arc || 0, cmd.dir || 0, nx, ny, 8);
+          for (const p of arcPts) currPts.push(p);
+          cx = nx; cy = ny;
+        } else if (cmd.mtd === 'Q') {
+          const nx = (Number(cmd.x) || 0) - minX;
+          const ny = (Number(cmd.y) || 0) - minY;
+          const qx = (cmd.cx !== undefined ? Number(cmd.cx) : (cx + nx) * 0.5) - minX;
+          const qy = (cmd.cy !== undefined ? Number(cmd.cy) : (cy + ny) * 0.5) - minY;
+          for (let s = 1; s <= 6; s++) {
+            const t = s / 6, mt = 1 - t;
+            currPts.push({
+              x: mt * mt * cx + 2 * mt * t * qx + t * t * nx,
+              y: mt * mt * cy + 2 * mt * t * qy + t * t * ny
+            });
+          }
+          cx = nx; cy = ny;
+        } else if (cmd.mtd === 'Z') {
+          currPts.push({ x: sx, y: sy });
+          pushCutPoly(currPts);
+          currPts = [];
+        }
+      }
+      if (currPts.length > 1) pushCutPoly(currPts);
+    }
+
+    // Also add hole outlines to 2D blue cut segments so slots/windows are drawn in blue in 2D
+    for (const hp of allHolePolys) {
+      for (let i = 0; i < hp.length; i++) {
+        const a = hp[i];
+        const b = hp[(i + 1) % hp.length];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len > 0.01) {
+          totalCutLengthMm += len;
+          cutSegmentsMm.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, type: 'CUT' });
+        }
+      }
+    }
+
+    const foldSegmentsMm = [];
+    let totalFoldLengthMm = 0;
+    for (const fl of (knifeData.folds || [])) {
+      const x1 = (Number(fl.x1) || 0) - minX;
+      const y1 = (Number(fl.y1) || 0) - minY;
+      const x2 = (Number(fl.x2) || 0) - minX;
+      const y2 = (Number(fl.y2) || 0) - minY;
+      const len = Math.hypot(x2 - x1, y2 - y1);
+      if (len > 0.01) {
+        totalFoldLengthMm += len;
+        foldSegmentsMm.push({ name: fl.name, x1, y1, x2, y2, type: 'FOLD' });
+      }
+    }
+
+    // 4. Build the Kinematic Tree and Multi-Step Phased Animation Schedule from `folds` and `animations`
+    const totalAnimSteps = Math.max(1, (knifeData.animations || []).length);
+    const animByFoldName = new Map();
+    (knifeData.animations || []).forEach((stepList, stepIdx) => {
+      for (const act of (stepList || [])) {
+        if (!act || !act.name || act.action !== 'rotate') continue;
+        if (!animByFoldName.has(act.name)) animByFoldName.set(act.name, []);
+        animByFoldName.get(act.name).push({
+          stepIndex: stepIdx,
+          totalSteps: totalAnimSteps,
+          rawRotate: Number(act.rotate) || 0
+        });
+      }
+    });
+
+    // Determine natural root face(s): in Pacdora, every fold `A_B` is directed from parent `A` to child `B`
+    const parentSet = new Set();
+    const childSet = new Set();
+    const adjByFace = new Map();
+    for (const f of rawFaces) adjByFace.set(f.pacdoraName, []);
+
+    for (const fl of foldSegmentsMm) {
+      if (!fl.name || !fl.name.includes('_')) continue;
+      const [pName, cName] = fl.name.split('_');
+      if (!faceByName.has(pName) || !faceByName.has(cName)) continue;
+      parentSet.add(pName);
+      childSet.add(cName);
+      adjByFace.get(pName).push({ parentName: pName, childName: cName, fold: fl, reversed: false });
+      adjByFace.get(cName).push({ parentName: cName, childName: pName, fold: fl, reversed: true });
+    }
+
+    const naturalRoots = [...parentSet].filter(p => !childSet.has(p));
+    const primaryRootName = naturalRoots[0] || (faceByName.has('H') ? 'H' : (faceByName.has('B') ? 'B' : rawFaces[0].pacdoraName));
+    const rootFace = faceByName.get(primaryRootName) || rawFaces[0];
+    rootFace.isRoot = true;
+    rootFace.defaultAngle = 0;
+    rootFace.role = 'BODY';
+
+    const visited = new Set([rootFace.pacdoraName]);
+    const queue = [rootFace.pacdoraName];
+    const treeHinges = [];
+
+    const processComponent = (startName) => {
+      visited.add(startName);
+      queue.push(startName);
+      while (queue.length > 0) {
+        const uName = queue.shift();
+        const uFace = faceByName.get(uName);
+        const edges = adjByFace.get(uName) || [];
+        // Prefer edges that follow Pacdora's natural Parent_Child direction
+        edges.sort((a, b) => (a.reversed ? 1 : 0) - (b.reversed ? 1 : 0));
+
+        for (const edge of edges) {
+          const vName = edge.childName;
+          if (visited.has(vName)) continue;
+          visited.add(vName);
+          queue.push(vName);
+
+          const vFace = faceByName.get(vName);
+          const fl = edge.fold;
+
+          // Compute all segments of this fold line (including any 'x' continuation segments collinear with fl)
+          let p1 = { x: fl.x1, y: fl.y1 };
+          let p2 = { x: fl.x2, y: fl.y2 };
+          const dx = p2.x - p1.x;
+          const dy = p2.y - p1.y;
+          const cx = vFace.centroid.x - p1.x;
+          const cy = vFace.centroid.y - p1.y;
+          const cross2d = dx * cy - dy * cx;
+          const sCross = Math.sign(cross2d) || 1;
+
+          // Orient p1 -> p2 so that in our 3D engine (x3d = x, y3d = -y), +angle always folds INWARD (+Z)
+          if (cross2d > 0) {
+            const tmp = p1;
+            p1 = p2;
+            p2 = tmp;
+          }
+
+          // Convert Pacdora's animation steps using our exact verified theorem:
+          // ourDeltaDeg = sCross * pacdoraRotate (if edge was reversed, flip sign)
+          const dirSign = edge.reversed ? -sCross : sCross;
+          const rawSteps = animByFoldName.get(fl.name) || [];
+          const animSteps = rawSteps.map(st => ({
+            start: st.stepIndex / st.totalSteps,
+            end: (st.stepIndex + 1) / st.totalSteps,
+            deltaDeg: +(dirSign * st.rawRotate).toFixed(2)
+          }));
+
+          const totalAngle = animSteps.length > 0
+            ? +(animSteps.reduce((acc, s) => acc + s.deltaDeg, 0)).toFixed(2)
+            : 90;
+
+          vFace.parentId = uFace.id;
+          vFace.defaultAngle = totalAngle;
+
+          const lenMm = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+          const isVertical = Math.abs(p2.y - p1.y) > Math.abs(p2.x - p1.x);
+          const hingeId = `hinge_${uFace.id}_${vFace.id}`;
+          vFace.hingeId = hingeId;
+
+          treeHinges.push({
+            id: hingeId,
+            pacdoraFoldName: fl.name,
+            faceA: uFace.id,
+            faceB: vFace.id,
+            parentId: uFace.id,
+            childId: vFace.id,
+            parentFaceId: uFace.id,
+            childFaceId: vFace.id,
+            p1,
+            p2,
+            midpoint: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
+            lengthMm: lenMm,
+            length: lenMm,
+            orientation: isVertical ? 'VERTICAL' : 'HORIZONTAL',
+            defaultAngle: totalAngle,
+            animSteps
+          });
+        }
+      }
+    };
+
+    processComponent(rootFace.pacdoraName);
+    // In case of multi-piece boxes (like FEFCO 0307 lid + base), connect any remaining unvisited piece
+    for (const rName of naturalRoots) {
+      if (!visited.has(rName)) processComponent(rName);
+    }
+
+    // Extract L, W, H from meta or sizeArrowData
+    const findArrowLen = (code) => {
+      const item = (knifeData.sizeArrowData || []).find(s => s.lineName === code);
+      return item ? Number(item.lineLength) : null;
+    };
+    const boxLengthMm = Number(meta.length) || findArrowLen('L') || +(rootFace.bbox.width).toFixed(1);
+    const boxWidthMm = Number(meta.width) || findArrowLen('W') || +(rootFace.bbox.height).toFixed(1);
+    const boxDepthMm = Number(meta.height) || findArrowLen('H') || 100;
+
+    return {
+      isPacdoraModel: true,
+      pacdoraMeta: {
+        id: meta.id,
+        num: meta.num,
+        fefcoCode: meta.fefcoCode || '',
+        name: meta.name || ''
+      },
+      mmPerUnit: 1.0,
+      scaleSource: `Paramétrico FEFCO 1:1 (${meta.fefcoCode || 'Pacdora'})`,
+      cotaMmValue: blankWidthMm,
+      cotaLabel: `${blankWidthMm.toFixed(1)} mm`,
+      blankWidthMm,
+      blankHeightMm,
+      totalCutLengthMm,
+      totalFoldLengthMm,
+      totalAreaMm2,
+      boxDimensionsMm: {
+        length: boxLengthMm,
+        width: boxWidthMm,
+        depth: boxDepthMm
+      },
+      sizeArrowData: (knifeData.sizeArrowData || []).map(sa => ({
+        ...sa,
+        p1: sa.p1 ? { x: sa.p1.x - minX, y: sa.p1.y - minY } : null,
+        p2: sa.p2 ? { x: sa.p2.x - minX, y: sa.p2.y - minY } : null,
+        tpointer: sa.tpointer ? { ...sa.tpointer, x: sa.tpointer.x - minX, y: sa.tpointer.y - minY } : null
+      })),
+      calibration: {
+        mmPerUnit: 1.0,
+        detectedCotaMM: blankWidthMm,
+        source: `Motor Paramétrico FEFCO 1:1 (${meta.fefcoCode || 'Nativo'})`
+      },
+      bounds: {
+        minX: 0,
+        minY: 0,
+        maxX: blankWidthMm,
+        maxY: blankHeightMm,
+        width: blankWidthMm,
+        height: blankHeightMm
+      },
+      cutSegmentsMm,
+      foldSegmentsMm,
+      cutSegments: cutSegmentsMm,
+      foldSegments: foldSegmentsMm,
+      faces: rawFaces,
+      hinges: treeHinges,
+      rootFaceId: rootFace.id
+    };
+  }
+
+  // ============================================================================
+  // 6. UNIVERSAL REAL-TIME PIECEWISE 2D/3D PARAMETRIC RESIZER
+  //    Resizes ANY dieline (both arbitrary .SVG files and 116 FEFCO models)
+  //    in real time at 60 FPS when the user changes Largo (L), Ancho (W), or Alto (H).
+  // ============================================================================
+
+  /**
+   * Builds a 1D piecewise-linear coordinate warp function `warp(coord)` from intervals
+   * `[{ min, max, targetSpan }]` so that each parametric panel band scales to `targetSpan`
+   * while rigid regions (glue flaps, slots, locking tabs, chamfers) translate without distortion!
+   */
+  function buildPiecewiseAxisMap(intervals) {
+    if (!intervals || intervals.length === 0) return (v) => v;
+    const sorted = intervals
+      .filter(it => it && it.max - it.min > 1.0 && it.targetSpan > 1.0)
+      .sort((a, b) => a.min - b.min);
+    if (sorted.length === 0) return (v) => v;
+
+    // Merge overlapping intervals that represent the same column/row band
+    const bands = [];
+    for (const it of sorted) {
+      if (bands.length === 0) {
+        bands.push({ min: it.min, max: it.max, targetSpan: it.targetSpan });
+      } else {
+        const prev = bands[bands.length - 1];
+        const overlap = Math.min(prev.max, it.max) - Math.max(prev.min, it.min);
+        const minSpan = Math.min(prev.max - prev.min, it.max - it.min);
+        if (overlap > minSpan * 0.55) {
+          // Same band
+          prev.min = Math.min(prev.min, it.min);
+          prev.max = Math.max(prev.max, it.max);
+        } else if (it.min >= prev.max - 0.5) {
+          bands.push({ min: Math.max(prev.max, it.min), max: it.max, targetSpan: it.targetSpan });
+        }
+      }
+    }
+
+    const knots = [];
+    let shift = 0;
+    for (const b of bands) {
+      const origSpan = b.max - b.min;
+      knots.push({ orig: b.min, mapped: b.min + shift, scale: b.targetSpan / origSpan });
+      shift += (b.targetSpan - origSpan);
+      knots.push({ orig: b.max, mapped: b.max + shift, scale: 1.0 });
+    }
+
+    return function warpCoord(v) {
+      if (v <= knots[0].orig) {
+        return knots[0].mapped + (v - knots[0].orig);
+      }
+      for (let i = 0; i < knots.length - 1; i++) {
+        const k0 = knots[i];
+        const k1 = knots[i + 1];
+        if (v >= k0.orig && v <= k1.orig) {
+          const span = k1.orig - k0.orig;
+          if (span < 1e-6) return k0.mapped;
+          const t = (v - k0.orig) / span;
+          return k0.mapped + t * (k1.mapped - k0.mapped);
+        }
+      }
+      const last = knots[knots.length - 1];
+      return last.mapped + (v - last.orig);
+    };
+  }
+
+  /**
+   * Deep-clones and warps a dieline model (`baseModel`) to new target dimensions `(newL, newW, newH)` in mm.
+   * Works for:
+   *  - Custom `.svg` dielines (RSC American boxes, trays, folding cartons)
+   *  - All 116 FEFCO models (instant 60fps client-side feedback while dragging sliders/wheel)
+   */
+  function resizeDielineParametric(baseModel, newL, newW, newH) {
+    if (!baseModel) return null;
+    const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
+    const origW = Math.max(5, baseModel.boxDimensionsMm?.width || 150);
+    const origH = Math.max(5, baseModel.boxDimensionsMm?.depth || 100);
+
+    const targetL = Math.max(10, Number(newL) || origL);
+    const targetW = Math.max(10, Number(newW) || origW);
+    const targetH = Math.max(10, Number(newH) || origH);
+
+    if (Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
+      return baseModel;
+    }
+
+    const xIntervals = [];
+    const yIntervals = [];
+
+    // 1. If model has sizeArrowData (FEFCO / Pacdora models), use L, W, H arrows + panel matching
+    const tol = 6.0;
+    for (const f of baseModel.faces) {
+      const fw = f.bounds.width;
+      const fh = f.bounds.height;
+
+      // Classify X span of panel
+      if (f.role === 'GLUE_FLAP') {
+        // Keep glue flap width constant!
+      } else if (Math.abs(fw - origL) <= tol) {
+        xIntervals.push({ min: f.bounds.minX, max: f.bounds.maxX, targetSpan: fw + (targetL - origL) });
+      } else if (Math.abs(fw - origW) <= tol) {
+        xIntervals.push({ min: f.bounds.minX, max: f.bounds.maxX, targetSpan: fw + (targetW - origW) });
+      } else if (Math.abs(fw - origH) <= tol) {
+        xIntervals.push({ min: f.bounds.minX, max: f.bounds.maxX, targetSpan: fw + (targetH - origH) });
+      }
+
+      // Classify Y span of panel
+      if (f.role === 'BODY' && Math.abs(fh - origH) <= tol) {
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetH - origH) });
+      } else if (f.role && f.role.includes('FLAP') && Math.abs(fh - origW * 0.5) <= Math.max(12, origW * 0.12)) {
+        // Standard RSC top/bottom flaps have height = W / 2
+        const flapScale = targetW / origW;
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh * flapScale });
+      } else if (Math.abs(fh - origL) <= tol) {
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetL - origL) });
+      } else if (Math.abs(fh - origW) <= tol) {
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetW - origW) });
+      } else if (Math.abs(fh - origH) <= tol) {
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetH - origH) });
+      }
+    }
+
+    // Fallback global scaling if a custom irregular dieline had no matching standard bands
+    const warpX = xIntervals.length > 0
+      ? buildPiecewiseAxisMap(xIntervals)
+      : (x) => x * (targetL / origL);
+    const warpY = yIntervals.length > 0
+      ? buildPiecewiseAxisMap(yIntervals)
+      : (y) => y * (targetH / origH);
+
+    // Apply coordinate maps to all faces, holes, cutSegments, foldSegments, and hinges
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let totalAreaMm2 = 0;
+
+    const newFaces = baseModel.faces.map(f => {
+      const poly = f.polygon.map(p => ({ x: warpX(p.x), y: warpY(p.y) }));
+      const holes = (f.holes || []).map(hp => hp.map(p => ({ x: warpX(p.x), y: warpY(p.y) })));
+
+      let fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
+      let cx = 0, cy = 0, area2 = 0;
+      for (let i = 0; i < poly.length; i++) {
+        const p1 = poly[i];
+        const p2 = poly[(i + 1) % poly.length];
+        area2 += p1.x * p2.y - p2.x * p1.y;
+        if (p1.x < fMinX) fMinX = p1.x;
+        if (p1.y < fMinY) fMinY = p1.y;
+        if (p1.x > fMaxX) fMaxX = p1.x;
+        if (p1.y > fMaxY) fMaxY = p1.y;
+        if (p1.x < minX) minX = p1.x;
+        if (p1.y < minY) minY = p1.y;
+        if (p1.x > maxX) maxX = p1.x;
+        if (p1.y > maxY) maxY = p1.y;
+        cx += p1.x;
+        cy += p1.y;
+      }
+      cx /= poly.length;
+      cy /= poly.length;
+      const areaMm2 = Math.abs(area2 * 0.5);
+      totalAreaMm2 += areaMm2;
+
+      const bbox = {
+        minX: fMinX,
+        minY: fMinY,
+        maxX: fMaxX,
+        maxY: fMaxY,
+        width: fMaxX - fMinX,
+        height: fMaxY - fMinY
+      };
+
+      return {
+        ...f,
+        points: poly,
+        polygon: poly,
+        holes,
+        areaMm2,
+        area: areaMm2,
+        bbox,
+        bounds: { ...bbox },
+        centroid: { x: cx, y: cy }
+      };
+    });
+
+    let totalCutLengthMm = 0;
+    const newCutSegments = (baseModel.cutSegments || []).map(s => {
+      const x1 = warpX(s.x1), y1 = warpY(s.y1);
+      const x2 = warpX(s.x2), y2 = warpY(s.y2);
+      totalCutLengthMm += Math.hypot(x2 - x1, y2 - y1);
+      return { ...s, x1, y1, x2, y2 };
+    });
+
+    let totalFoldLengthMm = 0;
+    const newFoldSegments = (baseModel.foldSegments || []).map(s => {
+      const x1 = warpX(s.x1), y1 = warpY(s.y1);
+      const x2 = warpX(s.x2), y2 = warpY(s.y2);
+      totalFoldLengthMm += Math.hypot(x2 - x1, y2 - y1);
+      return { ...s, x1, y1, x2, y2 };
+    });
+
+    const newHinges = (baseModel.hinges || []).map(h => {
+      const p1 = { x: warpX(h.p1.x), y: warpY(h.p1.y) };
+      const p2 = { x: warpX(h.p2.x), y: warpY(h.p2.y) };
+      const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+      return {
+        ...h,
+        p1,
+        p2,
+        midpoint: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
+        lengthMm: len,
+        length: len
+      };
+    });
+
+    const blankW = Math.max(1, maxX - minX);
+    const blankH = Math.max(1, maxY - minY);
+
+    return {
+      ...baseModel,
+      blankWidthMm: blankW,
+      blankHeightMm: blankH,
+      totalCutLengthMm,
+      totalFoldLengthMm,
+      totalAreaMm2,
+      boxDimensionsMm: {
+        length: targetL,
+        width: targetW,
+        depth: targetH
+      },
+      bounds: {
+        minX: isFinite(minX) ? minX : 0,
+        minY: isFinite(minY) ? minY : 0,
+        maxX: isFinite(maxX) ? maxX : blankW,
+        maxY: isFinite(maxY) ? maxY : blankH,
+        width: blankW,
+        height: blankH
+      },
+      cutSegmentsMm: newCutSegments,
+      foldSegmentsMm: newFoldSegments,
+      cutSegments: newCutSegments,
+      foldSegments: newFoldSegments,
+      faces: newFaces,
+      hinges: newHinges
+    };
+  }
+
+  /**
+   * Exports any current `dieline` model (whether resized SVG or FEFCO model) to a clean 1:1 mm `.svg` string
+   * with Blue (#009ee3) cut lines, Red (#e5007d) crease lines, and Black dimension cota.
+   */
+  function exportDielineToSVG(model) {
+    if (!model) return '';
+    const pad = 25;
+    const b = model.bounds;
+    const totalW = +(b.width + pad * 2).toFixed(2);
+    const totalH = +(b.height + pad * 2 + 15).toFixed(2);
+    const ox = pad - b.minX;
+    const oy = pad + 10 - b.minY;
+
+    const lines = [];
+    lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
+    lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}mm" height="${totalH}mm" viewBox="0 0 ${totalW} ${totalH}">`);
+    lines.push(`  <!-- Generado por ArtiosCAD 3D Studio (Escala 1:1 mm) | L=${model.boxDimensionsMm.length} W=${model.boxDimensionsMm.width} H=${model.boxDimensionsMm.depth} mm -->`);
+
+    // 1. Cota 1:1 mm (Black #000000)
+    const x1 = +(b.minX + ox).toFixed(3);
+    const x2 = +(b.maxX + ox).toFixed(3);
+    const cy = +(b.minY + oy - 8).toFixed(3);
+    lines.push(`  <g id="Cota_Escala_1_1" stroke="#000000" stroke-width="0.35" fill="none">`);
+    lines.push(`    <line x1="${x1}" y1="${(b.minY + oy - 2).toFixed(3)}" x2="${x1}" y2="${(cy - 3).toFixed(3)}" />`);
+    lines.push(`    <line x1="${x2}" y1="${(b.minY + oy - 2).toFixed(3)}" x2="${x2}" y2="${(cy - 3).toFixed(3)}" />`);
+    lines.push(`    <line x1="${x1}" y1="${cy}" x2="${x2}" y2="${cy}" />`);
+    lines.push(`    <text x="${((b.minX + b.maxX) * 0.5 + ox).toFixed(3)}" y="${(cy - 2).toFixed(3)}" fill="#000000" font-family="Arial, sans-serif" font-size="4.5" text-anchor="middle">${b.width.toFixed(2)} mm</text>`);
+    lines.push(`  </g>`);
+
+    // 2. Cut lines (Blue #009ee3)
+    lines.push(`  <g id="Corte_Azul" stroke="#009ee3" stroke-width="0.5" fill="none" stroke-linecap="round">`);
+    for (const s of (model.cutSegments || [])) {
+      lines.push(`    <line x1="${(s.x1 + ox).toFixed(3)}" y1="${(s.y1 + oy).toFixed(3)}" x2="${(s.x2 + ox).toFixed(3)}" y2="${(s.y2 + oy).toFixed(3)}" />`);
+    }
+    lines.push(`  </g>`);
+
+    // 3. Fold / Crease lines (Red/Magenta #e5007d)
+    lines.push(`  <g id="Hendido_Rojo" stroke="#e5007d" stroke-width="0.5" fill="none" stroke-linecap="round">`);
+    for (const h of (model.hinges || [])) {
+      lines.push(`    <line x1="${(h.p1.x + ox).toFixed(3)}" y1="${(h.p1.y + oy).toFixed(3)}" x2="${(h.p2.x + ox).toFixed(3)}" y2="${(h.p2.y + oy).toFixed(3)}" />`);
+    }
+    lines.push(`  </g>`);
+    lines.push(`</svg>`);
+    return lines.join('\n');
+  }
+
+  // Normalizar catálogo de cartones con alias compatibles
+  for (const b of ARTIOS_BOARDS) {
+    b.id = b.code;
+    b.caliper = b.caliperMm;
+    b.insideLoss = b.insideLossMm;
+    b.outsideGain = b.outsideGainMm;
+    b.grammage = b.grammageGsm;
+    b.surfaceTex = (b.outerTexture || '').replace(/^assets\/textures\//, '');
+    b.innerTex = (b.innerTexture || '').replace(/^assets\/textures\//, '');
+    b.edgeTex = (b.edgeTexture || '').replace(/^assets\/textures\//, '');
+    b.colorHex = parseInt((b.outerColor || '#c69c6d').replace('#', '0x'), 16);
   }
 
   function buildDielineModel(svgText) {
@@ -1094,6 +1988,7 @@
     const faces = sub.faces.map(f => ({
       ...f,
       polygon: f.points,
+      holes: f.holes || [],
       bounds: f.bbox,
       area: f.areaMm2,
       label: f.name,
@@ -1113,6 +2008,7 @@
 
     return {
       ...sub,
+      isPacdoraModel: false,
       calibration: {
         mmPerUnit: sub.mmPerUnit,
         detectedCotaMM: sub.cotaMmValue,
@@ -1139,6 +2035,9 @@
     parseSVGDieline,
     buildPlanarSubdivision,
     buildDielineModel,
+    buildDielineModelFromPacdora,
+    resizeDielineParametric,
+    exportDielineToSVG,
     pointInPolygon
   };
 });

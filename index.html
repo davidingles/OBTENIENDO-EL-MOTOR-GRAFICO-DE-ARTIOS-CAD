@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Motor Gráfico 3D de Packaging (ArtiosCAD Engine · Escala 1:1 mm)</title>
+  <title>Motor Gráfico 3D de Packaging (ArtiosCAD + 116 Modelos FEFCO Paramétricos · Escala 1:1 mm)</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -15,9 +15,9 @@
       <div>
         <div class="brand-title">
           PACKAGING CAD 3D STUDIO
-          <span class="brand-badge">MOTOR ARTIOSCAD 12.0 · 1:1 MM</span>
+          <span class="brand-badge">ARTIOSCAD 12.0 + 116 FEFCO · 1:1 MM</span>
         </div>
-        <div class="brand-subtitle">Hendidos Chafados en Ambas Caras · Ejes en Centro del Espesor · Exportador .GLB Animado para Blender</div>
+        <div class="brand-subtitle">Parametrización 2D/3D en Tiempo Real · Hendidos Chafados · Ejes en Centro del Espesor · Exportador .GLB Blender</div>
       </div>
     </div>
 
@@ -30,6 +30,10 @@
     </div>
 
     <div class="topbar-actions">
+      <button id="btn-open-fefco-catalog" class="cad-btn fefco-btn" title="Abrir el catálogo oficial completo con los 116 modelos de cajas, bandejas y estuches FEFCO parametrizables">
+        📚 Catálogo FEFCO (116 Modelos)
+      </button>
+
       <label for="svg-file-input" class="cad-btn primary" title="Abrir cualquier archivo .SVG con líneas azules (corte) y rojas (doblez)">
         📂 Abrir .SVG
       </label>
@@ -52,15 +56,23 @@
   <!-- CUERPO PRINCIPAL -->
   <main class="cad-main">
 
-    <!-- PANEL IZQUIERDO: REGLAS DEL SVG, CALIBRACIÓN 1:1, MATERIALES Y CHAFADO DE HENDIDOS -->
+    <!-- PANEL IZQUIERDO: CATÁLOGO FEFCO, REGLAS DEL SVG, MATERIALES Y CHAFADO DE HENDIDOS -->
     <aside class="cad-sidebar left">
 
-      <!-- Convención de colores solicitada -->
+      <!-- Selector rápido de modelo FEFCO / SVG -->
       <section class="panel-section">
         <div class="section-header">
-          <span class="section-title">📐 Regla de Troquel y Escala 1:1</span>
+          <span class="section-title">📚 Biblioteca FEFCO y Troqueles</span>
+          <button id="btn-sidebar-fefco" class="hud-mini-btn" style="color:#f59e0b; border:1px solid rgba(245,158,11,0.35);">Ver 116</button>
         </div>
-        <div class="legend-row">
+        <div class="control-group">
+          <div class="control-label">
+            <span>Modelo Estructural Activo:</span>
+          </div>
+          <select id="fefco-quick-select" class="cad-select"></select>
+        </div>
+
+        <div class="legend-row" style="margin-top:8px;">
           <div class="legend-pill">
             <span class="line-swatch cut"></span>
             <span>Azul = Corte</span>
@@ -73,7 +85,7 @@
 
         <div class="kv-list">
           <div class="kv-item">
-            <span>Archivo activo:</span>
+            <span>Archivo / Modelo:</span>
             <strong id="info-filename">b1 caja americana.svg</strong>
           </div>
           <div class="kv-item">
@@ -218,20 +230,66 @@
     <!-- ÁREA CENTRAL: VISOR 2D + VISOR 3D -->
     <section id="cad-workspace" class="cad-workspace" data-layout="split">
 
-      <!-- VISOR 2D DEL TROQUEL -->
+      <!-- VISOR 2D DEL TROQUEL CON BARRA PARAMÉTRICA INTEGRADA (LARGO × ANCHO × ALTO) -->
       <div class="viewport-pane viewport-2d-pane">
         <div class="viewport-hud-top">
           <div class="hud-badge">
             <span>📏 Plano Troquel 2D (Escala 1:1 mm)</span>
+            <span id="param-sync-status" class="param-status-pill">⚡ Paramétrico Activo</span>
           </div>
           <div class="hud-toolbar">
+            <button id="btn-export-svg" class="hud-mini-btn" title="Descargar el plano troquel 2D actual con las nuevas medidas en formato .SVG a escala 1:1 en mm" style="color:#38bdf8;">💾 .SVG 1:1</button>
             <button id="btn-reset-2d" class="hud-mini-btn" title="Centrar troquel 2D">Centrar 2D</button>
           </div>
         </div>
+
+        <!-- BARRA FLOTANTE PARAMÉTRICA 2D: LARGO (L) × ANCHO (W) × ALTO (H) -->
+        <div class="parametric-2d-bar">
+          <div class="param-field">
+            <div class="param-field-top">
+              <span class="param-tag l-tag">L</span>
+              <span class="param-name">Largo:</span>
+              <div class="num-input-wrap" title="Escribe el Largo (mm) con el teclado numérico o gira la ruleta del ratón">
+                <input type="number" id="param-l-num" min="15" max="2000" step="1" value="157.5" class="cad-num-input" />
+                <span class="num-unit">mm</span>
+              </div>
+            </div>
+            <input type="range" id="param-l-slider" min="15" max="1200" step="1" value="157.5" class="cad-slider" />
+          </div>
+
+          <div class="param-field">
+            <div class="param-field-top">
+              <span class="param-tag w-tag">W</span>
+              <span class="param-name">Ancho:</span>
+              <div class="num-input-wrap" title="Escribe el Ancho (mm) con el teclado numérico o gira la ruleta del ratón">
+                <input type="number" id="param-w-num" min="15" max="2000" step="1" value="105.3" class="cad-num-input" />
+                <span class="num-unit">mm</span>
+              </div>
+            </div>
+            <input type="range" id="param-w-slider" min="15" max="1200" step="1" value="105.3" class="cad-slider" />
+          </div>
+
+          <div class="param-field">
+            <div class="param-field-top">
+              <span class="param-tag h-tag">H</span>
+              <span class="param-name">Alto:</span>
+              <div class="num-input-wrap" title="Escribe el Alto (mm) con el teclado numérico o gira la ruleta del ratón">
+                <input type="number" id="param-h-num" min="15" max="2000" step="1" value="115.6" class="cad-num-input" />
+                <span class="num-unit">mm</span>
+              </div>
+            </div>
+            <input type="range" id="param-h-slider" min="15" max="1200" step="1" value="115.6" class="cad-slider" />
+          </div>
+
+          <button id="btn-reset-params" class="hud-mini-btn param-reset-btn" title="Restaurar medidas originales del modelo">
+            ↺ Original
+          </button>
+        </div>
+
         <canvas id="canvas-2d"></canvas>
         <div class="viewport-hud-bottom">
           <div class="hud-badge" style="font-size:11px; color:#94a3b8;">
-            Rueda: Zoom · Arrastrar: Mover · Banda rosa = Zona chafada del hendido
+            Altera Largo (L), Ancho (W) o Alto (H) con teclado, ruleta o slider para redimensionar el troquel 2D y la caja 3D en tiempo real
           </div>
         </div>
       </div>
@@ -320,11 +378,38 @@
 
   </main>
 
+  <!-- MODAL DEL CATÁLOGO COMPLETO DE 116 MODELOS FEFCO -->
+  <div id="fefco-modal-backdrop" class="fefco-modal-backdrop hidden">
+    <div class="fefco-modal">
+      <div class="fefco-modal-header">
+        <div>
+          <h2>📚 Catálogo Oficial Completo de 116 Modelos FEFCO Paramétricos</h2>
+          <p>Selecciona cualquier diseño estructural (Cajas Americanas 02xx, Telescópicas 03xx, Estuches/Automontables 04xx, Bandejas y Expositores 07xx/08xx) para abrirlo y parametrizarlo en 2D y 3D.</p>
+        </div>
+        <button id="btn-close-fefco-modal" class="fefco-close-btn" title="Cerrar catálogo">✕</button>
+      </div>
+
+      <div class="fefco-modal-toolbar">
+        <input type="text" id="fefco-search-input" class="fefco-search-input" placeholder="🔍 Buscar por código FEFCO (ej. 0427, 0201, 0422, 0701, 150011) o nombre..." />
+        <div class="fefco-Series-tabs">
+          <button class="fefco-tab active" data-fefco-filter="ALL">Todos (116)</button>
+          <button class="fefco-tab" data-fefco-filter="02">Serie 02xx (Cajas Ranuradas RSC)</button>
+          <button class="fefco-tab" data-fefco-filter="03">Serie 03xx (Tapa y Fondo)</button>
+          <button class="fefco-tab" data-fefco-filter="04">Serie 04xx (Automontables / Bandejas / Estuches)</button>
+          <button class="fefco-tab" data-fefco-filter="05-09">Series 05-09 (Fondo Automático / Expositores / Separadores)</button>
+        </div>
+      </div>
+
+      <div id="fefco-catalog-grid" class="fefco-catalog-grid"></div>
+    </div>
+  </div>
+
   <!-- LIBRERÍAS Y MOTOR GRÁFICO LOCAL -->
   <script src="assets/libs/three.min.js"></script>
   <script src="assets/libs/OrbitControls.js"></script>
   <script src="assets/libs/GLTFExporter.js"></script>
   <script src="artios-assets.js"></script>
+  <script src="assets/fefco-catalog.js"></script>
   <script src="dieline-engine.js"></script>
   <script src="app.js"></script>
 </body>

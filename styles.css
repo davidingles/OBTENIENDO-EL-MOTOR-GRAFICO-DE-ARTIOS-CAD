@@ -670,3 +670,303 @@ html, body {
 .hidden-input {
   display: none;
 }
+
+/* ============================================================================
+   BARRA PARAMÉTRICA 2D (LARGO L × ANCHO W × ALTO H) Y CATÁLOGO 116 FEFCO
+   ============================================================================ */
+.cad-btn.fefco-btn {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+  border-color: #fbbf24;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.35);
+}
+
+.cad-btn.fefco-btn:hover {
+  filter: brightness(1.12);
+}
+
+.param-status-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.parametric-2d-bar {
+  position: absolute;
+  top: 48px;
+  left: 12px;
+  right: 12px;
+  z-index: 12;
+  background: rgba(14, 20, 31, 0.92);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  border-radius: 8px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.param-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.param-field-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.param-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+}
+
+.param-tag.l-tag { background: #0284c7; }
+.param-tag.w-tag { background: #db2777; }
+.param-tag.h-tag { background: #d97706; }
+
+.param-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-right: auto;
+}
+
+.param-reset-btn {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  padding: 6px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* MODAL DEL CATÁLOGO COMPLETO DE 116 MODELOS FEFCO */
+.fefco-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  background: rgba(5, 8, 14, 0.82);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.fefco-modal-backdrop.hidden {
+  display: none;
+}
+
+.fefco-modal {
+  width: min(1260px, 96vw);
+  height: min(840px, 90vh);
+  background: var(--bg-panel);
+  border: 1px solid #334155;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75);
+}
+
+.fefco-modal-header {
+  padding: 16px 22px;
+  background: linear-gradient(180deg, #172133 0%, #111826 100%);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fefco-modal-header h2 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.fefco-modal-header p {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.fefco-close-btn {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 1px solid #475569;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.fefco-close-btn:hover {
+  background: #ef4444;
+  border-color: #f87171;
+  color: #fff;
+}
+
+.fefco-modal-toolbar {
+  padding: 12px 22px;
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.fefco-search-input {
+  flex: 1;
+  min-width: 260px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border: 1px solid #334155;
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  outline: none;
+}
+
+.fefco-search-input:focus {
+  border-color: var(--border-focus);
+}
+
+.fefco-Series-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fefco-tab {
+  background: var(--bg-panel-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  padding: 6px 11px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fefco-tab.active,
+.fefco-tab:hover {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border-color: #38bdf8;
+}
+
+.fefco-catalog-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 22px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(225px, 1fr));
+  gap: 14px;
+}
+
+.fefco-card {
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  padding: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+
+.fefco-card:hover {
+  transform: translateY(-2px);
+  border-color: #38bdf8;
+  box-shadow: 0 8px 20px rgba(0, 158, 227, 0.2);
+}
+
+.fefco-card.active {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+}
+
+.fefco-card-preview {
+  width: 100%;
+  height: 118px;
+  background: #090d14;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.fefco-card-preview canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.fefco-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.fefco-code-badge {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 11.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.fefco-num-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.fefco-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.fefco-card-dims {
+  margin-top: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #38bdf8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
