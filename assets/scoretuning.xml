@@ -1,0 +1,666 @@
+﻿<SCORE_IMPORT_TUNE version="1.0">
+
+<!--  Options to control design Side/Grain
+         the use_value_from_file attribute can have a value of 
+                0 - which means to ignore the side/grain values from the Score file
+                      and allow them to be set from the Single Design Parameter set
+                1 - which means to try to load the side/grain value from the Score file
+                      If the side/grain value cannot be found then the values from the
+                      parameter set are used.(this is the default when not defined)
+<DESIGN_SIDE use_value_from_file="0"/>
+<DESIGN_GRAIN use_value_from_file="1"/>
+-->
+
+<!-- special rule definition -->
+<SPECIAL_RULE_LIST>
+  <!-- Custom ArtiosCAD special rules can be defined here (max 40) and will automatically
+       be created in the new ArtiosCAD file. These rules can be used in the LINE_TYPE_MAPPING
+       (below) by specifying the name in the spname attribute.
+
+       SPECIAL_RULEs have unique parameters based on the generic rule type (gentype).  These
+       are defined in the defstring1, defstring2 and defstring3 attributes and can be copied 
+       from other ArtiosCAD import tuning files (.itune).  To see what they might be, you can map
+       dxf patterns to ArtiosCAD special rule.  The resulting .itune file might have this as an entry
+       
+       <SPECIALRULE>
+       3 "1/2 1/2 perf"
+       12.7000 12.7000 6.3500 0 0  
+       0 0.0000
+       0.0000 0.0000000 0 0 0.0000 0.0000 0.0000
+
+       Below are examples of a special rule definition
+           <SPECIAL_RULE name="1/2 1/2 perf" gentype="3" label="1/2 1/2 perf"
+                defstring1="12.7000 12.7000 6.3500 0 0"
+	        defstring2="0 0.0000"
+                defstring3="0.0000 0.0000000 0 0 0.0000 0.0000 0.0000"/>
+
+           <SPECIAL_RULE name="1/2 1/2 cut &amp; crease" gentype="5" label="My Label"
+                defstring1="12.7000 12.7000 6.3500 2 0"
+	        defstring2="0 0.0000"
+                defstring3="0.0000 0.0000000 0 0 0.0000 0.0000 0.0000"/>
+   -->
+</SPECIAL_RULE_LIST>
+
+<!-- line type mapping -->
+<LINE_TYPE_MAPPING>
+  <!-- Maps Score line input attributes to ArtiosCAD Line types.
+       The mapping is applied in the order read and uses the first mapping which matches all the
+       input attributes.  Any attribute which is not defined is considered a wildcard.
+
+       Below is an example showing all the possible attributes
+             <LINE_TYPE_MAP>
+               <IN_ATTS  type="102" ruleid="2" auxtype="0" pointage="2" color="4" style="2" width="3"/> 
+               <OUT_ATTS type="1" auxtype="0" pointage="2" /> 
+             </LINE_TYPE_MAP>
+  -->
+
+  <!-- IN_ATTS can have attributes of
+       type - Score 6+ line type - see Score 6 default line type table (below)
+       ruleid - Score 6+ rule type 
+       auxtype - Score 6+ auxtype
+       pointage - Score 6+ pointage
+       color - color attribute - see Score 6 default color table (below)
+       style - pattern attribute (lnfont) - see Score 6 default pattern table (below)
+       width - weight attribute (lnwidth) - see Score 6 default weight table (below)
+   -->
+
+  <!-- OUT_ATTS can have attributes of
+       type - the destination ArtiosCAD line type - see default ArtiosCAD line type table (below)
+       auxtype - destination ArtiosCAD subtype (ranges 0-100)
+       pointage - destination ArtiosCAD pointage (number 0-9, and 1.5)
+       spname - special rule name (must be defined in the SPECIAL_RULE_LIST above)
+                In this case the type attribute is ignored
+   -->
+
+  <!-- default Score 6+ tuning using score line type -->
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="0"/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="10"/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="80"/>
+    <OUT_ATTS type="34"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="101"/>
+    <OUT_ATTS type="1"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="102"/>
+    <OUT_ATTS type="2"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="103"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="104"/>
+    <OUT_ATTS type="4"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="105"/>
+    <OUT_ATTS type="5"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="106"/>
+    <OUT_ATTS type="15"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="107"/>
+    <OUT_ATTS type="9"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="108"/>
+    <OUT_ATTS type="16"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="109"/>
+    <OUT_ATTS type="13"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="110"/>
+    <OUT_ATTS type="13"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="112"/>
+    <OUT_ATTS type="93"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="113"/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS type="115"/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+
+  <!-- default Score PRE-6 tuning using score style (lnfont) -->
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="0"/>
+    <OUT_ATTS type="1"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="1"/>
+    <OUT_ATTS type="34"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="2"/>
+    <OUT_ATTS type="1"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="3"/>
+    <OUT_ATTS type="1"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="4"/>
+    <OUT_ATTS type="2"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="5"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="6"/>
+    <OUT_ATTS type="4"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="7"/>
+    <OUT_ATTS type="5"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="8"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="9"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="10"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="11"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="12"/>
+    <OUT_ATTS type="93"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="13"/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="14"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="15"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="16"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="17"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="18"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="19"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="20"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="21"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="22"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="23"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="24"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="25"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="26"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="27"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="28"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="29"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="30"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+  <LINE_TYPE_MAP>
+    <IN_ATTS style="31"/>
+    <OUT_ATTS type="3"/>
+  </LINE_TYPE_MAP>
+
+  <!-- all other lines to annotation -->
+  <LINE_TYPE_MAP>
+    <IN_ATTS/>
+    <OUT_ATTS type="0"/>
+  </LINE_TYPE_MAP>
+
+  <!-- Add more here -->
+</LINE_TYPE_MAPPING>
+
+
+<!-- The following section (MAIN_MODEL) helps with finding the main Score Model to import -->
+<!-- The main model is used to create the ArtiosCAD Main Design layer and the main Dimension layer.
+     All dimension items from all layers of the main Model will be inserted in to a Dimension layer
+     while all other items will be placed in the Main Design layer.    -->
+
+<MAIN_MODEL>
+  <!-- The main model can be found by first looking for a named Sheet.
+       A Sheet name search list can be defined using <SHEET_SEARCH_LIST>.
+       A name of "*" means to use the first Sheet     -->
+  <!-- sheet search list -->
+  <SHEET_SEARCH_LIST>
+    <SHEET name="Full-Current"/>
+  </SHEET_SEARCH_LIST>
+
+  <!-- The active model associated with a sheet is actually stored in a child View object.
+       A View name search list can be defined using <VIEW_SEARCH_LIST>.
+       A name of "*" means to use the first View     -->
+  <!-- view search list (within sheet) -->
+  <VIEW_SEARCH_LIST>
+    <VIEW name="*"/>
+  </VIEW_SEARCH_LIST>
+
+  <!-- If Score Sheets were not used or if the Sheet was not found using the SHEET_SEARCH_LIST,
+       The main Model can still be found using a <MODEL_SEARCH_LIST>.
+       A name of "*" means to use the first Model     -->
+  <!-- model search list -->
+  <MODEL_SEARCH_LIST>
+    <MODEL name="Model 1"/>
+    <MODEL name="*"/>
+  </MODEL_SEARCH_LIST>
+
+  <!-- You may want to prevent certain layers of the main Model from being imported.
+       The <LAYER_SKIP_LIST> allows you to specify a list of layers to skip (no wildcards) -->
+  <LAYER_SKIP_LIST>
+    <LAYER name="Foldup"/>
+  </LAYER_SKIP_LIST>
+
+
+  <!-- The following tag specifies the name of the main Dimension layer created.
+       "Dimension" will be used if this tag is not defined -->
+  <MAIN_DIMENSION_LAYER_NAME name="Dimension"/>
+
+  <!-- The following tag specifies the name of the main Construction layer created.
+       Construction lines will not be split out to a Construction layer if this tag is not defined -->
+  <MAIN_CONSTRUCTION_LAYER_NAME name="Construction"/>
+
+</MAIN_MODEL>
+
+
+<!-- The other remaining Models can also be imported using the following options.
+     Each layer of any other Models found is imported as an Annotation layer where
+     the layer name is a combination of the Model name and Layer name
+     If this <OTHER_MODELS> tag is skipped - no other Models are imported      -->
+<OTHER_MODELS>
+  
+  <!-- You may want to skip certain other Models from being imported.
+       The <MODEL_SKIP_LIST> allows you to specify a list of other Models to skip (no wildcards)   -->
+  <MODEL_SKIP_LIST>
+    <MODEL name="Foldup"/>
+  </MODEL_SKIP_LIST>
+
+  <!-- You may want to prevent certain layers across the other Models from being imported.
+       The <LAYER_SKIP_LIST> allows you to specify a list of layers to skip (no wildcards)   -->
+  <LAYER_SKIP_LIST>
+    <LAYER name="Foldup"/>
+  </LAYER_SKIP_LIST>
+
+</OTHER_MODELS>
+
+<!-- The following tag specifies has options for displaying text in a GDT object.
+     font - is the name of the font to use
+     sizefactor - is the multiplication factor to adjust the height of the text 
+     xoffsetsizefactor - height multiplication factor to adjust the starting x offset of the GDT - default =0
+     yoffsetsizefactor - height multiplication factor to adjust the starting y offset of the GDT - default =0.4
+-->
+<GDT_OPTIONS font="MS UI Gothic" sizefactor="10"/>
+
+<CROSS_HATCH_MAPPING>
+  <!-- Maps Score Cross Hatch pattern into a simple ArtiosCAD hatch patern.
+       The mapping is based on the Score Hatch name
+
+       Below is an example showing all the possible attributes
+       <CROSS_HATCH_MAP name="Iron" angle="45" width="5" crossangle="90" type="2" pointage="1.5"/>
+       where
+           name - is the Score crosshatch name, use "*" for a wildcard, case insensitive
+           angle - the main ArtiosCAD hatch line angle in degrees
+           width - the spacing between hatch lines (in mm)
+           crossangle - cross hatch line angle (if omitted not cross lines)
+           type - the cross hatch destination line type
+                  (if omitted the line type of the first line in the bounding path will be used)
+           pointage - the destination line pointage
+
+     If no mapping is specified, the following map is automattically applied
+         <CROSS_HATCH_MAP name="*" angle="45" width="5" />
+  -->
+    <CROSS_HATCH_MAP name="*" angle="45" crossangle="135" width="5" />
+</CROSS_HATCH_MAPPING>
+
+<FONT_MAPPING>
+  <!-- Maps Score font to an ArtiosCAD font.
+       The mapping is based on the font name
+
+       Below is an example showing all the possible attributes
+       <FONT_MAP name="Arial" newname="Courier"/>
+       where
+           name - is the name of the font in the Score file, use "*" for a wildcard, case insensitive
+           newname - is the name of the new font in ArtiosCAD
+  -->
+<FONT_MAP name="*" newname="MS UI Gothic"/>
+</FONT_MAPPING>
+
+<!-- For 3D support, the 3D fold angles and base face can also be imported.
+     These are typically found on the creases in the Foldup layer of the Foldup model
+     If this <FOLDUP> tag is skipped fold angles are not imported      -->
+<FOLDUP>
+  <FOLDUP_SEARCH model="Foldup" layer="Foldup"/>
+  <FOLDUP_SEARCH model="Model 1" layer="Foldup"/>
+</FOLDUP>
+
+</SCORE_IMPORT_TUNE>
+
+
+
+
+
+<!-- LOOK-UP Tables - for reference only -->
+
+<!-- Score 6 default line type table, based on DDES 3 designation
+     type="0"   name="Annotation"
+     type="10"  name="Crosses"
+     type="80" name="Construction"
+     type="113" name="Chopper"
+     type="115" name="Tester"
+     type="101" name="Knife"
+     type="102" name="Crease"
+     type="103" name="Perforation"
+     type="104" name="Cutscore"
+     type="105" name="Cut-Crease" 
+     type="106" name="Cutscore_Crease"
+     type="107" name="Reverse Cutscore"
+     type="108" name="Emboss"
+     type="109" name="Zipper"
+     type="110" name="Wave"
+     type="112" name="Stripping"
+     type="113" name="Chopper"
+     type="115" name="Tester"
+-->
+
+<!-- Score 6 default color table
+     color="0"   name="Black"
+     color="1"   name="Red"
+     color="2"   name="Yellow"
+     color="3"   name="Green"
+     color="4"   name="Cyan"
+     color="5"   name="Blue"
+     color="6"   name="Magenta"
+     color="7"   name="White"
+     color="8"   name="Apricot"
+     color="9"   name="Aquamarine"
+     color="10"  name="Bittersweet"
+     color="11"  name="Blue Green"
+     color="12"  name="Blue Grey"
+     color="13"  name="Blue Violet"
+     color="14"  name="Brick Red"
+     color="15"  name="Burnt Orange"
+     color="16"  name="Burnt Sienna"
+     color="17"  name="Cadet Blue"
+     color="18"  name="Carnation Pink"
+     color="19"  name="Corn Flower"
+     color="20"  name="Forest Green"
+     color="21"  name="Gold"
+     color="22"  name="Goldenrod"
+     color="23"  name="Gray"
+     color="24"  name="Green Blue"
+     color="25"  name="Green Yellow"
+     color="26"  name="Indian Red"
+     color="27"  name="Lavender"
+     color="28"  name="Lemon Yellow"
+     color="29"  name="Maize"
+     color="30"  name="Maroon"
+     color="31"  name="Melon"
+     color="32"  name="Midnight Blue"
+     color="33"  name="Brown"
+     color="34"  name="Mullberry"
+     color="35"  name="Navy Blue"
+     color="36"  name="Olive Green"
+     color="37"  name="Orange Red"
+     color="38"  name="Orange Yellow"
+     color="39"  name="Orange"
+     color="40"  name="Orchid"
+     color="41"  name="Peach"
+     color="42"  name="Periwinkle"
+     color="43"  name="Pine Green"
+     color="44"  name="Raw Sienna"
+     color="45"  name="Raw Umber"
+     color="46"  name="Red Orange"
+     color="47"  name="Red Violet"
+     color="48"  name="Salmon"
+     color="49"  name="Sea Green"
+     color="50"  name="Sepia"
+     color="51"  name="Silver"
+     color="52"  name="Sky Blue"
+     color="53"  name="Spring Green"
+     color="54"  name="Tan"
+     color="55"  name="Thistle"
+     color="56"  name="Turquoise Blue"
+     color="57"  name="Violet Blue"
+     color="58"  name="Violet Red"
+     color="59"  name="Violet"
+     color="60"  name="Yellow Green"
+     color="61"  name="Yellow Orange"
+     color="62"  name="Wild Strawberry"
+     color="63"  name="Vivid Tangerine"
+   -->
+
+<!-- Score 6 default pattern table
+     style="0"   name="Solid"
+     style="1"   name="Dotted"
+     style="2"   name="?"
+     style="3"   name="?"
+     style="4"   name="Crease"
+     style="5"   name="Perforation"
+     style="6"   name="Cut-Score"
+     style="7"   name="Cut-Crease"
+     style="8"   name="1/8x1/8 Perf"
+     style="9"   name="1/4x1/4 Perf"
+     style="10"   name="3/8x3/8 Perf"
+     style="11"   name="1/2x1/2 Perf"
+     style="12"  name="Center"
+     style="13"  name="3/16x3/16"
+     style="14"  name="1x1"
+     style="15"  name="3/4x3/4"
+     style="16"  name="1/4x1/8"
+     style="17"  name="1/2x1/4"
+     style="18"  name="1/16x1/16"
+     style="19"  name="3/16x1/32"
+     style="20"  name="3/16x1/16"
+     style="21"  name="3/16x3/32"
+     style="22"  name="1/4x1/32"
+     style="23"  name="3/8x1/8"
+     style="24"  name="3/8x3/16"
+     style="25"  name="1x1/8"
+     style="26"  name="1/2x1/8"
+     style="27"  name="3/4x1/4"
+     style="28"  name="1/2x3/16"
+   -->
+
+<!-- Score 6 default weight table
+     width="0"   name=".002""
+     width="1"   name=".005""
+     width="2"   name=".010""
+     width="3"   name=".016""
+     width="4"   name=".020""
+     width="5"   name=".032""
+     width="6"   name=".040""
+     width="7"   name=".050""
+   -->
+
+
+<!-- ArtiosCAD line type table
+     type="0"      "Annotation"
+     type="1"      "Cut"
+     type="2"      "Crease"
+     type="3"      "Generic perf"
+     type="4"      "Partial cut"
+     type="5"      "Generic cut and crease"
+     type="6"      "Generic perf in channel"
+     type="7"      "Glue assist"
+     type="8"      "Reverse crease"
+     type="9"      "Reverse partial cut"
+     type="10"     "Print registration"
+     type="11"     "Outside bleed"
+     type="12"     "Unknifed diecut"
+     type="13"     "Generic special rule"
+     type="14"     "Print images"
+     type="15"     "Partial cut and crease"
+     type="16"     "Half crease"
+     type="17"     "Nick"
+     type="18"     "Die etch"
+     type="19"     "Side bevel"
+     type="20"     "Dimensions and text"
+     type="23"     "Form lines 1"
+     type="24"     "Form lines 2"
+     type="31"     "Axes"
+     type="32"     "Construction line 3"
+     type="33"     "Construction line 2"
+     type="34"     "Construction line 1"
+     type="84"     "Glue-to"
+     type="85"     "Outside coating"
+     type="92"     "Upper stripping board"
+     type="93"     "Stripping rule"
+     type="94"     "Carrier rule"
+     type="95"     "Lower stripping board"
+     type="96"     "Scrap knife"
+     type="97"     "Usable limit of sheet"
+     type="98"     "Edge of sheet"
+     type="100"    "With grain crease"
+     type="101"    "Cross grain crease"
+     type="102"    "Crease end tool"
+     type="103"    "Periphery tool"
+     type="104"    "Chamfer tool"
+     type="105"    "With grain slot tool"
+     type="106"    "Cross grain slot tool"
+     type="107"    "Name tool"
+     type="108"    "Positioning hole tool"
+     type="109"    "Milling tool"
+     type="110"    "Counter mill outline"
+     type="111"    "Position holes tool 2"
+     type="120"    "Sample knife"
+     type="121"    "Sample partial cut knife"
+     type="122"    "Sample crease with grain"
+     type="123"    "Sample crease cross grain"
+     type="124"    "Sample pen 1"
+     type="125"    "Sample pen 2"
+     type="126"    "Sample pen 3"
+     type="127"    "Sample pen 4"
+     type="128"    "Sample reverse partial cut"
+     type="129"    "Sample reverse crease"
+     type="130"    "Sample reverse crease cross grain"
+     type="131"    "Sample counter knife"
+     type="132"    "Sample counter router with grain"
+     type="133"    "Sample counter router cross grain"
+     type="134"    "Sample counter pen"
+     type="140"    "Tool 1"
+	...
+     type="169"    "Tool 30"
+     type="170"    "Die board edge"
+     type="171"    "Die registration hole"
+     type="172"    "Lead hole"
+     type="173"    "Unknifed lead in"
+     type="174"    "Die split"
+     type="175"    "Lower board edge"
+     type="176"    "Lower stripping hole"
+     type="177"    "Lower registration hole"
+     type="178"    "Lower etch"
+     type="179"    "Unknifed lower"
+     type="180"    "Hole inside modifier"
+     type="181"    "Hole outside modifier"
+     type="182"    "Hole interference"
+     type="183"    "Upper board edge"
+     type="184"    "Stripping block"
+     type="185"    "Block pin"
+     type="186"    "Upper stripping rule"
+     type="187"    "Pusher base"
+     type="188"    "Pusher active part"
+     type="189"    "Pusher shoulder"
+     type="190"    "Pusher clearance"
+     type="191"    "Upper air hole"
+     type="192"    "Upper registration hole"
+     type="193"    "Upper etch"
+     type="194"    "Unknifed upper"
+     type="195"    "Front waste edge"
+     type="196"    "Front waste registration hole"
+     type="197"    "Front waste etch"
+     type="198"    "Blanker board edge"
+     type="199"    "Blanker pusher"
+     type="200"    "Blanker registration hole"
+     type="201"    "Blanker etch"
+     type="202"    "Unknifed blanker"
+     type="203"    "Stripping component alignment"
+     type="204"    "Stripping component carrier alignment"
+     type="205"    "Tear"
+     type="206"    "Bend"
+     type="207"    "Annotation2"
+     type="208"    "Annotation3"
+     type="209"    "Annotation4"
+     type="210"    "Annotation5"
+     type="211"    "Glue"
+     type="212"    "Inside bleed"
+     type="213"    "Inside coating"
+     type="214"    "Delete under"
+     type="215"    "Size only"
+     type="216"    "Laser position holes"
+     type="217"    "Die bolt holes"
+     type="218"    "Balance knife"
+     type="219"    "Gripper fingers"
+     type="220"    "Rubber inside edge"
+     type="221"    "Rubber outline"
+     type="222"    "Rubber name"
+     type="223"    "Second height crease"
+     type="224"    "Matrix crease"
+     type="225"    "Sample 2nd height crease with grain"
+     type="226"    "Sample 2nd height crease cross grain"
+   -->
+
+

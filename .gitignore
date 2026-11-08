@@ -1,0 +1,6 @@
+# Excluir instalador pesado (>1 GB) de Esko ArtiosCAD (los recursos ya están extraídos en assets/ y artios-assets.js)
+*.7z
+*.zip
+*.cab
+*.msi
+extracted_artios/

@@ -1,0 +1,258 @@
+﻿<Definitions>
+	<Usage>
+		<Line0>Linetype Definitions used in the export of DXF/DWG files using the export tuning file</Line0>
+		<Line1>Name attribute specifies the linetype name in DWG/DXF file. Do not use spaces in name as tuning file fields are seperated by spaces. Should not be blank and unique (later wins if duplicate)</Line1>
+		<Line2>Count specifies the number of Dash/Dot elements</Line2>
+		<Line3>Dash tags specifies the pen-up (-ve float value) or pen-down (+ve float value) or single-dot (0.0 value). All values are in MM. Tags should be sequential</Line3>
+		<Line4>Do not use 2 or more dots/up/down commands consecutively in the definitioin</Line4>
+		<Line5>Unitless="1" specifies not to scale line definition by 25.4 for Imperial export</Line5>
+	</Usage>
+	<Linetype name="BORDER" count="6">
+		<Dash1>12.7</Dash1>
+		<Dash2>-6.35</Dash2>
+		<Dash3>12.7</Dash3>
+		<Dash4>-6.35</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-6.35</Dash6>
+	</Linetype>
+	<Linetype name="BORDER2" count="6">
+		<Dash1>6.35</Dash1>
+		<Dash2>-3.175</Dash2>
+		<Dash3>6.35</Dash3>
+		<Dash4>-3.175</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3.175</Dash6>
+	</Linetype>
+	<Linetype name="BORDERX2" count="6">
+		<Dash1>25.4</Dash1>
+		<Dash2>-12.7</Dash2>
+		<Dash3>25.4</Dash3>
+		<Dash4>-12.7</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-12.7</Dash6>
+	</Linetype>
+	<Linetype name="CENTER" count="4">
+		<Dash1>31.75</Dash1>
+		<Dash2>-6.35</Dash2>
+		<Dash3>6.35</Dash3>
+		<Dash4>-6.35</Dash4>
+	</Linetype>
+	<Linetype name="CENTER2" count="4">
+		<Dash1>19.05</Dash1>
+		<Dash2>-3.175</Dash2>
+		<Dash3>3.175</Dash3>
+		<Dash4>-3.175</Dash4>
+	</Linetype>
+	<Linetype name="CENTERX2" count="4">
+		<Dash1>63.5</Dash1>
+		<Dash2>-12.7</Dash2>
+		<Dash3>12.7</Dash3>
+		<Dash4>-12.7</Dash4>
+	</Linetype>
+	<Linetype name="DASHDOT" count="4">
+		<Dash1>12.7</Dash1>
+		<Dash2>-6.35</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-6.35</Dash4>
+	</Linetype>
+	<Linetype name="DASHDOT2" count="4">
+		<Dash1>6.35</Dash1>
+		<Dash2>-3.175</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3.175</Dash4>
+	</Linetype>
+	<Linetype name="DASHDOTX2" count="4">
+		<Dash1>25.4</Dash1>
+		<Dash2>-12.7</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-12.7</Dash4>
+	</Linetype>
+	<Linetype name="DASHED" count="2">
+		<Dash1>12.7</Dash1>
+		<Dash2>-6.35</Dash2>
+	</Linetype>
+	<Linetype name="DASHED2" count="2">
+		<Dash1>6.35</Dash1>
+		<Dash2>-3.175</Dash2>
+	</Linetype>
+	<Linetype name="DASHEDX2" count="2">
+		<Dash1>25.4</Dash1>
+		<Dash2>-12.7</Dash2>
+	</Linetype>
+	<Linetype name="DIVIDE" count="6">
+		<Dash1>12.7</Dash1>
+		<Dash2>-6.35</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-6.35</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-6.35</Dash6>
+	</Linetype>
+	<Linetype name="DIVIDE2" count="6">
+		<Dash1>6.35</Dash1>
+		<Dash2>-3.175</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3.175</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3.175</Dash6>
+	</Linetype>
+	<Linetype name="DIVIDEX2" count="6">
+		<Dash1>25.4</Dash1>
+		<Dash2>-12.7</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-12.7</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-12.7</Dash6>
+	</Linetype>
+	<Linetype name="DOT" count="2">
+		<Dash1>0</Dash1>
+		<Dash2>-6.35</Dash2>
+	</Linetype>
+	<Linetype name="DOT2" count="2">
+		<Dash1>0</Dash1>
+		<Dash2>-3.175</Dash2>
+	</Linetype>
+	<Linetype name="DOTX2" count="2">
+		<Dash1>0</Dash1>
+		<Dash2>-12.7</Dash2>
+	</Linetype>
+	<Linetype name="HIDDEN" count="2">
+		<Dash1>6.35</Dash1>
+		<Dash2>-3.175</Dash2>
+	</Linetype>
+	<Linetype name="HIDDEN2" count="2">
+		<Dash1>3.175</Dash1>
+		<Dash2>-1.5875</Dash2>
+	</Linetype>
+	<Linetype name="HIDDENX2" count="2">
+		<Dash1>12.7</Dash1>
+		<Dash2>-6.35</Dash2>
+	</Linetype>
+	<Linetype name="PHANTOM" count="6">
+		<Dash1>31.75</Dash1>
+		<Dash2>-6.35</Dash2>
+		<Dash3>6.35</Dash3>
+		<Dash4>-6.35</Dash4>
+		<Dash5>6.35</Dash5>
+		<Dash6>-6.35</Dash6>
+	</Linetype>
+	<Linetype name="PHANTOM2" count="6">
+		<Dash1>15.875</Dash1>
+		<Dash2>-3.175</Dash2>
+		<Dash3>3.175</Dash3>
+		<Dash4>-3.175</Dash4>
+		<Dash5>3.175</Dash5>
+		<Dash6>-3.175</Dash6>
+	</Linetype>
+	<Linetype name="PHANTOMX2" count="6">
+		<Dash1>63.5</Dash1>
+		<Dash2>-12.7</Dash2>
+		<Dash3>12.7</Dash3>
+		<Dash4>-12.7</Dash4>
+		<Dash5>12.7</Dash5>
+		<Dash6>-12.7</Dash6>
+	</Linetype>
+	<Linetype name="ACAD_ISO02W100" count="2" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+	</Linetype>
+	<Linetype name="ACAD_ISO03W100" count="2" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-18</Dash2>
+	</Linetype>
+	<Linetype name="ACAD_ISO04W100" count="4" UnitLess="1">
+		<Dash1>24</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+	</Linetype>
+	<Linetype name="ACAD_ISO05W100" count="6" UnitLess="1">
+		<Dash1>24</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+	</Linetype>
+	<Linetype name="ACAD_ISO06W100" count="8" UnitLess="1">
+		<Dash1>24</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+		<Dash7>0</Dash7>
+		<Dash8>-3</Dash8>
+	</Linetype>
+	<Linetype name="ACAD_ISO07W100" count="2" UnitLess="1">
+		<Dash1>0</Dash1>
+		<Dash2>-3</Dash2>
+	</Linetype>
+	<Linetype name="ACAD_ISO08W100" count="4" UnitLess="1">
+		<Dash1>24</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>6</Dash3>
+		<Dash4>-3</Dash4>
+	</Linetype>
+	<Linetype name="ACAD_ISO09W100" count="6" UnitLess="1">
+		<Dash1>24</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>6</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>6</Dash5>
+		<Dash6>-3</Dash6>
+	</Linetype>
+	<Linetype name="ACAD_ISO10W100" count="4" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+	</Linetype>
+	<Linetype name="ACAD_ISO11W100" count="6" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>12</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+	</Linetype>
+	<Linetype name="ACAD_ISO12W100" count="6" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+	</Linetype>
+	<Linetype name="ACAD_ISO13W100" count="8" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>12</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+		<Dash7>0</Dash7>
+		<Dash8>-3</Dash8>
+	</Linetype>
+	<Linetype name="ACAD_ISO14W100" count="8" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>0</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+		<Dash7>0</Dash7>
+		<Dash8>-3</Dash8>
+	</Linetype>
+	<Linetype name="ACAD_ISO15W100" count="10" UnitLess="1">
+		<Dash1>12</Dash1>
+		<Dash2>-3</Dash2>
+		<Dash3>12</Dash3>
+		<Dash4>-3</Dash4>
+		<Dash5>0</Dash5>
+		<Dash6>-3</Dash6>
+		<Dash7>0</Dash7>
+		<Dash8>-3</Dash8>
+		<Dash9>0</Dash9>
+		<Dash10>-3</Dash10>
+	</Linetype>
+</Definitions>

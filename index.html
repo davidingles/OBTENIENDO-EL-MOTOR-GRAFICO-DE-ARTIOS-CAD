@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Motor Gráfico 3D de Packaging (ArtiosCAD Engine · Escala 1:1 mm)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- BARRA SUPERIOR CAD -->
+  <header class="cad-topbar">
+    <div class="brand-block">
+      <div class="brand-logo">3D</div>
+      <div>
+        <div class="brand-title">
+          PACKAGING CAD 3D STUDIO
+          <span class="brand-badge">MOTOR ARTIOSCAD 12.0 · 1:1 MM</span>
+        </div>
+        <div class="brand-subtitle">Hendidos Chafados en Ambas Caras · Ejes en Centro del Espesor · Exportador .GLB Animado para Blender</div>
+      </div>
+    </div>
+
+    <div class="topbar-center">
+      <div class="view-switcher">
+        <button class="view-btn active" data-view-mode="split">Vista Dividida (2D + 3D)</button>
+        <button class="view-btn" data-view-mode="3d">Solo Estudio 3D</button>
+        <button class="view-btn" data-view-mode="2d">Solo Troquel 2D (mm)</button>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <label for="svg-file-input" class="cad-btn primary" title="Abrir cualquier archivo .SVG con líneas azules (corte) y rojas (doblez)">
+        📂 Abrir .SVG
+      </label>
+      <input type="file" id="svg-file-input" accept=".svg" class="hidden-input" />
+
+      <label for="artwork-file-input" class="cad-btn" title="Aplicar diseño gráfico o arte sobre la cara exterior">
+        🎨 Arte Exterior
+      </label>
+      <input type="file" id="artwork-file-input" accept="image/*" class="hidden-input" />
+      <button id="btn-clear-artwork" class="cad-btn" title="Restaurar textura de cartón original">↺</button>
+
+      <button id="btn-export-glb" class="cad-btn blender-btn" title="Exportar modelo 3D y su animación de plegado en formato .GLB a escala 1:1 en mm listo para Blender">
+        🟠 Exportar .GLB (Blender + Animación)
+      </button>
+      <button id="btn-export-obj" class="cad-btn" title="Exportar malla 3D estática en formato .OBJ a escala 1:1 en mm">📦 .OBJ</button>
+      <button id="btn-export-png" class="cad-btn" title="Guardar captura 3D en PNG">📷 PNG</button>
+    </div>
+  </header>
+
+  <!-- CUERPO PRINCIPAL -->
+  <main class="cad-main">
+
+    <!-- PANEL IZQUIERDO: REGLAS DEL SVG, CALIBRACIÓN 1:1, MATERIALES Y CHAFADO DE HENDIDOS -->
+    <aside class="cad-sidebar left">
+
+      <!-- Convención de colores solicitada -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">📐 Regla de Troquel y Escala 1:1</span>
+        </div>
+        <div class="legend-row">
+          <div class="legend-pill">
+            <span class="line-swatch cut"></span>
+            <span>Azul = Corte</span>
+          </div>
+          <div class="legend-pill">
+            <span class="line-swatch crease"></span>
+            <span>Rojo = Hendido Chafado</span>
+          </div>
+        </div>
+
+        <div class="kv-list">
+          <div class="kv-item">
+            <span>Archivo activo:</span>
+            <strong id="info-filename">b1 caja americana.svg</strong>
+          </div>
+          <div class="kv-item">
+            <span>Pliego total (1:1):</span>
+            <strong id="info-blank-size">542.74 × 220.86 mm</strong>
+          </div>
+          <div class="kv-item">
+            <span>Calibración:</span>
+            <strong id="info-cota-source" style="font-size:10.5px; color:#38bdf8;">Cota detectada: 542.74 mm</strong>
+          </div>
+          <div class="kv-item">
+            <span>Topología detectada:</span>
+            <strong id="info-panel-count">13 paneles</strong>
+          </div>
+          <div class="kv-item">
+            <span>Bisagras / Cortes:</span>
+            <strong><span id="info-hinge-count">12 líneas rojas</span> · <span id="info-cut-count">266 tramos</span></strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Base de datos de Cartones y Espesores ArtiosCAD 12.0 -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">📦 Espesor y Material (ArtiosCAD DB)</span>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">
+            <span>Calidad de Cartón (ArtiosCAD 12.0):</span>
+          </div>
+          <select id="board-select" class="cad-select"></select>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">
+            <span>Espesor / Calibre del Cartón:</span>
+            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
+              <input type="number" id="caliper-num" min="0.4" max="15.0" step="0.1" value="3.0" class="cad-num-input" />
+              <span class="num-unit">mm</span>
+            </div>
+          </div>
+          <input type="range" id="caliper-slider" min="0.4" max="15.0" step="0.1" value="3.0" class="cad-slider" />
+          <div class="preset-row">
+            <button class="preset-chip" data-caliper-preset="1.5">1.5 mm</button>
+            <button class="preset-chip" data-caliper-preset="3.0">3.0 mm</button>
+            <button class="preset-chip" data-caliper-preset="5.0">5.0 mm</button>
+            <button class="preset-chip" data-caliper-preset="8.0">8.0 mm</button>
+          </div>
+        </div>
+
+        <div class="kv-list" style="margin-top:10px;">
+          <div class="kv-item">
+            <span>Tipo de Onda / Flauta:</span>
+            <strong id="board-flute-code">Onda B (420 g/m²)</strong>
+          </div>
+          <div class="kv-item">
+            <span>Inside Loss / Outside Gain:</span>
+            <strong id="board-loss-gain">-2.0 / +1.0 mm</strong>
+          </div>
+          <div class="kv-item">
+            <span>Textura ArtiosCAD:</span>
+            <strong id="board-tex-info" style="font-size:10.5px;">boardbrown.jpg + boardedge3.JPG</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Hendido Chafado / Hundido en Líneas Rojas (Ambas Caras) -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🔨 Hendido Chafado (Ambas Caras)</span>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">
+            <span>Profundidad de Chafado (Int. + Ext.):</span>
+            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
+              <input type="number" id="crush-depth-num" min="0" max="85" step="1" value="72" class="cad-num-input" />
+              <span class="num-unit">%</span>
+            </div>
+          </div>
+          <input type="range" id="crush-depth-slider" min="0" max="85" step="1" value="72" class="cad-slider fold-master" />
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">
+            <span>Anchura del Surco de Hendido:</span>
+            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
+              <input type="number" id="crease-width-num" min="0.5" max="2.4" step="0.05" value="1.25" class="cad-num-input" />
+              <span class="num-unit">× esp</span>
+            </div>
+          </div>
+          <input type="range" id="crease-width-slider" min="0.5" max="2.4" step="0.05" value="1.25" class="cad-slider" />
+        </div>
+      </section>
+
+      <!-- Inspector de Cara Seleccionada -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">🔍 Panel / Cara Seleccionada</span>
+        </div>
+        <div id="selected-face-info" class="selected-face-card">
+          Haz clic en cualquier panel del plano 2D o del modelo 3D para inspeccionar sus medidas exactas en mm.
+        </div>
+      </section>
+
+      <!-- Opciones de Visualización -->
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">👁️ Opciones de Visualización 3D</span>
+        </div>
+        <div class="check-list">
+          <label class="check-item">
+            <input type="checkbox" id="chk-standup" checked />
+            <span>Posicionar caja armada de pie sobre la base</span>
+          </label>
+          <label class="check-item">
+            <input type="checkbox" id="chk-crease-3d" />
+            <span>Superponer línea guía roja sobre el surco 3D</span>
+          </label>
+          <label class="check-item">
+            <input type="checkbox" id="chk-cut-3d" checked />
+            <span>Mostrar contornos azules de corte en 3D</span>
+          </label>
+          <label class="check-item">
+            <input type="checkbox" id="chk-dims-3d" checked />
+            <span>Mostrar caja envolvente de medidas 3D</span>
+          </label>
+          <label class="check-item">
+            <input type="checkbox" id="chk-grid-3d" checked />
+            <span>Mostrar suelo y rejilla milimétrica</span>
+          </label>
+          <label class="check-item">
+            <input type="checkbox" id="chk-wireframe" />
+            <span>Ver malla subdividida de hendidos (Wireframe)</span>
+          </label>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ÁREA CENTRAL: VISOR 2D + VISOR 3D -->
+    <section id="cad-workspace" class="cad-workspace" data-layout="split">
+
+      <!-- VISOR 2D DEL TROQUEL -->
+      <div class="viewport-pane viewport-2d-pane">
+        <div class="viewport-hud-top">
+          <div class="hud-badge">
+            <span>📏 Plano Troquel 2D (Escala 1:1 mm)</span>
+          </div>
+          <div class="hud-toolbar">
+            <button id="btn-reset-2d" class="hud-mini-btn" title="Centrar troquel 2D">Centrar 2D</button>
+          </div>
+        </div>
+        <canvas id="canvas-2d"></canvas>
+        <div class="viewport-hud-bottom">
+          <div class="hud-badge" style="font-size:11px; color:#94a3b8;">
+            Rueda: Zoom · Arrastrar: Mover · Banda rosa = Zona chafada del hendido
+          </div>
+        </div>
+      </div>
+
+      <!-- VISOR 3D WEBGL (THREE.JS) -->
+      <div class="viewport-pane viewport-3d-pane">
+        <div class="viewport-hud-top">
+          <div class="hud-badge">
+            <span>🧊 Volumen 3D Actual:</span>
+            <strong id="hud-3d-dims" style="color:#38bdf8; font-family:var(--font-mono);">-- × -- × -- mm</strong>
+          </div>
+          <div class="hud-toolbar">
+            <button class="hud-mini-btn" data-cam-preset="iso">Isométrica</button>
+            <button class="hud-mini-btn" data-cam-preset="front">Frontal</button>
+            <button class="hud-mini-btn" data-cam-preset="top">Superior</button>
+            <button class="hud-mini-btn" data-cam-preset="side">Lateral</button>
+            <button class="hud-mini-btn" data-cam-preset="edge" title="Acercar cámara al hendido chafado y canto corrugado">Ver Hendido/Canto</button>
+          </div>
+        </div>
+
+        <div id="viewport-3d"></div>
+
+        <div class="viewport-hud-bottom">
+          <div class="hud-badge" style="font-size:11px; color:#94a3b8;">
+            Clic Izq: Orbitar · Clic Der: Desplazar · Rueda: Zoom · Ejes de rotación en z = 0 (centro del espesor)
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- PANEL DERECHO: CINEMÁTICA DE PLEGADO Y CONTROL DE BISAGRAS (LÍNEAS ROJAS) -->
+    <aside class="cad-sidebar right">
+
+      <section class="panel-section">
+        <div class="section-header">
+          <span class="section-title">⚙️ Cinemática de Plegado 3D (Eje Central)</span>
+        </div>
+
+        <div class="control-group">
+          <button id="btn-play-fold" class="cad-btn accent-fold">
+            ▶ Animar Plegado 3D
+          </button>
+        </div>
+
+        <div class="control-group">
+          <div class="control-label">
+            <span>Plegado Maestro de Caja:</span>
+            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
+              <input type="number" id="master-fold-num" min="0" max="100" step="1" value="75" class="cad-num-input" />
+              <span class="num-unit">%</span>
+            </div>
+          </div>
+          <input type="range" id="master-fold-slider" min="0" max="100" step="1" value="75" class="cad-slider fold-master" />
+          <div class="preset-row">
+            <button class="preset-chip" data-fold-preset="0">0% Plano</button>
+            <button class="preset-chip" data-fold-preset="36">36% Tubo</button>
+            <button class="preset-chip" data-fold-preset="75">75% Base</button>
+            <button class="preset-chip" data-fold-preset="100">100% Cerrada</button>
+          </div>
+        </div>
+
+        <div class="control-group" style="margin-top:10px;">
+          <div class="control-label">
+            <span>Secuencia de Armado:</span>
+          </div>
+          <select id="fold-sequence-mode" class="cad-select">
+            <option value="phased" selected>Secuencia Realista por Fases (Cuerpo → Fondo → Tapa)</option>
+            <option value="simultaneous">Plegado Simultáneo de Todas las Caras</option>
+          </select>
+        </div>
+      </section>
+
+      <!-- Control individual de cada línea roja de doblez -->
+      <section class="panel-section" style="flex:1; display:flex; flex-direction:column;">
+        <div class="section-header">
+          <span class="section-title">🔴 Control por Línea Roja (Bisagras)</span>
+        </div>
+        <p style="font-size:11px; color:var(--text-secondary); margin-bottom:10px;">
+          Rotación sobre el centro exacto del espesor (-180° a +180°):
+        </p>
+        <div id="hinges-slider-list" class="hinges-scroll"></div>
+      </section>
+
+    </aside>
+
+  </main>
+
+  <!-- LIBRERÍAS Y MOTOR GRÁFICO LOCAL -->
+  <script src="assets/libs/three.min.js"></script>
+  <script src="assets/libs/OrbitControls.js"></script>
+  <script src="assets/libs/GLTFExporter.js"></script>
+  <script src="artios-assets.js"></script>
+  <script src="dieline-engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
