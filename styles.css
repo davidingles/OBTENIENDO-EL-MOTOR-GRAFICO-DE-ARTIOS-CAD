@@ -1119,3 +1119,63 @@ html, body {
   flex-direction: column;
   gap: 4px;
 }
+
+/* El plano conserva espacio propio también en pantallas pequeñas. */
+.drawer-collapsed .drawer-card { display: none; }
+button:disabled { opacity: .4; cursor: not-allowed; }
+.catalog-more { justify-content: center; width: 100%; }
+.details-params-list { color: var(--text-secondary); line-height: 1.5; }
+@media (max-width: 1000px) {
+  html, body { overflow: auto; }
+  .app-header { height: auto; min-height: 52px; flex-wrap: wrap; gap: 8px; padding: 8px; }
+  .header-right { flex-wrap: wrap; }
+  .studio-workspace { height: auto; min-height: calc(100vh - 52px); width: 100%; display: grid; grid-template-columns: 58px minmax(0, 1fr); grid-template-rows: auto minmax(420px, 60vh) auto; overflow: visible; }
+  .vertical-nav-rail { grid-column: 1; grid-row: 1 / 4; width: 58px; }
+  .drawer-card { grid-column: 2; grid-row: 1; width: auto; max-height: 280px; overflow-y: auto; }
+  .canvas-2d-viewport { grid-column: 2; grid-row: 2; min-width: 0; min-height: 420px; }
+  .right-floating-container { grid-column: 2; grid-row: 3; position: static; width: auto; padding: 12px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .preview-3d-card.expanded { position: fixed; inset: 60px 12px 12px; width: auto; height: auto; }
+  .drawer-collapsed .studio-workspace { grid-template-rows: 0 minmax(420px, 60vh) auto; }
+}
+
+.solver-status { color: var(--text-secondary); font-size: 11px; margin: 10px 0; }
+
+.project-note { color: var(--text-secondary); line-height: 1.5; font-size: 11px; }
+.project-row { display: flex; gap: 5px; margin: 8px 0; }
+.project-open { flex: 1; overflow: hidden; text-align: left; }
+/* Tema claro: superficies suaves, contraste nítido y acentos propios. */
+:root {
+  --bg-app: #f1f3f6; --bg-topbar: #ffffff; --bg-rail: #f9fafc;
+  --bg-card: #ffffff; --bg-card-elevated: #edf3f8; --bg-input: #f5f7fa;
+  --border-subtle: #e0e5eb; --border-focus: #168bc4;
+  --text-primary: #1c2633; --text-secondary: #536274; --text-muted: #788596;
+}
+.app-header { height: 60px; padding: 0 20px; box-shadow: 0 1px 8px rgba(29,45,65,.04); }
+.studio-workspace { height: calc(100vh - 60px); }
+.app-title { color: #1c2633; font-size: 14px; letter-spacing: .045em; }
+.app-icon { background: #0788c6; box-shadow: none; }
+.header-left, .header-right { gap: 10px; }
+.btn-outline { background: #fff; border-color: #dce3eb; border-radius: 9px; padding: 8px 12px; }
+.btn-primary-blue { background: #0788c6; border-color: #0788c6; border-radius: 9px; box-shadow: 0 3px 10px rgba(0,120,180,.17); }
+.btn-primary-blue:hover { background: #0073ae; }
+.drawer-card { box-shadow: 5px 0 20px rgba(29,45,65,.045); }
+.rail-tab-btn:hover { background: #edf3f8; color: #145c84; }
+.rail-tab-btn.active { color: #007ebd; background: #e4f3fb; }
+.drawer-title, .export-card-title { letter-spacing: -.02em; }
+.field-input-box, .drawer-dropdown, .stepper-wrap, .detail-input-wrap, .dielines-search-box, .model-preview-card, .part-card, .info-block-group { border-color: #e0e6ed; border-radius: 9px; }
+.dielines-search-box input { color: var(--text-primary); }
+.info-value-big { color: var(--text-primary); }
+.info-row-val, .unlocked-title { color: #087bb6; }
+.cat-chip.active { background: #e5f4fb; border-color: #a8d9ee; color: #087bb6; }
+.card-2d-canvas-wrap, .card-3d-thumb-wrap { background: #f3f5f8; }
+.canvas-2d-viewport { background: #f1f3f6; }
+.dieline-legend-card, .canvas-bottom-toolbar { background: rgba(255,255,255,.93); border-color: #e1e7ee; box-shadow: 0 6px 24px rgba(32,48,70,.08); }
+.tool-pill-btn:hover { color: #17496a; }
+.tool-pill-btn.active { color: #087bb6; background: #e7f4fb; }
+.preview-3d-card, .export-formats-card { background: #fff; border-color: #e0e6ed; box-shadow: 0 8px 28px rgba(32,48,70,.1); }
+.card-3d-badge, .btn-expand-pip, .card-3d-slider-pill { background: rgba(255,255,255,.92); border-color: #e0e6ed; color: #486176; }
+.btn-expand-pip:hover { background: #edf3f8; color: #17496a; }
+.unit-static { font-size: 11px; color: var(--text-muted); background: #f2f5f8; border-radius: 6px; padding: 4px 8px; }
+.symmetry-option { display: flex; align-items: center; gap: 7px; margin: -4px 0 5px; color: #486176; font-size: 11px; cursor: pointer; }
+.symmetry-option input { accent-color: #0788c6; }
+@media (max-width: 1000px) { .app-header { height: auto; } .studio-workspace { height: auto; } }

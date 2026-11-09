@@ -1806,7 +1806,7 @@
    *  - Custom `.svg` dielines (RSC American boxes, trays, folding cartons)
    *  - All 116 FEFCO models (instant 60fps client-side feedback while dragging sliders/wheel)
    */
-  function resizeDielineParametric(baseModel, newL, newW, newH) {
+  function resizeDielineParametric(baseModel, newL, newW, newH, bandEdit = null) {
     if (!baseModel) return null;
     const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
     const origW = Math.max(5, baseModel.boxDimensionsMm?.width || 150);
@@ -1816,7 +1816,7 @@
     const targetW = Math.max(10, Number(newW) || origW);
     const targetH = Math.max(10, Number(newH) || origH);
 
-    if (Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
+    if (!bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
       return baseModel;
     }
 
@@ -1857,12 +1857,10 @@
     }
 
     // Fallback global scaling if a custom irregular dieline had no matching standard bands
-    const warpX = xIntervals.length > 0
-      ? buildPiecewiseAxisMap(xIntervals)
-      : (x) => x * (targetL / origL);
-    const warpY = yIntervals.length > 0
-      ? buildPiecewiseAxisMap(yIntervals)
-      : (y) => y * (targetH / origH);
+    const warpX = bandEdit ? (bandEdit.axis === 'x' ? buildPiecewiseAxisMap([bandEdit]) : (x => x)) : xIntervals.length > 0
+      ? buildPiecewiseAxisMap(xIntervals) : (x => x * (targetL / origL));
+    const warpY = bandEdit ? (bandEdit.axis === 'y' ? buildPiecewiseAxisMap([bandEdit]) : (y => y)) : yIntervals.length > 0
+      ? buildPiecewiseAxisMap(yIntervals) : (y => y * (targetH / origH));
 
     // Apply coordinate maps to all faces, holes, cutSegments, foldSegments, and hinges
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -2005,6 +2003,27 @@
   /**
    * Finds the primary lid / closure flap face of a model (used for `Parts` highlight and structural modification).
    */
+  // Solo vincula caras identificadas como izquierda/derecha cuya posición y tamaño concuerdan.
+  function findSymmetricFace(model, face, axis) {
+    if (!model || !face || !face.pacdoraName || !/[LR]$/.test(face.pacdoraName)) return null;
+    const name = face.pacdoraName;
+    const counterpart = name.slice(0, -1) + (name.endsWith('L') ? 'R' : 'L');
+    const other = model.faces.find(f => f.pacdoraName === counterpart);
+    if (!other || !face.bounds || !other.bounds) return null;
+    const a = face.bounds, b = other.bounds;
+    const close = (x, y, tolerance) => Math.abs(x - y) <= tolerance;
+    const center = (model.bounds.minX + model.bounds.maxX) / 2;
+    const toleranceX = Math.max(2, model.bounds.width * 0.015);
+    const toleranceY = Math.max(2, Math.max(a.height, b.height) * 0.03);
+    if (!close((a.minX + a.maxX + b.minX + b.maxX) / 2, center * 2, toleranceX) ||
+        !close(a.minY, b.minY, toleranceY) || !close(a.maxY, b.maxY, toleranceY) ||
+        !close(a.width, b.width, Math.max(2, Math.max(a.width, b.width) * 0.03))) return null;
+    const axisA = a.width < a.height ? 'x' : 'y';
+    const axisB = b.width < b.height ? 'x' : 'y';
+    if (axis !== axisA || axis !== axisB) return null;
+    return other;
+  }
+
   function findPrimaryLidFlapFace(model) {
     if (!model || !model.faces || model.faces.length === 0) return null;
     const byName = ['FT', 'TT', 'HT', 'FB', 'F', 'T'];
@@ -2267,7 +2286,7 @@
    * Exports any current `dieline` model (whether resized SVG or FEFCO model) to a clean 1:1 mm `.svg` string
    * with Green (#22c55e) bleed lines, Blue (#009ee3) cut lines, Red (#e5007d) crease lines, and Black dimension cota.
    */
-  function exportDielineToSVG(model, bleedMm = 5) {
+  function exportDielineToSVG(model, bleedMm = 0) {
     if (!model) return '';
     const pad = 25;
     const b = model.bounds;
@@ -2279,7 +2298,7 @@
     const lines = [];
     lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
     lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}mm" height="${totalH}mm" viewBox="0 0 ${totalW} ${totalH}">`);
-    lines.push(`  <!-- Generado por ArtiosCAD 3D Studio (Escala 1:1 mm) | L=${model.boxDimensionsMm.length} W=${model.boxDimensionsMm.width} H=${model.boxDimensionsMm.depth} mm -->`);
+    lines.push(`  <!-- Generado por TROQUELES VICENTE (Escala 1:1 mm) | L=${model.boxDimensionsMm.length} W=${model.boxDimensionsMm.width} H=${model.boxDimensionsMm.depth} mm -->`);
 
     // 1. Cota 1:1 mm (Black #000000)
     const x1 = +(b.minX + ox).toFixed(3);
@@ -2326,7 +2345,7 @@
    * Exports the active dieline to an AutoCAD / ArtiosCAD R12 `.dxf` file in 1:1 mm
    * with separate layers: `CUT` (color 5 blue), `CREASE` (color 1 red), and `BLEED` (color 3 green).
    */
-  function exportDielineToDXF(model, bleedMm = 5) {
+  function exportDielineToDXF(model, bleedMm = 0) {
     if (!model) return '';
     const b = model.bounds;
     const ox = -b.minX;
@@ -2347,7 +2366,7 @@
     pushPair(2, 'TABLES');
     pushPair(0, 'TABLE');
     pushPair(2, 'LAYER');
-    pushPair(70, 3);
+    pushPair(70, bleedMm > 0 ? 3 : 2);
 
     const addLayer = (name, colorCode) => {
       pushPair(0, 'LAYER');
@@ -2358,7 +2377,7 @@
     };
     addLayer('CUT', 5);
     addLayer('CREASE', 1);
-    addLayer('BLEED', 3);
+    if (bleedMm > 0) addLayer('BLEED', 3);
 
     pushPair(0, 'ENDTAB');
     pushPair(0, 'ENDSEC');
@@ -2400,7 +2419,7 @@
    * Generates a standalone 1:1 mm vector `.pdf` (and `.ai` Adobe Illustrator PDF-compatible) document
    * with zero watermarks, exact mm page dimensions, and vector strokes for Bleed, Cut, and Crease.
    */
-  function exportDielineToPDF(model, bleedMm = 5, isAiFormat = false) {
+  function exportDielineToPDF(model, bleedMm = 0, isAiFormat = false) {
     if (!model) return '';
     const pad = 20;
     const b = model.bounds;
@@ -2441,7 +2460,7 @@
     }
 
     // 4. Header spec text in PDF
-    const titleStr = `Dieline 1:1 mm | Mfg: ${model.boxDimensionsMm.length}x${model.boxDimensionsMm.width}x${model.boxDimensionsMm.depth} mm | Sheet: ${b.width.toFixed(1)}x${b.height.toFixed(1)} mm`;
+    const titleStr = `Troquel 1:1 mm | Fabricacion: ${model.boxDimensionsMm.length}x${model.boxDimensionsMm.width}x${model.boxDimensionsMm.depth} mm | Plano: ${b.width.toFixed(1)}x${b.height.toFixed(1)} mm`;
     streamLines.push(`BT /F1 9 Tf 0.15 0.20 0.28 rg ${+(pad * MM_TO_PT).toFixed(2)} ${+((totalHmm - 8) * MM_TO_PT).toFixed(2)} Td (${titleStr.replace(/[()\\]/g, '')}) Tj ET`);
 
     const contentStream = streamLines.join('\n');
@@ -2548,6 +2567,7 @@
     resizeDielineParametric,
     applyPartVariationToModel,
     findPrimaryLidFlapFace,
+    findSymmetricFace,
     getOrBuildBleedSegments,
     exportDielineToSVG,
     exportDielineToDXF,

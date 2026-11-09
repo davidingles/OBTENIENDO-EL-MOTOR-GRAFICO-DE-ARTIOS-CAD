@@ -23,23 +23,26 @@
     paramW: 202,            // Ancho paramétrico actual (mm)
     paramH: 62,             // Alto paramétrico actual (mm)
     unit: 'mm',             // 'mm' | 'in'
+    solverAvailable: false,
+    solverPending: false,
     sizeMode: 'dm',         // 'dm' (Mfg) | 'id' (Inner) | 'ed' (Outer)
     activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip'
     partHoverFaceId: null,  // Para resaltar la solapa en 2D al pasar el cursor sobre la tarjeta
     activeTab: 'basic',     // 'dielines' | 'basic' | 'details' | 'parts' | 'info' | 'more'
-    selectedExportFormat: 'ai', // 'ai' | 'pdf' | 'dxf' | 'svg' | 'glb' | 'png'
+    selectedExportFormat: 'svg', // 'ai' | 'pdf' | 'dxf' | 'svg' | 'glb' | 'png'
     toolMode: 'select',     // 'select' | 'pan'
-    showBleed: true,        // Línea verde de sangrado
-    bleedMm: 5,             // Sangrado en mm
+    showBleed: false,        // Línea verde de sangrado
+    bleedMm: 0,             // Sangrado en mm
     showDimensions: true,   // Cotas 2D
+    symmetryLinks: {},
     openParamsValues: {},   // Valores de Details
     fefcoFilter: 'ALL',
     fefcoSearch: '',
     boardId: 'M-125B',      // Cartón seleccionado de la base de datos ArtiosCAD
-    caliper: 1.5,           // Espesor actual en mm (escala 1:1)
+    caliper: 3.0,           // Espesor actual en mm (escala 1:1)
     insideLoss: 1.5,        // Pérdida interior de plegado (mm)
     outsideGain: 1.5,       // Ganancia exterior de plegado (mm)
-    flute: 'E',
+    flute: 'B',
     // Parámetros del Hendido Chafado (Crushed Crease Channel en líneas rojas por ambas caras)
     crushDepthRatio: 0.72,  // 72% de compresión del espesor en la línea roja (ambas caras se hunden hacia z=0)
     creaseWidthFactor: 1.25,// Anchura de la zona chafada a cada lado = 1.25 * espesor (mm)
@@ -129,7 +132,7 @@
     const height = container.clientHeight || 600;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f141c);
+    scene.background = new THREE.Color(0xf1f3f6);
 
     camera = new THREE.PerspectiveCamera(38, width / height, 1, 15000);
     camera.position.set(360, 290, 420);
@@ -184,7 +187,7 @@
     rimLight.position.set(0, -380, 280);
     scene.add(rimLight);
 
-    gridHelper = new THREE.GridHelper(1000, 50, 0x2e4568, 0x1a2433);
+    gridHelper = new THREE.GridHelper(1000, 50, 0x9faebe, 0xd0d8e0);
     gridHelper.position.y = -0.2;
     scene.add(gridHelper);
 
@@ -313,6 +316,9 @@
   // PROCESAMIENTO DEL ARCHIVO SVG, MODELOS FEFCO Y REDIMENSIONAMIENTO PARAMÉTRICO
   // ============================================================================
   let livePacdoraTimer = null;
+  let resizeRevision = 0;
+  let modelRevision = 0;
+  let catalogLimit = 60;
 
   function syncParametricInputsUI(model) {
     if (!model || !model.boxDimensionsMm) return;
@@ -329,12 +335,26 @@
     setPair('param-l-num', 'param-l-slider', state.paramL);
     setPair('param-w-num', 'param-w-slider', state.paramW);
     setPair('param-h-num', 'param-h-slider', state.paramH);
+    for (const [id, value] of [['input-length', state.paramL], ['input-width', state.paramW], ['input-height', state.paramH]]) {
+      const input = document.getElementById(id);
+      if (input) input.value = value;
+    }
   }
 
   function applyNewDielineModel(model, displayTitle, animateIntro = false) {
+    clearTimeout(livePacdoraTimer);
+    resizeRevision++;
     state.fileName = displayTitle;
     state.baseDieline = model;
     state.dieline = model;
+    state.openParamsValues = {};
+    state.symmetryLinks = {};
+    state.activePart = 'standard';
+    document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
+    state.sizeMode = 'dm';
+    state.solverAvailable = true;
+    const modeSelect = document.getElementById('select-size-mode');
+    if (modeSelect) { modeSelect.value = 'dm'; modeSelect.disabled = false; }
     state.selectedFaceId = model.rootFaceId;
 
     state.hingeAngles = {};
@@ -356,10 +376,13 @@
       setMasterFold(state.masterFold || 0.75);
       fitCameraToModel(false);
     }
+    applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+    if (state.activeTab === 'details') renderDetailsTabUI();
   }
 
   function loadSVGString(svgString, fileName, animateIntro = false) {
     try {
+      modelRevision++;
       state.svgText = svgString;
       state.activeFefcoEntry = null;
       const quickSel = document.getElementById('fefco-quick-select');
@@ -428,8 +451,10 @@
 
   async function loadFefcoModel(fefcoEntry, animateIntro = true) {
     if (!fefcoEntry) return;
+    const revision = ++modelRevision;
     try {
       const fullEntry = await resolveFullPacdoraModel(fefcoEntry);
+      if (revision !== modelRevision) return;
       if (!fullEntry || !fullEntry.knifeData) {
         alert('No se encontró la geometría vectorial del modelo #' + fefcoEntry.num);
         return;
@@ -444,7 +469,7 @@
           opt = document.createElement('option');
           opt.value = String(fullEntry.num);
           const prefix = fullEntry.fefcoCode ? `${fullEntry.fefcoCode} (#${fullEntry.num})` : `#${fullEntry.num}`;
-          opt.textContent = `${prefix} — ${fullEntry.name.replace(/dieline/i, '').trim()} (${fullEntry.length}×${fullEntry.width}×${fullEntry.height}mm)`;
+          opt.textContent = `${prefix} — ${nombreModelo(fullEntry)} (${fullEntry.length}×${fullEntry.width}×${fullEntry.height} mm)`;
           quickSel.appendChild(opt);
         }
         quickSel.value = String(fullEntry.num);
@@ -452,7 +477,7 @@
 
       const model = DielineEngine.buildDielineModelFromPacdora(fullEntry.knifeData, fullEntry);
       const codePrefix = fullEntry.fefcoCode ? `${fullEntry.fefcoCode} (#${fullEntry.num})` : `#${fullEntry.num}`;
-      const title = `${codePrefix} · ${fullEntry.name.replace(/dieline/i, '').trim()}`;
+      const title = `${codePrefix} · ${nombreModelo(fullEntry)}`;
       applyNewDielineModel(model, title, animateIntro);
     } catch (err) {
       console.error('Error cargando modelo del catálogo:', err);
@@ -469,73 +494,36 @@
     state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
     state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
     state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
-
-    // 1. Deformación paramétrica instantánea por tramos a 60 FPS (funciona 100% offline para SVG y FEFCO)
-    const statusPill = document.getElementById('param-sync-status');
-    if (statusPill) {
-      statusPill.textContent = '⚡ Escalando 2D + 3D (60 FPS)';
+    const board = DielineEngine.ARTIOS_BOARDS.find(b => b.id === state.boardId);
+    const ratio = state.caliper / (board?.caliper || state.caliper);
+    const inside = (board?.insideLoss || 0) * ratio;
+    const outside = (board?.outsideGain || 0) * ratio;
+    const offset = state.sizeMode === 'id' ? inside : state.sizeMode === 'ed' ? -outside : 0;
+    const mfg = [state.paramL, state.paramW, state.paramH].map(value => Math.max(15, value + offset));
+    let resized = DielineEngine.resizeDielineParametric(state.baseDieline, ...mfg);
+    if (!resized) return;
+    for (const [key, targetSpan] of Object.entries(state.openParamsValues)) {
+      const match = /^band:(\d+):(x|y)$/.exec(key);
+      if (!match || !Number.isFinite(Number(targetSpan))) continue;
+      const face = resized.faces.find(f => String(f.id) === match[1]);
+      if (!face) continue;
+      const axis = match[2]; const min = axis === 'x' ? face.bounds.minX : face.bounds.minY;
+      const max = axis === 'x' ? face.bounds.maxX : face.bounds.maxY;
+      if (max - min <= 1 || Number(targetSpan) <= 1) continue;
+      resized = DielineEngine.resizeDielineParametric(resized, ...mfg, {axis, min, max, targetSpan: Number(targetSpan)});
     }
-
-    const resized = DielineEngine.resizeDielineParametric(
-      state.baseDieline,
-      state.paramL,
-      state.paramW,
-      state.paramH
-    );
-
-    if (resized) {
-      state.dieline = resized;
-      updateDielineInfoUI(resized);
-      rebuild3DMesh();
-      setMasterFold(state.masterFold);
-    }
-
-    // 2. Si es un modelo FEFCO y el servidor proxy local está disponible, consultar el solver exacto de Pacdora tras 260ms
-    if (state.activeFefcoEntry && state.activeFefcoEntry.id) {
-      if (livePacdoraTimer) clearTimeout(livePacdoraTimer);
-      const targetEntry = state.activeFefcoEntry;
-      const reqL = state.paramL;
-      const reqW = state.paramW;
-      const reqH = state.paramH;
-      const reqT = state.caliper;
-
-      livePacdoraTimer = setTimeout(() => {
-        fetch('/api/pacdora/knife', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: targetEntry.id,
-            length: reqL,
-            width: reqW,
-            height: reqH,
-            thickness: reqT
-          })
-        })
-          .then(r => r.ok ? r.json() : null)
-          .then(res => {
-            if (res && res.knifeData && state.activeFefcoEntry === targetEntry) {
-              const exactModel = DielineEngine.buildDielineModelFromPacdora(res.knifeData, {
-                ...targetEntry,
-                length: reqL,
-                width: reqW,
-                height: reqH,
-                thickness: reqT
-              });
-              state.baseDieline = exactModel;
-              state.dieline = exactModel;
-              updateDielineInfoUI(exactModel);
-              rebuild3DMesh();
-              setMasterFold(state.masterFold);
-              if (statusPill) statusPill.textContent = '✓ Solver FEFCO Exacto (1:1 mm)';
-            } else if (statusPill) {
-              statusPill.textContent = '⚡ Paramétrico Activo (1:1 mm)';
-            }
-          })
-          .catch(() => {
-            if (statusPill) statusPill.textContent = '⚡ Paramétrico Activo (1:1 mm)';
-          });
-      }, 260);
-    }
+    const dims = values => ({L: +values[0].toFixed(2), W: +values[1].toFixed(2), H: +values[2].toFixed(2)});
+    // Offsets are material-based estimates, not the original model's manufacturing rules.
+    resized = {...resized, solverDimensions: {mfg: dims(mfg), inner: dims(mfg.map(v => Math.max(0, v - inside))), outer: dims(mfg.map(v => v + outside))}};
+    state.parametricDieline = resized;
+    state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart);
+    state.solverAvailable = true;
+    state.solverPending = false;
+    document.getElementById('select-size-mode').disabled = false;
+    document.getElementById('param-sync-status').textContent = 'Cálculo local · medidas estimadas';
+    updateDielineInfoUI(state.dieline);
+    rebuild3DMesh();
+    setMasterFold(state.masterFold);
   }
 
   // ============================================================================
@@ -1373,10 +1361,10 @@
 
     canvas.addEventListener('pointerdown', (e) => {
       const hitFace = hitTest2DCanvas(e);
-      if (hitFace && e.button === 0 && !e.shiftKey) {
+      if (state.toolMode === 'select' && hitFace && e.button === 0 && !e.shiftKey) {
         selectFace(hitFace.id);
       }
-      state.view2D.isDragging = true;
+      state.view2D.isDragging = state.toolMode === 'pan' || e.shiftKey || e.button === 1;
       state.view2D.lastX = e.clientX;
       state.view2D.lastY = e.clientY;
     });
@@ -1425,7 +1413,8 @@
     const padX = 48;
     const topReserve = 104;
     const botReserve = 42;
-    const availW = Math.max(50, canvas.width - padX * 2);
+    const rightReserve = window.innerWidth > 1000 ? 312 * (window.devicePixelRatio || 1) : 0;
+    const availW = Math.max(50, canvas.width - rightReserve - padX * 2);
     const availH = Math.max(50, canvas.height - topReserve - botReserve);
     const baseScale = Math.min(availW / bounds.width, availH / bounds.height);
     const scale = baseScale * state.view2D.zoom;
@@ -1433,7 +1422,7 @@
     const cx = bounds.minX + bounds.width / 2;
     const cy = bounds.minY + bounds.height / 2;
 
-    const offsetX = canvas.width / 2 - cx * scale + state.view2D.panX;
+    const offsetX = (canvas.width - rightReserve) / 2 - cx * scale + state.view2D.panX;
     const offsetY = topReserve + availH / 2 - cy * scale + state.view2D.panY;
 
     return {
@@ -1484,7 +1473,7 @@
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#0c1118';
+    ctx.fillStyle = '#f1f3f6';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     const model = state.dieline;
@@ -1492,7 +1481,7 @@
     const tf = get2DTransform(canvas, bounds);
 
     const stepMM = 50;
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.06)';
+    ctx.strokeStyle = 'rgba(80, 98, 120, 0.08)';
     ctx.lineWidth = 1;
     const startX = Math.floor((bounds.minX - 100) / stepMM) * stepMM;
     const endX = Math.ceil((bounds.maxX + 100) / stepMM) * stepMM;
@@ -1500,12 +1489,12 @@
     const endY = Math.ceil((bounds.maxY + 100) / stepMM) * stepMM;
 
     ctx.beginPath();
-    for (let x = startX; x <= endX; x += stepMM) {
+    if (state.view2D.showGrid !== false) for (let x = startX; x <= endX; x += stepMM) {
       const sx = tf.toScreenX(x);
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, canvas.height);
     }
-    for (let y = startY; y <= endY; y += stepMM) {
+    if (state.view2D.showGrid !== false) for (let y = startY; y <= endY; y += stepMM) {
       const sy = tf.toScreenY(y);
       ctx.moveTo(0, sy);
       ctx.lineTo(canvas.width, sy);
@@ -1514,7 +1503,7 @@
 
     // 0. Dibujar contorno verde de SANGRADO (BLEED #22c55e)
     if (state.showBleed) {
-      const bleeds = DielineEngine.getOrBuildBleedSegments(model, state.bleedMm || 5);
+      const bleeds = DielineEngine.getOrBuildBleedSegments(model, state.bleedMm);
       if (bleeds.length > 0) {
         ctx.strokeStyle = '#22c55e';
         ctx.lineWidth = Math.max(1.2, 1.4 * dpr);
@@ -1637,11 +1626,11 @@
           const mx = (sx1 + sx2) * 0.5;
           const my = (sy1 + sy2) * 0.5;
           const valNum = Number(sa.lineLength) || Math.hypot(sa.p2.x - sa.p1.x, sa.p2.y - sa.p1.y);
-          const valDisp = state.unit === 'in' ? `${(valNum / 25.4).toFixed(2)} in` : `${valNum.toFixed(1)} mm`;
+          const valDisp = `${valNum.toFixed(1)} mm`;
 
           ctx.font = `600 ${Math.round(10.5 * dpr)}px "Inter", system-ui, sans-serif`;
           const tw = ctx.measureText(valDisp).width;
-          ctx.fillStyle = 'rgba(9, 13, 19, 0.9)';
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
           ctx.fillRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
           ctx.fillStyle = '#38bdf8';
           ctx.textAlign = 'center';
@@ -1671,7 +1660,7 @@
         ctx.font = `600 ${Math.round(11 * dpr)}px "Inter", system-ui, sans-serif`;
         const tw = ctx.measureText(labelW).width;
         const midX = (x1 + x2) / 2;
-        ctx.fillStyle = '#090d13';
+        ctx.fillStyle = '#ffffff';
         ctx.fillRect(midX - tw / 2 - 6 * dpr, cotaY - 8 * dpr, tw + 12 * dpr, 16 * dpr);
         ctx.fillStyle = '#38bdf8';
         ctx.textAlign = 'center';
@@ -1699,7 +1688,7 @@
         ctx.font = `600 ${Math.round(9.5 * dpr)}px "Inter", system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = face.id === state.selectedFaceId ? '#38bdf8' : '#f1f5f9';
+        ctx.fillStyle = face.id === state.selectedFaceId ? '#006ca8' : '#39475a';
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
         ctx.fillText(shortName, 0, -6 * dpr);
 
@@ -1953,49 +1942,13 @@
       });
     });
 
-    // 2. Unidad mm / in Toggle (Basic & Details)
-    const setUnit = (unit) => {
-      state.unit = unit;
-      const isMm = unit === 'mm';
-      ['btn-unit-mm', 'btn-unit-mm-details'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.classList.toggle('active', isMm);
-      });
-      ['btn-unit-in', 'btn-unit-in-details'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.classList.toggle('active', !isMm);
-      });
-      document.querySelectorAll('.field-unit-label').forEach(el => {
-        el.textContent = unit;
-      });
-
-      // Refrescar inputs numéricos
-      const lEl = document.getElementById('input-length');
-      const wEl = document.getElementById('input-width');
-      const hEl = document.getElementById('input-height');
-      if (lEl) lEl.value = isMm ? state.paramL : +(state.paramL / 25.4).toFixed(2);
-      if (wEl) wEl.value = isMm ? state.paramW : +(state.paramW / 25.4).toFixed(2);
-      if (hEl) hEl.value = isMm ? state.paramH : +(state.paramH / 25.4).toFixed(2);
-
-      render2FDieline();
-    };
-
-    ['btn-unit-mm', 'btn-unit-mm-details'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('click', () => setUnit('mm'));
-    });
-    ['btn-unit-in', 'btn-unit-in-details'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener('click', () => setUnit('in'));
-    });
-
     // 3. Inputs de Largo, Ancho y Alto (Basic Tab)
     const lInput = document.getElementById('input-length');
     const wInput = document.getElementById('input-width');
     const hInput = document.getElementById('input-height');
 
     const handleDimChange = () => {
-      const factor = state.unit === 'in' ? 25.4 : 1.0;
+      const factor = 1;
       const nl = (parseFloat(lInput?.value) || state.paramL) * factor;
       const nw = (parseFloat(wInput?.value) || state.paramW) * factor;
       const nh = (parseFloat(hInput?.value) || state.paramH) * factor;
@@ -2010,7 +1963,7 @@
         e.preventDefault();
         const dir = e.deltaY < 0 ? 1 : -1;
         const cur = parseFloat(inp.value) || 0;
-        const step = state.unit === 'in' ? 0.1 : 1.0;
+        const step = 1.0;
         inp.value = +(cur + dir * step).toFixed(2);
         handleDimChange();
       }, { passive: false });
@@ -2035,7 +1988,7 @@
           state.flute = chosen.flute;
           const thInput = document.getElementById('input-thickness');
           if (thInput) thInput.value = chosen.caliper;
-          rebuild3DMesh();
+          applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
         }
       });
     }
@@ -2047,8 +2000,8 @@
 
     const updateThickness = (val) => {
       state.caliper = Math.max(0.4, Math.min(15.0, Number(val) || 1.5));
-      if (thInput && document.activeElement !== thInput) thInput.value = state.caliper;
-      rebuild3DMesh();
+      if (thInput) thInput.value = state.caliper;
+      applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
     };
 
     if (btnThMinus) btnThMinus.addEventListener('click', () => updateThickness(state.caliper - 0.5));
@@ -2066,11 +2019,14 @@
     const sizeModeSel = document.getElementById('select-size-mode');
     if (sizeModeSel) {
       sizeModeSel.addEventListener('change', (e) => {
+        const dims = state.parametricDieline?.solverDimensions?.[e.target.value === 'id' ? 'inner' : e.target.value === 'ed' ? 'outer' : 'mfg'];
+        if (!dims || !Number.isFinite(Number(dims.L ?? dims.length))) { e.target.value = state.sizeMode; return; }
         state.sizeMode = e.target.value;
-        if (state.activeFefcoEntry) {
-          // Reconsultar solver si procede o recomputar offsets
-          applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+        state.paramL = Number(dims.L ?? dims.length); state.paramW = Number(dims.W ?? dims.width); state.paramH = Number(dims.H ?? dims.height);
+        for (const [id, value] of [['input-length', state.paramL], ['input-width', state.paramW], ['input-height', state.paramH]]) {
+          document.getElementById(id).value = value;
         }
+        applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
       });
     }
 
@@ -2110,7 +2066,7 @@
         state.selectedExportFormat = btn.getAttribute('data-export-format');
         const dlBtnLabel = document.getElementById('label-download-btn');
         if (dlBtnLabel) {
-          dlBtnLabel.textContent = `Download .${state.selectedExportFormat.toUpperCase()}`;
+          dlBtnLabel.textContent = `Descargar ${state.selectedExportFormat.toUpperCase()}`;
         }
       });
 
@@ -2260,22 +2216,28 @@
       if (gridHelper) gridHelper.visible = state.showGrid;
     });
 
-    // 12. Input Bleed en Details Tab
-    const bleedInput = document.getElementById('input-bleed-val');
-    if (bleedInput) {
-      bleedInput.addEventListener('change', (e) => {
-        state.bleedMm = Math.max(0, Math.min(30, parseFloat(e.target.value) || 5));
-        render2FDieline();
-      });
-    }
+    document.getElementById('fold-sequence-mode')?.addEventListener('change', e => { state.foldSequenceMode = e.target.value; setMasterFold(state.masterFold); });
+    const crushInput = document.getElementById('input-crush-depth');
+    if (crushInput) crushInput.addEventListener('change', () => {
+      state.crushDepthRatio = Math.max(0, Math.min(0.9, Number(crushInput.value) / 100));
+      crushInput.value = Math.round(state.crushDepthRatio * 100);
+      rebuild3DMesh();
+      setMasterFold(state.masterFold);
+    });
+    document.getElementById('btn-switch-studio-view')?.addEventListener('click', () => document.getElementById('btn-expand-3d')?.click());
+    document.getElementById('btn-toggle-main-menu')?.addEventListener('click', () => {
+      document.body.classList.toggle('drawer-collapsed');
+      requestAnimationFrame(onWindowResize);
+    });
+    if (window.ResizeObserver) new ResizeObserver(() => onWindowResize()).observe(document.querySelector('.canvas-2d-viewport'));
 
     // 13. Inicializar catálogo de dielines dentro de la pestaña Dielines
     initDrawerCatalogUI();
   }
 
   function applyCurrentPartVariation() {
-    if (!state.baseDieline || !DielineEngine.applyPartVariationToModel) return;
-    const modified = DielineEngine.applyPartVariationToModel(state.baseDieline, state.activePart);
+    if (!state.parametricDieline || !DielineEngine.applyPartVariationToModel) return;
+    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart);
     if (modified) {
       state.dieline = modified;
       rebuild3DMesh();
@@ -2288,51 +2250,53 @@
     if (!container || !state.dieline) return;
     container.innerHTML = '';
 
-    const openParams = state.dieline.openParams || [];
-    if (openParams.length === 0) {
-      // Si el modelo no trajo openParams explícitos, derivar parámetros clave geométricos
-      const fallbackParams = [
-        { name: 'Corner flap (N)', val: 21, unit: 'mm' },
-        { name: 'Locking tab (K)', val: 2, unit: 'mm' },
-        { name: 'Inner side (DC)', val: 63.5, unit: 'mm' },
-        { name: 'Lid side flap (M)', val: 60.5, unit: 'mm' },
-        { name: 'Front flap (TRH)', val: 52, unit: 'mm' }
-      ];
-      for (const p of fallbackParams) {
-        const row = document.createElement('div');
-        row.className = 'detail-row';
-        row.innerHTML = `
-          <span class="detail-name">› ${p.name}</span>
-          <div class="detail-input-wrap">
-            <input type="number" class="detail-num-input" value="${p.val}" />
-            <span class="field-unit-label">${state.unit}</span>
-          </div>
-        `;
-        container.appendChild(row);
-      }
-      return;
+    const faces = (state.parametricDieline || state.dieline).faces.filter(face => face.role && face.role.includes('FLAP') && face.bounds.width > 2 && face.bounds.height > 2);
+    if (!faces.length) { container.textContent = 'No se han identificado solapas editables en este plano.'; return; }
+    const help = document.createElement('p'); help.className = 'project-note';
+    help.textContent = 'Ajuste local por bandas: modifica la franja completa del plano y puede afectar a piezas vecinas.'; container.appendChild(help);
+    if (Object.keys(state.openParamsValues).length) {
+      const reset = document.createElement('button'); reset.className = 'btn-outline'; reset.textContent = 'Restablecer bandas';
+      reset.addEventListener('click', () => { state.openParamsValues = {}; applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH); renderDetailsTabUI(); });
+      container.appendChild(reset);
     }
-
-    // Renderizar openParams estructurados
-    for (const group of openParams) {
-      for (const param of (group.params || [group])) {
-        if (!param.name) continue;
-        const row = document.createElement('div');
-        row.className = 'detail-row';
-        const curVal = state.openParamsValues[param.name] !== undefined ? state.openParamsValues[param.name] : param.value;
-        row.innerHTML = `
-          <span class="detail-name" title="${param.description || param.name}">› ${param.description || param.name}</span>
-          <div class="detail-input-wrap">
-            <input type="number" class="detail-num-input" min="${param.min || 0}" max="${param.max || 1000}" step="0.5" value="${curVal}" />
-            <span class="field-unit-label">${param.unit || state.unit}</span>
-          </div>
-        `;
-        const inp = row.querySelector('input');
-        inp.addEventListener('change', () => {
-          state.openParamsValues[param.name] = parseFloat(inp.value) || param.value;
-          applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+    for (const face of faces) {
+      const original = state.baseDieline.faces.find(f => f.id === face.id) || face;
+      const axis = original.bounds.width < original.bounds.height ? 'x' : 'y';
+      const value = axis === 'x' ? face.bounds.width : face.bounds.height;
+      const key = 'band:' + face.id + ':' + axis;
+      const partner = DielineEngine.findSymmetricFace(state.baseDieline, original, axis);
+      const partnerKey = partner ? 'band:' + partner.id + ':' + axis : null;
+      const pairKey = partner ? [String(face.id), String(partner.id)].sort().join(':') : null;
+      const row = document.createElement('label'); row.className = 'detail-row';
+      const title = document.createElement('span'); title.className = 'detail-name'; title.textContent = face.name + ' · banda ' + axis.toUpperCase();
+      const wrap = document.createElement('div'); wrap.className = 'detail-input-wrap';
+      const input = document.createElement('input'); input.type = 'number'; input.className = 'detail-num-input';
+      const factor = 1;
+      input.value = +(value / factor).toFixed(3); input.min = +(2 / factor).toFixed(3); input.max = +(2000 / factor).toFixed(3); input.step = 'any';
+      const unit = document.createElement('span'); unit.textContent = state.unit;
+      input.addEventListener('change', () => {
+        const target = Number(input.value) * factor;
+        if (!Number.isFinite(target) || target < 2 || target > 2000) { input.value = +(value / factor).toFixed(3); return; }
+        state.openParamsValues[key] = target;
+        if (partnerKey && state.symmetryLinks[pairKey]) state.openParamsValues[partnerKey] = target;
+        applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+        renderDetailsTabUI();
+      });
+      wrap.append(input, unit); row.append(title, wrap); container.appendChild(row);
+      if (partner) {
+        const label = document.createElement('label'); label.className = 'symmetry-option';
+        const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!state.symmetryLinks[pairKey];
+        check.addEventListener('change', () => {
+          state.symmetryLinks[pairKey] = check.checked;
+          if (check.checked) {
+            const current = state.parametricDieline.faces.find(f => f.id === face.id);
+            const span = axis === 'x' ? current.bounds.width : current.bounds.height;
+            state.openParamsValues[key] = span; state.openParamsValues[partnerKey] = span;
+            applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+          }
+          renderDetailsTabUI();
         });
-        container.appendChild(row);
+        label.append(check, document.createTextNode('Vincular con ' + partner.name)); container.appendChild(label);
       }
     }
   }
@@ -2356,25 +2320,25 @@
     switch (fmt) {
       case 'ai':
         if (DielineEngine.exportDielineToPDF) {
-          const aiData = DielineEngine.exportDielineToPDF(model, state.bleedMm || 5, true);
+          const aiData = DielineEngine.exportDielineToPDF(model, state.bleedMm, true);
           triggerDownload(aiData, 'ai', 'application/postscript');
         }
         break;
       case 'pdf':
         if (DielineEngine.exportDielineToPDF) {
-          const pdfData = DielineEngine.exportDielineToPDF(model, state.bleedMm || 5, false);
+          const pdfData = DielineEngine.exportDielineToPDF(model, state.bleedMm, false);
           triggerDownload(pdfData, 'pdf', 'application/pdf');
         }
         break;
       case 'dxf':
         if (DielineEngine.exportDielineToDXF) {
-          const dxfData = DielineEngine.exportDielineToDXF(model, state.bleedMm || 5);
+          const dxfData = DielineEngine.exportDielineToDXF(model, state.bleedMm);
           triggerDownload(dxfData, 'dxf', 'application/dxf');
         }
         break;
       case 'svg':
         if (DielineEngine.exportDielineToSVG) {
-          const svgData = DielineEngine.exportDielineToSVG(model, state.bleedMm || 5);
+          const svgData = DielineEngine.exportDielineToSVG(model, state.bleedMm);
           triggerDownload(svgData, 'svg', 'image/svg+xml;charset=utf-8');
         }
         break;
@@ -2387,11 +2351,80 @@
     }
   }
 
+  const PROJECTS_KEY = 'dieline-studio-projects-v1';
+  function readProjects() {
+    try { const data = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]'); return Array.isArray(data) ? data : []; }
+    catch (_) { return []; }
+  }
+  function renderProjects() {
+    const list = document.getElementById('saved-projects-list'); list.replaceChildren();
+    const projects = readProjects();
+    if (!projects.length) { list.textContent = 'Todavía no hay proyectos guardados.'; return; }
+    projects.forEach(project => {
+      const row = document.createElement('div'); row.className = 'project-row';
+      const open = document.createElement('button'); open.className = 'btn-outline project-open';
+      open.textContent = project.name; open.title = 'Abrir proyecto';
+      open.addEventListener('click', async () => {
+        if (project.modelNum) {
+          const entry = (window.PACDORA_CATALOG_INDEX?.models || []).find(m => Number(m.num) === Number(project.modelNum));
+          if (!entry) { alert('No se encuentra el modelo de este proyecto.'); return; }
+          await loadFefcoModel(entry, true);
+        } else if (project.svgText) loadSVGString(project.svgText, project.name, true);
+        else return;
+        state.boardId = project.boardId || state.boardId;
+        state.caliper = Number(project.caliper) || state.caliper;
+        document.getElementById('select-material').value = state.boardId;
+        document.getElementById('input-thickness').value = state.caliper;
+        state.bleedMm = 0;
+        state.symmetryLinks = project.symmetryLinks || {};
+        state.crushDepthRatio = Number.isFinite(project.crushDepthRatio) ? project.crushDepthRatio : .72;
+        document.getElementById('input-crush-depth').value = Math.round(state.crushDepthRatio * 100);
+        state.openParamsValues = project.openParamsValues || {};
+        state.activePart = project.activePart || 'standard';
+        document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === state.activePart));
+        state.sizeMode = project.sizeMode || 'dm';
+        document.getElementById('select-size-mode').value = state.sizeMode;
+        state.paramL = project.dimensions[0]; state.paramW = project.dimensions[1]; state.paramH = project.dimensions[2];
+        for (const [id, value] of [['input-length', state.paramL], ['input-width', state.paramW], ['input-height', state.paramH]]) document.getElementById(id).value = value;
+        applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+        document.querySelector('[data-drawer-tab="basic"]').click();
+      });
+      const remove = document.createElement('button'); remove.className = 'icon-btn'; remove.textContent = '×'; remove.title = 'Eliminar proyecto';
+      remove.addEventListener('click', () => { if (!confirm('¿Eliminar el proyecto guardado?')) return; localStorage.setItem(PROJECTS_KEY, JSON.stringify(readProjects().filter(p => p.id !== project.id))); renderProjects(); });
+      row.append(open, remove); list.appendChild(row);
+    });
+  }
   function initDrawerCatalogUI() {
+    const library = document.getElementById('pill-catalog-library');
+    const projects = document.getElementById('pill-catalog-projects');
+    const switchCatalog = showProjects => {
+      library.classList.toggle('active', !showProjects); projects.classList.toggle('active', showProjects);
+      document.querySelector('.dielines-search-box').classList.toggle('hidden', showProjects);
+      document.getElementById('dielines-categories-bar').classList.toggle('hidden', showProjects);
+      document.getElementById('drawer-models-list').classList.toggle('hidden', showProjects);
+      document.getElementById('drawer-projects').classList.toggle('hidden', !showProjects);
+      if (showProjects) renderProjects(); else renderDrawerCatalogList();
+    };
+    library.addEventListener('click', () => switchCatalog(false));
+    projects.addEventListener('click', () => switchCatalog(true));
+    document.getElementById('btn-save-project').addEventListener('click', () => {
+      if (!state.dieline) return;
+      const nameInput = document.getElementById('project-name');
+      const name = nameInput.value.trim() || state.fileName;
+      nameInput.value = '';
+      const project = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), name: name.trim(),
+        modelNum: state.activeFefcoEntry?.num || null, svgText: state.activeFefcoEntry ? null : state.svgText,
+        dimensions: [state.paramL, state.paramW, state.paramH], sizeMode: state.sizeMode, boardId: state.boardId,
+        caliper: state.caliper, bleedMm: state.bleedMm, crushDepthRatio: state.crushDepthRatio,
+        activePart: state.activePart, symmetryLinks: {...state.symmetryLinks}, openParamsValues: {...state.openParamsValues} };
+      try { const data = readProjects(); data.unshift(project); localStorage.setItem(PROJECTS_KEY, JSON.stringify(data)); renderProjects(); }
+      catch (_) { alert('No se pudo guardar el proyecto. Comprueba el espacio disponible del navegador.'); }
+    });
     const searchInput = document.getElementById('drawer-dielines-search');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         state.fefcoSearch = e.target.value;
+        catalogLimit = 60;
         renderDrawerCatalogList();
       });
     }
@@ -2402,9 +2435,28 @@
         catChips.forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         state.catalogCategory = chip.getAttribute('data-cat-slug');
+        catalogLimit = 60;
         renderDrawerCatalogList();
       });
     });
+  }
+
+  function nombreModelo(item) {
+    const text = (item.name || '').toLowerCase();
+    if (item.fefcoCode) return 'Caja ' + item.fefcoCode;
+    if (text.includes('mailer') || text.includes('shipping')) return 'Caja de envío';
+    if (text.includes('tuck end') || text.includes('tuck top')) return 'Caja con lengüeta';
+    if (text.includes('display')) return 'Caja expositora';
+    if (text.includes('window')) return 'Caja con ventana';
+    if (text.includes('gift')) return 'Caja de regalo';
+    if (text.includes('drawer') || text.includes('sleeve')) return 'Caja deslizante';
+    if (text.includes('tray')) return 'Bandeja';
+    if (text.includes('envelope')) return 'Sobre';
+    if (text.includes('bag') || text.includes('pouch')) return 'Bolsa';
+    if (text.includes('insert')) return 'Separador';
+    if (text.includes('lid') || text.includes('flip top')) return 'Caja con tapa';
+    if (text.includes('box')) return 'Caja';
+    return 'Troquel';
   }
 
   function renderDrawerCatalogList() {
@@ -2418,7 +2470,8 @@
       : (window.FEFCO_CATALOG || []);
 
     const catSlug = state.catalogCategory || 'ALL';
-    const q = (state.fefcoSearch || '').trim().toLowerCase();
+    const normalizar = value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const q = normalizar((state.fefcoSearch || '').trim());
 
     const filtered = allModels.filter(m => {
       const matchCat = (catSlug === 'ALL') ||
@@ -2426,16 +2479,16 @@
         (Array.isArray(m.useCategories) && m.useCategories.includes(catSlug));
       if (!matchCat) return false;
       if (!q) return true;
-      const hay = `${m.fefcoCode || ''} ${m.num} ${m.name}`.toLowerCase();
+      const hay = normalizar(`${m.fefcoCode || ''} ${m.num} ${m.name} ${nombreModelo(m)}`);
       return hay.includes(q);
     });
 
-    const slice = filtered.slice(0, 60);
+    const slice = filtered.slice(0, catalogLimit);
 
     for (const item of slice) {
       const card = document.createElement('div');
       card.className = 'model-preview-card' + (state.activeFefcoEntry && Number(state.activeFefcoEntry.num) === Number(item.num) ? ' active' : '');
-      const cleanDesc = item.name.replace(/dieline/i, '').trim();
+      const cleanDesc = nombreModelo(item);
 
       card.innerHTML = `
         <div class="card-split-previews">
@@ -2443,11 +2496,11 @@
             <canvas width="120" height="72"></canvas>
           </div>
           <div class="card-3d-thumb-wrap">
-            <img src="${item.thumb3d || 'assets/textures/boardbrown.jpg'}" alt="3D" style="width:100%; height:100%; object-fit:contain;" onerror="this.src='assets/textures/boardbrown.jpg';" />
+            <img src="assets/textures/boardbrown.jpg" alt="3D" style="width:100%; height:100%; object-fit:contain;" />
           </div>
         </div>
         <div class="card-model-title">${cleanDesc}</div>
-        <div class="card-model-sub">${item.fefcoCode ? item.fefcoCode + ' · ' : ''}#${item.num} (${item.length}×${item.width}×${item.height}mm)</div>
+        <div class="card-model-sub">#${item.num} (${item.length}×${item.width}×${item.height}mm)</div>
       `;
 
       const cvs = card.querySelector('canvas');
@@ -2468,6 +2521,13 @@
 
       listEl.appendChild(card);
     }
+    if (filtered.length > catalogLimit) {
+      const more = document.createElement('button');
+      more.className = 'btn-outline catalog-more';
+      more.textContent = `Mostrar más (${filtered.length - catalogLimit} restantes)`;
+      more.addEventListener('click', () => { catalogLimit += 60; renderDrawerCatalogList(); });
+      listEl.appendChild(more);
+    } else if (!filtered.length) listEl.textContent = 'No se encontraron modelos.';
   }
 
   function drawMiniDielinePreview(canvas, knifeData) {
@@ -2851,7 +2911,7 @@
     };
 
     const dims = model.boxDimensionsMm || { length: 315, width: 202, depth: 62 };
-    const numId = (model.pacdoraMeta && model.pacdoraMeta.num) ? model.pacdoraMeta.num : '150010';
+    const numId = (model.pacdoraMeta && model.pacdoraMeta.num) ? model.pacdoraMeta.num : 'SVG';
     setTxt('info-model-id', String(numId));
 
     // Manufacturing: L × W × H mm
@@ -2859,13 +2919,13 @@
 
     // Inner & Outer
     const innerDims = (model.solverDimensions && model.solverDimensions.inner)
-      ? `${model.solverDimensions.inner.length} × ${model.solverDimensions.inner.width} × ${model.solverDimensions.inner.height} mm`
-      : `${Math.round(dims.length - state.caliper * 2)} × ${Math.round(dims.width - state.caliper * 2)} × ${Math.round(dims.depth - state.caliper * 2)} mm`;
+      ? `${model.solverDimensions.inner.L ?? model.solverDimensions.inner.length} × ${model.solverDimensions.inner.W ?? model.solverDimensions.inner.width} × ${model.solverDimensions.inner.H ?? model.solverDimensions.inner.height} mm`
+      : 'No disponible';
     setTxt('info-dim-inner', innerDims);
 
     const outerDims = (model.solverDimensions && model.solverDimensions.outer)
-      ? `${model.solverDimensions.outer.length} × ${model.solverDimensions.outer.width} × ${model.solverDimensions.outer.height} mm`
-      : `${Math.round(dims.length + state.caliper)} × ${Math.round(dims.width + state.caliper * 1.5)} × ${Math.round(dims.depth + state.caliper)} mm`;
+      ? `${model.solverDimensions.outer.L ?? model.solverDimensions.outer.length} × ${model.solverDimensions.outer.W ?? model.solverDimensions.outer.width} × ${model.solverDimensions.outer.H ?? model.solverDimensions.outer.height} mm`
+      : 'No disponible';
     setTxt('info-dim-outer', outerDims);
 
     // Dieline statistics
@@ -2873,10 +2933,10 @@
     const bh = model.bounds ? model.bounds.height.toFixed(1) : '590';
     setTxt('info-stat-area', `${bw} × ${bh} mm`);
 
-    const cutL = (model.totalCutLengthMm || 3638.59).toFixed(2);
+    const cutL = (model.totalCutLengthMm ?? 0).toFixed(2);
     setTxt('info-stat-cut', `${cutL} mm`);
 
-    const creaseL = (model.totalFoldLengthMm || 3065).toFixed(1);
+    const creaseL = (model.totalFoldLengthMm ?? 0).toFixed(1);
     setTxt('info-stat-crease', `${creaseL} mm`);
 
     selectFace(model.rootFaceId);
