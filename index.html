@@ -3,413 +3,654 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Motor Gráfico 3D de Packaging (ArtiosCAD + 116 Modelos FEFCO Paramétricos · Escala 1:1 mm)</title>
+  <title>Dieline Studio · Generador de Troqueles y 3D en Tiempo Real (Escala 1:1 mm)</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="dieline-app-body">
 
-  <!-- BARRA SUPERIOR CAD -->
-  <header class="cad-topbar">
-    <div class="brand-block">
-      <div class="brand-logo">3D</div>
-      <div>
-        <div class="brand-title">
-          PACKAGING CAD 3D STUDIO
-          <span class="brand-badge">ARTIOSCAD 12.0 + 116 FEFCO · 1:1 MM</span>
+  <!-- =========================================================================
+       BARRA SUPERIOR (HEADER) — IDÉNTICA EN ESTRUCTURA A LA IMAGEN
+       ========================================================================= -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="header-brand">
+        <div class="app-icon" title="Dieline Studio 3D">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+            <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+            <line x1="12" y1="22.08" x2="12" y2="12"></line>
+          </svg>
         </div>
-        <div class="brand-subtitle">Parametrización 2D/3D en Tiempo Real · Hendidos Chafados · Ejes en Centro del Espesor · Exportador .GLB Blender</div>
+        <span class="app-title">Dieline generator</span>
       </div>
-    </div>
 
-    <div class="topbar-center">
-      <div class="view-switcher">
-        <button class="view-btn active" data-view-mode="split">Vista Dividida (2D + 3D)</button>
-        <button class="view-btn" data-view-mode="3d">Solo Estudio 3D</button>
-        <button class="view-btn" data-view-mode="2d">Solo Troquel 2D (mm)</button>
-      </div>
-    </div>
-
-    <div class="topbar-actions">
-      <button id="btn-open-fefco-catalog" class="cad-btn fefco-btn" title="Abrir el catálogo oficial completo con los 116 modelos de cajas, bandejas y estuches FEFCO parametrizables">
-        📚 Catálogo FEFCO (116 Modelos)
+      <button id="btn-toggle-main-menu" class="icon-btn" title="Menú principal">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
       </button>
 
-      <label for="svg-file-input" class="cad-btn primary" title="Abrir cualquier archivo .SVG con líneas azules (corte) y rojas (doblez)">
-        📂 Abrir .SVG
+      <div class="status-cloud" title="Guardado automáticamente en memoria local">
+        <svg viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="1.8" fill="none">
+          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+        </svg>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <button id="btn-switch-studio-view" class="btn-outline" title="Alternar visor 2D / 3D completo o dividido">
+        <span>Design 3D Studio</span>
+        <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+          <polyline points="15 3 21 3 21 9"></polyline>
+          <line x1="10" y1="14" x2="21" y2="3"></line>
+        </svg>
+      </button>
+
+      <label for="svg-file-input" class="btn-outline" title="Abrir cualquier archivo .SVG personalizado">
+        <span>Abrir .SVG</span>
       </label>
       <input type="file" id="svg-file-input" accept=".svg" class="hidden-input" />
 
-      <label for="artwork-file-input" class="cad-btn" title="Aplicar diseño gráfico o arte sobre la cara exterior">
-        🎨 Arte Exterior
+      <label for="artwork-file-input" class="btn-outline" title="Cargar textura o diseño exterior">
+        <span>🎨 Arte</span>
       </label>
       <input type="file" id="artwork-file-input" accept="image/*" class="hidden-input" />
-      <button id="btn-clear-artwork" class="cad-btn" title="Restaurar textura de cartón original">↺</button>
+      <button id="btn-clear-artwork" class="icon-btn" title="Restaurar textura de cartón original">↺</button>
 
-      <button id="btn-export-glb" class="cad-btn blender-btn" title="Exportar modelo 3D y su animación de plegado en formato .GLB a escala 1:1 en mm listo para Blender">
-        🟠 Exportar .GLB (Blender + Animación)
+      <button id="btn-share-project" class="icon-btn" title="Compartir enlace del modelo">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+          <circle cx="18" cy="5" r="3"></circle>
+          <circle cx="6" cy="12" r="3"></circle>
+          <circle cx="18" cy="19" r="3"></circle>
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+        </svg>
       </button>
-      <button id="btn-export-obj" class="cad-btn" title="Exportar malla 3D estática en formato .OBJ a escala 1:1 en mm">📦 .OBJ</button>
-      <button id="btn-export-png" class="cad-btn" title="Guardar captura 3D en PNG">📷 PNG</button>
+
+      <button id="btn-download-dieline-main" class="btn-primary-blue" title="Descargar el archivo de troquel en el formato seleccionado (1:1 mm)">
+        <span class="btn-star">✨</span>
+        <span id="label-download-btn">Download the dieline</span>
+      </button>
     </div>
   </header>
 
-  <!-- CUERPO PRINCIPAL -->
-  <main class="cad-main">
+  <!-- =========================================================================
+       CONTENEDOR PRINCIPAL: RAIL DE ICONOS + DRAWER + CANVAS 2D + CARDS DERECHAS
+       ========================================================================= -->
+  <main class="studio-workspace">
 
-    <!-- PANEL IZQUIERDO: CATÁLOGO FEFCO, REGLAS DEL SVG, MATERIALES Y CHAFADO DE HENDIDOS -->
-    <aside class="cad-sidebar left">
+    <!-- RAIL VERTICAL IZQUIERDO DE PESTAÑAS (6 ICONOS) -->
+    <nav class="vertical-nav-rail">
+      <button class="rail-tab-btn" data-drawer-tab="dielines" title="Biblioteca de troqueles">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+        <span>Dielines</span>
+      </button>
 
-      <!-- Selector rápido de modelo FEFCO / SVG -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">📚 Biblioteca FEFCO y Troqueles</span>
-          <button id="btn-sidebar-fefco" class="hud-mini-btn" style="color:#f59e0b; border:1px solid rgba(245,158,11,0.35);">Ver 116</button>
+      <button class="rail-tab-btn active" data-drawer-tab="basic" title="Dimensiones básicas y material">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M4 7V4h16v3"></path>
+          <path d="M9 20h6"></path>
+          <path d="M12 4v16"></path>
+        </svg>
+        <span>Basic</span>
+      </button>
+
+      <button class="rail-tab-btn" data-drawer-tab="details" title="Parámetros avanzados de solapas y pliegues">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+        </svg>
+        <span>Details</span>
+      </button>
+
+      <button class="rail-tab-btn" data-drawer-tab="parts" title="Cambiar partes estructurales (asas, muescas, lengüetas, zipper)">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+          <path d="M2 17l10 5 10-5"></path>
+          <path d="M2 12l10 5 10-5"></path>
+        </svg>
+        <span>Parts</span>
+      </button>
+
+      <button class="rail-tab-btn" data-drawer-tab="info" title="Información técnica del troquel">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span>Info</span>
+      </button>
+
+      <button class="rail-tab-btn" data-drawer-tab="more" title="Opciones avanzadas y visualización CAD">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="12" cy="12" r="1.5"></circle>
+          <circle cx="19" cy="12" r="1.5"></circle>
+          <circle cx="5" cy="12" r="1.5"></circle>
+        </svg>
+        <span>More</span>
+      </button>
+    </nav>
+
+    <!-- DRAWER LATERAL EXPANDIBLE (CONTENIDO SEGÚN LA PESTAÑA ACTIVA) -->
+    <aside id="drawer-panel" class="drawer-card">
+
+      <!-- ================= PESTAÑA 1: DIELINES ================= -->
+      <div id="drawer-tab-dielines" class="drawer-tab-view hidden">
+        <div class="drawer-tab-header">
+          <div class="pill-switch-group">
+            <button id="pill-catalog-library" class="pill-tab-btn active">Library</button>
+            <button id="pill-catalog-projects" class="pill-tab-btn">Projects</button>
+          </div>
         </div>
-        <div class="control-group">
-          <div class="control-label">
-            <span>Modelo Estructural Activo:</span>
-          </div>
-          <select id="fefco-quick-select" class="cad-select"></select>
+
+        <div class="dielines-search-box">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="drawer-dielines-search" placeholder="Try 4+ words... (150010, mailer, fefco)" />
         </div>
 
-        <div class="legend-row" style="margin-top:8px;">
-          <div class="legend-pill">
-            <span class="line-swatch cut"></span>
-            <span>Azul = Corte</span>
+        <!-- Categorías en scroll horizontal de chips -->
+        <div id="dielines-categories-bar" class="categories-chip-bar">
+          <button class="cat-chip active" data-cat-slug="ALL">All</button>
+          <button class="cat-chip" data-cat-slug="fefco-box-templates">FEFCO Boxes</button>
+          <button class="cat-chip" data-cat-slug="folding-boxes">Folding Boxes</button>
+          <button class="cat-chip" data-cat-slug="tray-boxes">Tray Boxes</button>
+          <button class="cat-chip" data-cat-slug="display-boxes">Display Boxes</button>
+          <button class="cat-chip" data-cat-slug="tuck-end-boxes">Tuck End Boxes</button>
+          <button class="cat-chip" data-cat-slug="mailer-boxes">Mailer Boxes</button>
+        </div>
+
+        <!-- Lista scrollable vertical de modelos con doble preview (2D + 3D) -->
+        <div id="drawer-models-list" class="drawer-models-scroll"></div>
+      </div>
+
+      <!-- ================= PESTAÑA 2: BASIC (SCREENSHOT 1) ================= -->
+      <div id="drawer-tab-basic" class="drawer-tab-view">
+        <div class="drawer-section-head">
+          <div class="section-title-wrap">
+            <span class="drawer-title">Custom size</span>
+            <span class="info-tip-dot" title="Ajusta el tamaño del troquel. Se recalcula automáticamente a escala 1:1 en mm">ⓘ</span>
           </div>
-          <div class="legend-pill">
-            <span class="line-swatch crease"></span>
-            <span>Rojo = Hendido Chafado</span>
+          <div class="unit-toggle-pill">
+            <button id="btn-unit-mm" class="unit-btn active">mm</button>
+            <button id="btn-unit-in" class="unit-btn">in</button>
           </div>
         </div>
 
-        <div class="kv-list">
-          <div class="kv-item">
-            <span>Archivo / Modelo:</span>
-            <strong id="info-filename">b1 caja americana.svg</strong>
-          </div>
-          <div class="kv-item">
-            <span>Pliego total (1:1):</span>
-            <strong id="info-blank-size">542.74 × 220.86 mm</strong>
-          </div>
-          <div class="kv-item">
-            <span>Calibración:</span>
-            <strong id="info-cota-source" style="font-size:10.5px; color:#38bdf8;">Cota detectada: 542.74 mm</strong>
-          </div>
-          <div class="kv-item">
-            <span>Topología detectada:</span>
-            <strong id="info-panel-count">13 paneles</strong>
-          </div>
-          <div class="kv-item">
-            <span>Bisagras / Cortes:</span>
-            <strong><span id="info-hinge-count">12 líneas rojas</span> · <span id="info-cut-count">266 tramos</span></strong>
-          </div>
-        </div>
-      </section>
-
-      <!-- Base de datos de Cartones y Espesores ArtiosCAD 12.0 -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">📦 Espesor y Material (ArtiosCAD DB)</span>
-        </div>
-
-        <div class="control-group">
-          <div class="control-label">
-            <span>Calidad de Cartón (ArtiosCAD 12.0):</span>
-          </div>
-          <select id="board-select" class="cad-select"></select>
-        </div>
-
-        <div class="control-group">
-          <div class="control-label">
-            <span>Espesor / Calibre del Cartón:</span>
-            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
-              <input type="number" id="caliper-num" min="0.4" max="15.0" step="0.1" value="3.0" class="cad-num-input" />
-              <span class="num-unit">mm</span>
+        <!-- Inputs de Length, Width, Height -->
+        <div class="size-inputs-grid">
+          <div class="size-field">
+            <span class="field-label">Length</span>
+            <div class="field-input-box">
+              <input type="number" id="input-length" min="10" max="2500" step="1" value="315" />
+              <span class="field-unit-label">mm</span>
             </div>
           </div>
-          <input type="range" id="caliper-slider" min="0.4" max="15.0" step="0.1" value="3.0" class="cad-slider" />
-          <div class="preset-row">
-            <button class="preset-chip" data-caliper-preset="1.5">1.5 mm</button>
-            <button class="preset-chip" data-caliper-preset="3.0">3.0 mm</button>
-            <button class="preset-chip" data-caliper-preset="5.0">5.0 mm</button>
-            <button class="preset-chip" data-caliper-preset="8.0">8.0 mm</button>
-          </div>
-        </div>
-
-        <div class="kv-list" style="margin-top:10px;">
-          <div class="kv-item">
-            <span>Tipo de Onda / Flauta:</span>
-            <strong id="board-flute-code">Onda B (420 g/m²)</strong>
-          </div>
-          <div class="kv-item">
-            <span>Inside Loss / Outside Gain:</span>
-            <strong id="board-loss-gain">-2.0 / +1.0 mm</strong>
-          </div>
-          <div class="kv-item">
-            <span>Textura ArtiosCAD:</span>
-            <strong id="board-tex-info" style="font-size:10.5px;">boardbrown.jpg + boardedge3.JPG</strong>
-          </div>
-        </div>
-      </section>
-
-      <!-- Hendido Chafado / Hundido en Líneas Rojas (Ambas Caras) -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">🔨 Hendido Chafado (Ambas Caras)</span>
-        </div>
-
-        <div class="control-group">
-          <div class="control-label">
-            <span>Profundidad de Chafado (Int. + Ext.):</span>
-            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
-              <input type="number" id="crush-depth-num" min="0" max="85" step="1" value="72" class="cad-num-input" />
-              <span class="num-unit">%</span>
+          <div class="size-field">
+            <span class="field-label">Width</span>
+            <div class="field-input-box">
+              <input type="number" id="input-width" min="10" max="2500" step="1" value="202" />
+              <span class="field-unit-label">mm</span>
             </div>
           </div>
-          <input type="range" id="crush-depth-slider" min="0" max="85" step="1" value="72" class="cad-slider fold-master" />
         </div>
 
-        <div class="control-group">
-          <div class="control-label">
-            <span>Anchura del Surco de Hendido:</span>
-            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
-              <input type="number" id="crease-width-num" min="0.5" max="2.4" step="0.05" value="1.25" class="cad-num-input" />
-              <span class="num-unit">× esp</span>
-            </div>
-          </div>
-          <input type="range" id="crease-width-slider" min="0.5" max="2.4" step="0.05" value="1.25" class="cad-slider" />
-        </div>
-      </section>
-
-      <!-- Inspector de Cara Seleccionada -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">🔍 Panel / Cara Seleccionada</span>
-        </div>
-        <div id="selected-face-info" class="selected-face-card">
-          Haz clic en cualquier panel del plano 2D o del modelo 3D para inspeccionar sus medidas exactas en mm.
-        </div>
-      </section>
-
-      <!-- Opciones de Visualización -->
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">👁️ Opciones de Visualización 3D</span>
-        </div>
-        <div class="check-list">
-          <label class="check-item">
-            <input type="checkbox" id="chk-standup" checked />
-            <span>Posicionar caja armada de pie sobre la base</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" id="chk-crease-3d" />
-            <span>Superponer línea guía roja sobre el surco 3D</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" id="chk-cut-3d" checked />
-            <span>Mostrar contornos azules de corte en 3D</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" id="chk-dims-3d" checked />
-            <span>Mostrar caja envolvente de medidas 3D</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" id="chk-grid-3d" checked />
-            <span>Mostrar suelo y rejilla milimétrica</span>
-          </label>
-          <label class="check-item">
-            <input type="checkbox" id="chk-wireframe" />
-            <span>Ver malla subdividida de hendidos (Wireframe)</span>
-          </label>
-        </div>
-      </section>
-
-    </aside>
-
-    <!-- ÁREA CENTRAL: VISOR 2D + VISOR 3D -->
-    <section id="cad-workspace" class="cad-workspace" data-layout="split">
-
-      <!-- VISOR 2D DEL TROQUEL CON BARRA PARAMÉTRICA INTEGRADA (LARGO × ANCHO × ALTO) -->
-      <div class="viewport-pane viewport-2d-pane">
-        <div class="viewport-hud-top">
-          <div class="hud-badge">
-            <span>📏 Plano Troquel 2D (Escala 1:1 mm)</span>
-            <span id="param-sync-status" class="param-status-pill">⚡ Paramétrico Activo</span>
-          </div>
-          <div class="hud-toolbar">
-            <button id="btn-export-svg" class="hud-mini-btn" title="Descargar el plano troquel 2D actual con las nuevas medidas en formato .SVG a escala 1:1 en mm" style="color:#38bdf8;">💾 .SVG 1:1</button>
-            <button id="btn-reset-2d" class="hud-mini-btn" title="Centrar troquel 2D">Centrar 2D</button>
+        <div class="size-field single">
+          <span class="field-label">Height</span>
+          <div class="field-input-box">
+            <input type="number" id="input-height" min="10" max="2500" step="1" value="62" />
+            <span class="field-unit-label">mm</span>
           </div>
         </div>
 
-        <!-- BARRA FLOTANTE PARAMÉTRICA 2D: LARGO (L) × ANCHO (W) × ALTO (H) -->
-        <div class="parametric-2d-bar">
-          <div class="param-field">
-            <div class="param-field-top">
-              <span class="param-tag l-tag">L</span>
-              <span class="param-name">Largo:</span>
-              <div class="num-input-wrap" title="Escribe el Largo (mm) con el teclado numérico o gira la ruleta del ratón">
-                <input type="number" id="param-l-num" min="15" max="2000" step="1" value="157.5" class="cad-num-input" />
-                <span class="num-unit">mm</span>
-              </div>
-            </div>
-            <input type="range" id="param-l-slider" min="15" max="1200" step="1" value="157.5" class="cad-slider" />
+        <!-- Material selector -->
+        <div class="drawer-group">
+          <div class="section-title-wrap">
+            <span class="field-label-bold">Choose material</span>
+            <span class="info-tip-dot" title="Cartones corrugados y calibres oficiales de la base de datos de ArtiosCAD">ⓘ</span>
           </div>
-
-          <div class="param-field">
-            <div class="param-field-top">
-              <span class="param-tag w-tag">W</span>
-              <span class="param-name">Ancho:</span>
-              <div class="num-input-wrap" title="Escribe el Ancho (mm) con el teclado numérico o gira la ruleta del ratón">
-                <input type="number" id="param-w-num" min="15" max="2000" step="1" value="105.3" class="cad-num-input" />
-                <span class="num-unit">mm</span>
-              </div>
-            </div>
-            <input type="range" id="param-w-slider" min="15" max="1200" step="1" value="105.3" class="cad-slider" />
+          <div class="custom-select-wrap">
+            <select id="select-material" class="drawer-dropdown"></select>
           </div>
-
-          <div class="param-field">
-            <div class="param-field-top">
-              <span class="param-tag h-tag">H</span>
-              <span class="param-name">Alto:</span>
-              <div class="num-input-wrap" title="Escribe el Alto (mm) con el teclado numérico o gira la ruleta del ratón">
-                <input type="number" id="param-h-num" min="15" max="2000" step="1" value="115.6" class="cad-num-input" />
-                <span class="num-unit">mm</span>
-              </div>
-            </div>
-            <input type="range" id="param-h-slider" min="15" max="1200" step="1" value="115.6" class="cad-slider" />
-          </div>
-
-          <button id="btn-reset-params" class="hud-mini-btn param-reset-btn" title="Restaurar medidas originales del modelo">
-            ↺ Original
-          </button>
         </div>
 
-        <canvas id="canvas-2d"></canvas>
-        <div class="viewport-hud-bottom">
-          <div class="hud-badge" style="font-size:11px; color:#94a3b8;">
-            Altera Largo (L), Ancho (W) o Alto (H) con teclado, ruleta o slider para redimensionar el troquel 2D y la caja 3D en tiempo real
+        <!-- Custom thickness con botones - [value] + -->
+        <div class="drawer-group">
+          <div class="section-title-wrap">
+            <span class="field-label-bold">Custom thickness</span>
+            <span id="label-thickness-range" class="thickness-range-text">(0.4-15mm)</span>
+          </div>
+          <div class="stepper-wrap">
+            <button id="btn-thickness-minus" class="stepper-btn" title="Disminuir espesor">-</button>
+            <input type="number" id="input-thickness" class="stepper-input" min="0.4" max="15.0" step="0.1" value="1.5" />
+            <button id="btn-thickness-plus" class="stepper-btn" title="Aumentar espesor">+</button>
+          </div>
+        </div>
+
+        <!-- Size mode -->
+        <div class="drawer-group">
+          <div class="section-title-wrap">
+            <span class="field-label-bold">Size mode</span>
+            <span class="info-tip-dot" title="Elige si las medidas corresponden al troquel de fabricación, interior útil o exterior">ⓘ</span>
+          </div>
+          <div class="custom-select-wrap">
+            <select id="select-size-mode" class="drawer-dropdown">
+              <option value="dm" selected>Manufacture dimensions</option>
+              <option value="id">Inner dimensions</option>
+              <option value="ed">Outer dimensions</option>
+            </select>
           </div>
         </div>
       </div>
 
-      <!-- VISOR 3D WEBGL (THREE.JS) -->
-      <div class="viewport-pane viewport-3d-pane">
-        <div class="viewport-hud-top">
-          <div class="hud-badge">
-            <span>🧊 Volumen 3D Actual:</span>
-            <strong id="hud-3d-dims" style="color:#38bdf8; font-family:var(--font-mono);">-- × -- × -- mm</strong>
-          </div>
-          <div class="hud-toolbar">
-            <button class="hud-mini-btn" data-cam-preset="iso">Isométrica</button>
-            <button class="hud-mini-btn" data-cam-preset="front">Frontal</button>
-            <button class="hud-mini-btn" data-cam-preset="top">Superior</button>
-            <button class="hud-mini-btn" data-cam-preset="side">Lateral</button>
-            <button class="hud-mini-btn" data-cam-preset="edge" title="Acercar cámara al hendido chafado y canto corrugado">Ver Hendido/Canto</button>
+      <!-- ================= PESTAÑA 3: DETAILS (SCREENSHOT 2) ================= -->
+      <div id="drawer-tab-details" class="drawer-tab-view hidden">
+        <div class="details-unlocked-card">
+          <div class="unlocked-icon">🔓</div>
+          <div>
+            <div class="unlocked-title">Parámetros avanzados desbloqueados</div>
+            <div class="unlocked-subtitle">Control paramétrico completo de cada solapa y pliegue sin restricciones.</div>
           </div>
         </div>
 
-        <div id="viewport-3d"></div>
-
-        <div class="viewport-hud-bottom">
-          <div class="hud-badge" style="font-size:11px; color:#94a3b8;">
-            Clic Izq: Orbitar · Clic Der: Desplazar · Rueda: Zoom · Ejes de rotación en z = 0 (centro del espesor)
+        <div class="drawer-section-head">
+          <span class="drawer-title">Details</span>
+          <div class="unit-toggle-pill">
+            <button id="btn-unit-mm-details" class="unit-btn active">mm</button>
+            <button id="btn-unit-in-details" class="unit-btn">in</button>
           </div>
         </div>
+
+        <!-- Parámetros dinámicos del modelo (Corner flap, Locking tab, Inner side, Lid side flap, Front flap...) -->
+        <div id="details-params-container" class="details-params-list"></div>
+
+        <!-- Campo Bleed -->
+        <div class="detail-row">
+          <span class="detail-name">Bleed</span>
+          <div class="detail-input-wrap">
+            <input type="number" id="input-bleed-val" min="0" max="25" step="1" value="5" class="detail-num-input" />
+            <span class="field-unit-label">mm</span>
+          </div>
+        </div>
+
+        <!-- Control de hendido chafado de ArtiosCAD -->
+        <div class="detail-row">
+          <span class="detail-name">Crease depth</span>
+          <div class="detail-input-wrap">
+            <input type="number" id="input-crush-depth" min="0" max="90" step="1" value="72" class="detail-num-input" />
+            <span class="field-unit-label">%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= PESTAÑA 4: PARTS (SCREENSHOT 3) ================= -->
+      <div id="drawer-tab-parts" class="drawer-tab-view hidden">
+        <div class="drawer-section-head">
+          <span class="drawer-title">Change parts</span>
+        </div>
+        <p class="parts-intro-text">
+          Selecciona una variación estructural. Pasa el cursor para ver el área afectada resaltada en azul en el plano 2D.
+        </p>
+
+        <div class="parts-cards-grid">
+          <!-- Standard -->
+          <div class="part-card active" data-part-key="standard">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <rect x="18" y="14" width="124" height="28" rx="7" stroke="#009ee3" stroke-width="1.8" />
+                <line x1="20" y1="36" x2="140" y2="36" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Standard</span>
+              <span class="info-tip-dot" title="Geometría clásica original de la solapa de cierre">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Thumb notch -->
+          <div class="part-card" data-part-key="thumb_notch">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <path d="M18 40V21a7 7 0 0 1 7-7h47a8 8 0 0 0 16 0h47a7 7 0 0 1 7 7v19" stroke="#009ee3" stroke-width="1.8" />
+                <line x1="20" y1="38" x2="140" y2="38" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Thumb notch</span>
+              <span class="info-tip-dot" title="Muesca semicircular para facilitar la apertura con el dedo">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Tab lock -->
+          <div class="part-card" data-part-key="tab_lock">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <path d="M18 42V21a7 7 0 0 1 7-7h39v-6h32v6h39a7 7 0 0 1 7 7v21" stroke="#009ee3" stroke-width="1.8" />
+                <line x1="64" y1="14" x2="96" y2="14" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <line x1="20" y1="40" x2="140" y2="40" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Tab lock</span>
+              <span class="info-tip-dot" title="Pestaña de cierre que se inserta firmemente en la ranura frontal">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Handle -->
+          <div class="part-card" data-part-key="handle">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <rect x="18" y="14" width="124" height="30" rx="7" stroke="#009ee3" stroke-width="1.8" />
+                <rect x="56" y="24" width="48" height="11" rx="5.5" stroke="#009ee3" stroke-width="1.6" />
+                <line x1="20" y1="38" x2="140" y2="38" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Handle</span>
+              <span class="info-tip-dot" title="Asa troquelada para transporte cómodo">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Tear strip -->
+          <div class="part-card" data-part-key="tear_strip">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <rect x="18" y="14" width="124" height="28" rx="4" stroke="#009ee3" stroke-width="1.6" />
+                <line x1="24" y1="23" x2="136" y2="23" stroke="#009ee3" stroke-dasharray="4 2" stroke-width="1.4" />
+                <line x1="24" y1="33" x2="136" y2="33" stroke="#e5007d" stroke-dasharray="4 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Tear strip</span>
+              <span class="info-tip-dot" title="Tira de rasgado / apertura rápida con doble perforación zipper">ⓘ</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= PESTAÑA 5: INFO (SCREENSHOT 4) ================= -->
+      <div id="drawer-tab-info" class="drawer-tab-view hidden">
+        <div class="drawer-section-head">
+          <span class="drawer-title">Dieline info</span>
+        </div>
+
+        <div class="info-block-group">
+          <div class="info-label-muted">Model ID</div>
+          <div id="info-model-id" class="info-value-big">150010</div>
+        </div>
+
+        <div class="info-block-group">
+          <div class="info-subhead">Dimensions</div>
+
+          <div class="info-row">
+            <span class="info-row-title">Manufacturing</span>
+            <span id="info-dim-mfg" class="info-row-val">315 × 202 × 62 mm</span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-row-title">Inner</span>
+            <span id="info-dim-inner" class="info-row-val">300 × 200 × 60 mm</span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-row-title">Outer</span>
+            <span id="info-dim-outer" class="info-row-val">316 × 204.5 × 63 mm</span>
+          </div>
+        </div>
+
+        <div class="info-block-group">
+          <div class="info-subhead">Dieline statistics</div>
+
+          <div class="info-row">
+            <span class="info-row-title">Design area</span>
+            <span id="info-stat-area" class="info-row-val">578 × 590 mm</span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-row-title">Cut length</span>
+            <span id="info-stat-cut" class="info-row-val">3638.59 mm</span>
+          </div>
+
+          <div class="info-row">
+            <span class="info-row-title">Crease length</span>
+            <span id="info-stat-crease" class="info-row-val">3065 mm</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= PESTAÑA 6: MORE ================= -->
+      <div id="drawer-tab-more" class="drawer-tab-view hidden">
+        <div class="drawer-section-head">
+          <span class="drawer-title">Opciones CAD y 3D</span>
+        </div>
+
+        <div class="more-options-list">
+          <label class="more-check-item">
+            <input type="checkbox" id="chk-standup" checked />
+            <span>Posicionar caja armada de pie sobre la base</span>
+          </label>
+          <label class="more-check-item">
+            <input type="checkbox" id="chk-wireframe" />
+            <span>Ver malla de subdivisión y hendidos (Wireframe)</span>
+          </label>
+          <label class="more-check-item">
+            <input type="checkbox" id="chk-crease-3d" />
+            <span>Resaltar surco 3D de hendido en rojo</span>
+          </label>
+          <label class="more-check-item">
+            <input type="checkbox" id="chk-cut-3d" checked />
+            <span>Mostrar contornos azules de corte en 3D</span>
+          </label>
+          <label class="more-check-item">
+            <input type="checkbox" id="chk-grid-3d" checked />
+            <span>Mostrar rejilla milimétrica y suelo</span>
+          </label>
+        </div>
+
+        <div class="drawer-group" style="margin-top:14px;">
+          <div class="section-title-wrap">
+            <span class="field-label-bold">Secuencia de plegado</span>
+          </div>
+          <select id="fold-sequence-mode" class="drawer-dropdown">
+            <option value="phased" selected>Secuencia Realista por Fases (Cuerpo → Base → Tapa)</option>
+            <option value="simultaneous">Plegado Simultáneo</option>
+          </select>
+        </div>
+
+        <div class="drawer-group" style="margin-top:14px;">
+          <div class="section-title-wrap">
+            <span class="field-label-bold">Control individual por bisagra roja</span>
+          </div>
+          <div id="hinges-slider-list" class="hinges-drawer-scroll"></div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- =========================================================================
+         ÁREA CENTRAL: CANVAS 2D CON LEYENDA Y TOOLBAR FLOTANTE INFERIOR
+         ========================================================================= -->
+    <section class="canvas-2d-viewport">
+
+      <!-- Leyenda superior izquierda (Bleed, Trim, Crease) -->
+      <div class="dieline-legend-card">
+        <div class="legend-entry">
+          <span class="legend-swatch bleed"></span>
+          <span class="legend-text">Bleed</span>
+        </div>
+        <div class="legend-entry">
+          <span class="legend-swatch trim"></span>
+          <span class="legend-text">Trim</span>
+        </div>
+        <div class="legend-entry">
+          <span class="legend-swatch crease"></span>
+          <span class="legend-text">Crease</span>
+        </div>
+      </div>
+
+      <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
+      <canvas id="canvas-2d"></canvas>
+
+      <!-- Barra de herramientas flotante inferior idéntica a la imagen -->
+      <div class="canvas-bottom-toolbar">
+        <button id="tool-select" class="tool-pill-btn active" title="Herramienta de selección">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M4 3l12 11.5-5 1.5 3 6-2.5 1.2-3-6-4.5 4.5z"/>
+          </svg>
+        </button>
+
+        <button id="tool-pan" class="tool-pill-btn" title="Desplazar plano (Mano / Pan)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 11V6a2 2 0 0 0-4 0v5"></path>
+            <path d="M14 10V4a2 2 0 0 0-4 0v7"></path>
+            <path d="M10 10.5V6a2 2 0 0 0-4 0v8"></path>
+            <path d="M18 8a2 2 0 0 1 4 4v5a7 7 0 0 1-7 7h-2c-3.87 0-7-3.13-7-7v-3.5"></path>
+          </svg>
+        </button>
+
+        <span class="tool-divider"></span>
+
+        <button id="tool-zoom-in" class="tool-pill-btn" title="Acercar (+)">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+
+        <button id="tool-zoom-out" class="tool-pill-btn" title="Alejar (-)">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+
+        <button id="tool-fit-view" class="tool-pill-btn" title="Centrar troquel 1:1">
+          <span style="font-size:11px; font-weight:700;">1:1</span>
+        </button>
+
+        <span class="tool-divider"></span>
+
+        <button id="tool-toggle-dims" class="tool-pill-btn active" title="Mostrar/ocultar cotas de medidas">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="4" y1="20" x2="20" y2="4"></line>
+            <polyline points="14 4 20 4 20 10"></polyline>
+          </svg>
+        </button>
+
+        <button id="tool-toggle-bleed" class="tool-pill-btn active" title="Mostrar/ocultar contorno verde de sangrado (Bleed)">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="2 2"></rect>
+          </svg>
+        </button>
+
+        <button id="tool-toggle-grid" class="tool-pill-btn active" title="Mostrar/ocultar cuadrícula milimétrica">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+            <line x1="4" y1="9" x2="20" y2="9"></line>
+            <line x1="4" y1="15" x2="20" y2="15"></line>
+            <line x1="10" y1="3" x2="10" y2="21"></line>
+            <line x1="16" y1="3" x2="16" y2="21"></line>
+          </svg>
+        </button>
       </div>
 
     </section>
 
-    <!-- PANEL DERECHO: CINEMÁTICA DE PLEGADO Y CONTROL DE BISAGRAS (LÍNEAS ROJAS) -->
-    <aside class="cad-sidebar right">
+    <!-- =========================================================================
+         ÁREA DERECHA: TARJETAS FLOTANTES (3D PREVIEW + FILE FORMATS + YOU WILL GET)
+         ========================================================================= -->
+    <aside class="right-floating-container">
 
-      <section class="panel-section">
-        <div class="section-header">
-          <span class="section-title">⚙️ Cinemática de Plegado 3D (Eje Central)</span>
+      <!-- TARJETA SUPERIOR 3D PREVIEW CON BADGE '3D' Y SLIDER OPEN - CLOSE -->
+      <div id="preview-3d-card" class="preview-3d-card">
+        <div class="card-3d-badge" title="Visor 3D WebGL con hendidos chafados en centro del espesor">
+          <span>3D</span>
         </div>
 
-        <div class="control-group">
-          <button id="btn-play-fold" class="cad-btn accent-fold">
-            ▶ Animar Plegado 3D
+        <div id="viewport-3d" class="viewport-3d-canvas"></div>
+
+        <!-- Botón expandir/maximizar 3D -->
+        <button id="btn-expand-3d" class="btn-expand-pip" title="Alternar tamaño de vista 3D">
+          <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        </button>
+
+        <!-- Slider Open - Close -->
+        <div class="card-3d-slider-pill">
+          <span class="fold-state-label">Open</span>
+          <input type="range" id="master-fold-slider" min="0" max="100" step="1" value="75" class="fold-pip-slider" />
+          <span class="fold-state-label">Close</span>
+          <button id="btn-play-fold" class="btn-pip-play" title="Animar plegado continuo">▶</button>
+        </div>
+      </div>
+
+      <!-- TARJETA INFERIOR: FILE FORMATS + YOU WILL GET (IDÉNTICO A LA IMAGEN) -->
+      <div class="export-formats-card">
+        <div class="export-card-title">File formats</div>
+
+        <div class="formats-button-grid">
+          <button class="format-btn active" data-export-format="ai" title="Adobe Illustrator .AI vectorial 1:1 mm">
+            <span class="format-icon ai">AI</span>
+            <span class="format-label">AI dieline</span>
+          </button>
+
+          <button class="format-btn" data-export-format="pdf" title="PDF vectorial listo para imprenta 1:1 mm">
+            <span class="format-icon pdf">PDF</span>
+            <span class="format-label">PDF dieline</span>
+          </button>
+
+          <button class="format-btn" data-export-format="dxf" title="AutoCAD / ArtiosCAD DXF R12 con capas CUT, CREASE, BLEED">
+            <span class="format-icon dxf">DXF</span>
+            <span class="format-label">DXF dieline</span>
+          </button>
+
+          <button class="format-btn" data-export-format="svg" title="SVG 1:1 mm para plotter de corte o edición">
+            <span class="format-icon svg">SVG</span>
+            <span class="format-label">SVG dieline</span>
+          </button>
+
+          <button class="format-btn" data-export-format="glb" title="Modelo 3D animado en milímetros listo para Blender">
+            <span class="format-icon glb">3D</span>
+            <span class="format-label">Blender (.GLB)</span>
+          </button>
+
+          <button class="format-btn" data-export-format="png" title="Captura de alta resolución en PNG">
+            <span class="format-icon png">PNG</span>
+            <span class="format-label">3D mockup</span>
           </button>
         </div>
 
-        <div class="control-group">
-          <div class="control-label">
-            <span>Plegado Maestro de Caja:</span>
-            <div class="num-input-wrap" title="Escribe con el teclado numérico o gira la ruleta del ratón">
-              <input type="number" id="master-fold-num" min="0" max="100" step="1" value="75" class="cad-num-input" />
-              <span class="num-unit">%</span>
-            </div>
-          </div>
-          <input type="range" id="master-fold-slider" min="0" max="100" step="1" value="75" class="cad-slider fold-master" />
-          <div class="preset-row">
-            <button class="preset-chip" data-fold-preset="0">0% Plano</button>
-            <button class="preset-chip" data-fold-preset="36">36% Tubo</button>
-            <button class="preset-chip" data-fold-preset="75">75% Base</button>
-            <button class="preset-chip" data-fold-preset="100">100% Cerrada</button>
-          </div>
+        <div class="you-will-get-section">
+          <div class="you-will-get-title">You will get</div>
+          <ul class="you-will-get-list">
+            <li>All dieline files can be generated and downloaded instantly.</li>
+            <li>All dieline files are rigorously structurally inspected. Dimensions, thickness, and material descriptions are included. Ready for printing.</li>
+            <li>All dieline files are without watermarks and can be locally edited using Adobe Illustrator, ArtiosCAD, or Blender.</li>
+          </ul>
         </div>
-
-        <div class="control-group" style="margin-top:10px;">
-          <div class="control-label">
-            <span>Secuencia de Armado:</span>
-          </div>
-          <select id="fold-sequence-mode" class="cad-select">
-            <option value="phased" selected>Secuencia Realista por Fases (Cuerpo → Fondo → Tapa)</option>
-            <option value="simultaneous">Plegado Simultáneo de Todas las Caras</option>
-          </select>
-        </div>
-      </section>
-
-      <!-- Control individual de cada línea roja de doblez -->
-      <section class="panel-section" style="flex:1; display:flex; flex-direction:column;">
-        <div class="section-header">
-          <span class="section-title">🔴 Control por Línea Roja (Bisagras)</span>
-        </div>
-        <p style="font-size:11px; color:var(--text-secondary); margin-bottom:10px;">
-          Rotación sobre el centro exacto del espesor (-180° a +180°):
-        </p>
-        <div id="hinges-slider-list" class="hinges-scroll"></div>
-      </section>
+      </div>
 
     </aside>
 
   </main>
 
-  <!-- MODAL DEL CATÁLOGO COMPLETO DE 116 MODELOS FEFCO -->
-  <div id="fefco-modal-backdrop" class="fefco-modal-backdrop hidden">
-    <div class="fefco-modal">
-      <div class="fefco-modal-header">
-        <div>
-          <h2>📚 Catálogo Oficial Completo de 116 Modelos FEFCO Paramétricos</h2>
-          <p>Selecciona cualquier diseño estructural (Cajas Americanas 02xx, Telescópicas 03xx, Estuches/Automontables 04xx, Bandejas y Expositores 07xx/08xx) para abrirlo y parametrizarlo en 2D y 3D.</p>
-        </div>
-        <button id="btn-close-fefco-modal" class="fefco-close-btn" title="Cerrar catálogo">✕</button>
-      </div>
-
-      <div class="fefco-modal-toolbar">
-        <input type="text" id="fefco-search-input" class="fefco-search-input" placeholder="🔍 Buscar por código FEFCO (ej. 0427, 0201, 0422, 0701, 150011) o nombre..." />
-        <div class="fefco-Series-tabs">
-          <button class="fefco-tab active" data-fefco-filter="ALL">Todos (116)</button>
-          <button class="fefco-tab" data-fefco-filter="02">Serie 02xx (Cajas Ranuradas RSC)</button>
-          <button class="fefco-tab" data-fefco-filter="03">Serie 03xx (Tapa y Fondo)</button>
-          <button class="fefco-tab" data-fefco-filter="04">Serie 04xx (Automontables / Bandejas / Estuches)</button>
-          <button class="fefco-tab" data-fefco-filter="05-09">Series 05-09 (Fondo Automático / Expositores / Separadores)</button>
-        </div>
-      </div>
-
-      <div id="fefco-catalog-grid" class="fefco-catalog-grid"></div>
-    </div>
-  </div>
-
-  <!-- LIBRERÍAS Y MOTOR GRÁFICO LOCAL -->
+  <!-- LIBRERÍAS EXTERNAS Y SCRIPTS LOCALES -->
   <script src="assets/libs/three.min.js"></script>
   <script src="assets/libs/OrbitControls.js"></script>
   <script src="assets/libs/GLTFExporter.js"></script>
   <script src="artios-assets.js"></script>
   <script src="assets/fefco-catalog.js"></script>
+  <script src="assets/pacdora-catalog/catalog-index.js"></script>
   <script src="dieline-engine.js"></script>
   <script src="app.js"></script>
 </body>

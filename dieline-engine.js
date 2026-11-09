@@ -1621,6 +1621,64 @@
     const boxWidthMm = Number(meta.width) || findArrowLen('W') || +(rootFace.bbox.height).toFixed(1);
     const boxDepthMm = Number(meta.height) || findArrowLen('H') || 100;
 
+    // 5. Parse Bleed lines (Green outer offset contour) if provided by solver
+    const bleedSegmentsMm = [];
+    if (Array.isArray(knifeData.bleeds) && knifeData.bleeds.length > 0) {
+      let cx = 0, cy = 0, sx = 0, sy = 0;
+      const pushBleedPoly = (pts) => {
+        for (let i = 0; i < pts.length - 1; i++) {
+          const a = pts[i], b = pts[i + 1];
+          if (Math.hypot(b.x - a.x, b.y - a.y) > 0.01) {
+            bleedSegmentsMm.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, type: 'BLEED' });
+          }
+        }
+      };
+      let currPts = [];
+      for (const cmd of knifeData.bleeds) {
+        if (cmd.mtd === 'M') {
+          if (currPts.length > 1) pushBleedPoly(currPts);
+          cx = sx = (Number(cmd.x) || 0) - minX;
+          cy = sy = (Number(cmd.y) || 0) - minY;
+          currPts = [{ x: cx, y: cy }];
+        } else if (cmd.mtd === 'L') {
+          cx = (Number(cmd.x) || 0) - minX;
+          cy = (Number(cmd.y) || 0) - minY;
+          currPts.push({ x: cx, y: cy });
+        } else if (cmd.mtd === 'A') {
+          const nx = (Number(cmd.x) || 0) - minX;
+          const ny = (Number(cmd.y) || 0) - minY;
+          const arcPts = sampleSvgArc(cx, cy, cmd.rx || 1, cmd.ry || 1, cmd.ang || 0, cmd.arc || 0, cmd.dir || 0, nx, ny, 8);
+          for (const p of arcPts) currPts.push(p);
+          cx = nx; cy = ny;
+        } else if (cmd.mtd === 'Q') {
+          const nx = (Number(cmd.x) || 0) - minX;
+          const ny = (Number(cmd.y) || 0) - minY;
+          const qx = (cmd.cx !== undefined ? Number(cmd.cx) : (cx + nx) * 0.5) - minX;
+          const qy = (cmd.cy !== undefined ? Number(cmd.cy) : (cy + ny) * 0.5) - minY;
+          for (let s = 1; s <= 6; s++) {
+            const t = s / 6, mt = 1 - t;
+            currPts.push({
+              x: mt * mt * cx + 2 * mt * t * qx + t * t * nx,
+              y: mt * mt * cy + 2 * mt * t * qy + t * t * ny
+            });
+          }
+          cx = nx; cy = ny;
+        } else if (cmd.mtd === 'Z') {
+          currPts.push({ x: sx, y: sy });
+          pushBleedPoly(currPts);
+          currPts = [];
+        }
+      }
+      if (currPts.length > 1) pushBleedPoly(currPts);
+    }
+
+    const shiftArrowList = (arr) => (arr || []).map(sa => ({
+      ...sa,
+      p1: sa.p1 ? { x: sa.p1.x - minX, y: sa.p1.y - minY } : null,
+      p2: sa.p2 ? { x: sa.p2.x - minX, y: sa.p2.y - minY } : null,
+      tpointer: sa.tpointer ? { ...sa.tpointer, x: sa.tpointer.x - minX, y: sa.tpointer.y - minY } : null
+    }));
+
     return {
       isPacdoraModel: true,
       pacdoraMeta: {
@@ -1630,7 +1688,7 @@
         name: meta.name || ''
       },
       mmPerUnit: 1.0,
-      scaleSource: `Paramétrico FEFCO 1:1 (${meta.fefcoCode || 'Pacdora'})`,
+      scaleSource: `Paramétrico 1:1 (${meta.fefcoCode || '#' + (meta.num || '')})`,
       cotaMmValue: blankWidthMm,
       cotaLabel: `${blankWidthMm.toFixed(1)} mm`,
       blankWidthMm,
@@ -1643,16 +1701,19 @@
         width: boxWidthMm,
         depth: boxDepthMm
       },
-      sizeArrowData: (knifeData.sizeArrowData || []).map(sa => ({
-        ...sa,
-        p1: sa.p1 ? { x: sa.p1.x - minX, y: sa.p1.y - minY } : null,
-        p2: sa.p2 ? { x: sa.p2.x - minX, y: sa.p2.y - minY } : null,
-        tpointer: sa.tpointer ? { ...sa.tpointer, x: sa.tpointer.x - minX, y: sa.tpointer.y - minY } : null
-      })),
+      solverDimensions: {
+        mfg: knifeData.knifeSize || { length: boxLengthMm, width: boxWidthMm, height: boxDepthMm },
+        inner: knifeData.size || null,
+        outer: knifeData.outSize || null
+      },
+      openParams: knifeData.openParams || [],
+      bleedMm: knifeData.bleedMm !== undefined ? Number(knifeData.bleedMm) : 5,
+      sizeArrowData: shiftArrowList(knifeData.sizeArrowData),
+      outsideArrowData: shiftArrowList(knifeData.outsideArrowData),
       calibration: {
         mmPerUnit: 1.0,
         detectedCotaMM: blankWidthMm,
-        source: `Motor Paramétrico FEFCO 1:1 (${meta.fefcoCode || 'Nativo'})`
+        source: `Motor Paramétrico 1:1 (${meta.fefcoCode || 'Nativo'})`
       },
       bounds: {
         minX: 0,
@@ -1664,8 +1725,10 @@
       },
       cutSegmentsMm,
       foldSegmentsMm,
+      bleedSegmentsMm,
       cutSegments: cutSegmentsMm,
       foldSegments: foldSegmentsMm,
+      bleedSegments: bleedSegmentsMm,
       faces: rawFaces,
       hinges: treeHinges,
       rootFaceId: rootFace.id
@@ -1883,6 +1946,26 @@
       };
     });
 
+    const newBleedSegments = (baseModel.bleedSegments || []).map(s => ({
+      ...s,
+      x1: warpX(s.x1),
+      y1: warpY(s.y1),
+      x2: warpX(s.x2),
+      y2: warpY(s.y2)
+    }));
+
+    const warpArrowList = (arr) => (arr || []).map(sa => {
+      const p1 = sa.p1 ? { x: warpX(sa.p1.x), y: warpY(sa.p1.y) } : null;
+      const p2 = sa.p2 ? { x: warpX(sa.p2.x), y: warpY(sa.p2.y) } : null;
+      const tpointer = sa.tpointer ? { ...sa.tpointer, x: warpX(sa.tpointer.x), y: warpY(sa.tpointer.y) } : null;
+      let lineLength = sa.lineLength;
+      if (sa.lineName === 'L') lineLength = targetL;
+      else if (sa.lineName === 'W') lineLength = targetW;
+      else if (sa.lineName === 'H') lineLength = targetH;
+      else if (p1 && p2) lineLength = +Math.hypot(p2.x - p1.x, p2.y - p1.y).toFixed(1);
+      return { ...sa, p1, p2, tpointer, lineLength };
+    });
+
     const blankW = Math.max(1, maxX - minX);
     const blankH = Math.max(1, maxY - minY);
 
@@ -1898,6 +1981,8 @@
         width: targetW,
         depth: targetH
       },
+      sizeArrowData: warpArrowList(baseModel.sizeArrowData),
+      outsideArrowData: warpArrowList(baseModel.outsideArrowData),
       bounds: {
         minX: isFinite(minX) ? minX : 0,
         minY: isFinite(minY) ? minY : 0,
@@ -1908,18 +1993,281 @@
       },
       cutSegmentsMm: newCutSegments,
       foldSegmentsMm: newFoldSegments,
+      bleedSegmentsMm: newBleedSegments,
       cutSegments: newCutSegments,
       foldSegments: newFoldSegments,
+      bleedSegments: newBleedSegments,
       faces: newFaces,
       hinges: newHinges
     };
   }
 
   /**
-   * Exports any current `dieline` model (whether resized SVG or FEFCO model) to a clean 1:1 mm `.svg` string
-   * with Blue (#009ee3) cut lines, Red (#e5007d) crease lines, and Black dimension cota.
+   * Finds the primary lid / closure flap face of a model (used for `Parts` highlight and structural modification).
    */
-  function exportDielineToSVG(model) {
+  function findPrimaryLidFlapFace(model) {
+    if (!model || !model.faces || model.faces.length === 0) return null;
+    const byName = ['FT', 'TT', 'HT', 'FB', 'F', 'T'];
+    for (const code of byName) {
+      const f = model.faces.find(x => x.pacdoraName === code);
+      if (f) return f;
+    }
+    // Otherwise pick the topmost or rightmost outer flap
+    let best = model.faces[0];
+    let bestScore = -Infinity;
+    for (const f of model.faces) {
+      const score = -f.bounds.minY + (f.role && f.role.includes('FLAP') ? 500 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = f;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Applies a structural Part variation (`standard` | `thumb_notch` | `tab_lock` | `handle` | `tear_strip`)
+   * to a dieline model in 1:1 mm, returning a modified model whose 2D cut/crease segments and 3D faces/holes
+   * reflect the selected part!
+   */
+  function applyPartVariationToModel(baseModel, partKey) {
+    if (!baseModel || !partKey || partKey === 'standard') return baseModel;
+
+    const targetFlap = findPrimaryLidFlapFace(baseModel);
+    if (!targetFlap) return baseModel;
+
+    // Clone faces and segments so baseModel remains pristine
+    const faces = baseModel.faces.map(f => ({
+      ...f,
+      polygon: f.polygon.map(p => ({ ...p })),
+      points: f.polygon.map(p => ({ ...p })),
+      holes: (f.holes || []).map(h => h.map(p => ({ ...p }))),
+      bounds: { ...f.bounds },
+      bbox: { ...f.bbox }
+    }));
+    const cutSegments = (baseModel.cutSegments || []).map(s => ({ ...s }));
+    const foldSegments = (baseModel.foldSegments || []).map(s => ({ ...s }));
+
+    const flap = faces.find(f => f.id === targetFlap.id) || faces[0];
+    const fb = flap.bounds;
+    const isHorizontalFlap = fb.width >= fb.height;
+    const cx = (fb.minX + fb.maxX) * 0.5;
+    const cy = (fb.minY + fb.maxY) * 0.5;
+    const globalMidY = (baseModel.bounds.minY + baseModel.bounds.maxY) * 0.5;
+    const globalMidX = (baseModel.bounds.minX + baseModel.bounds.maxX) * 0.5;
+
+    const addHolePolygon = (hostFace, pts) => {
+      if (!pts || pts.length < 3) return;
+      hostFace.holes.push(pts);
+      for (let i = 0; i < pts.length; i++) {
+        const a = pts[i];
+        const b = pts[(i + 1) % pts.length];
+        cutSegments.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, type: 'CUT', isPartMod: true });
+      }
+    };
+
+    if (partKey === 'handle') {
+      // Die-cut carrying handle slot centered in the flap (rounded stadium slot)
+      const slotW = isHorizontalFlap ? Math.min(86, Math.max(36, fb.width * 0.34)) : Math.min(22, Math.max(12, fb.width * 0.32));
+      const slotH = isHorizontalFlap ? Math.min(22, Math.max(12, fb.height * 0.32)) : Math.min(86, Math.max(36, fb.height * 0.34));
+      const rx = Math.min(slotW, slotH) * 0.48;
+      const pts = [];
+      const steps = 16;
+      for (let i = 0; i < steps; i++) {
+        const ang = (i / steps) * Math.PI * 2;
+        const px = cx + Math.cos(ang) * (slotW * 0.5 - rx) + Math.cos(ang) * rx;
+        const py = cy + Math.sin(ang) * (slotH * 0.5 - rx) + Math.sin(ang) * rx;
+        pts.push({ x: px, y: py });
+      }
+      addHolePolygon(flap, pts);
+    } else if (partKey === 'thumb_notch') {
+      // Semicircular thumb notch cut out along the outer free edge of the flap
+      const r = Math.min(14, Math.max(7, (isHorizontalFlap ? fb.width : fb.height) * 0.065));
+      const notchPts = [];
+      const steps = 12;
+      if (isHorizontalFlap) {
+        const isTopEdge = cy <= globalMidY;
+        const edgeY = isTopEdge ? fb.minY : fb.maxY;
+        const dirY = isTopEdge ? 1 : -1;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const ang = Math.PI * t;
+          notchPts.push({
+            x: cx - Math.cos(ang) * r,
+            y: edgeY + Math.sin(ang) * r * dirY
+          });
+        }
+      } else {
+        const isRightEdge = cx >= globalMidX;
+        const edgeX = isRightEdge ? fb.maxX : fb.minX;
+        const dirX = isRightEdge ? -1 : 1;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const ang = Math.PI * t;
+          notchPts.push({
+            x: edgeX + Math.sin(ang) * r * dirX,
+            y: cy - Math.cos(ang) * r
+          });
+        }
+      }
+      for (let i = 0; i < notchPts.length - 1; i++) {
+        cutSegments.push({
+          x1: notchPts[i].x,
+          y1: notchPts[i].y,
+          x2: notchPts[i + 1].x,
+          y2: notchPts[i + 1].y,
+          type: 'CUT',
+          isPartMod: true
+        });
+      }
+    } else if (partKey === 'tab_lock') {
+      // Protruding locking tab on the outer edge of the lid flap + corresponding crease line
+      const tabSpan = Math.min(64, Math.max(26, (isHorizontalFlap ? fb.width : fb.height) * 0.25));
+      const tabDepth = Math.min(18, Math.max(10, (isHorizontalFlap ? fb.height : fb.width) * 0.28));
+      if (isHorizontalFlap) {
+        const isTopEdge = cy <= globalMidY;
+        const edgeY = isTopEdge ? fb.minY : fb.maxY;
+        const outY = isTopEdge ? edgeY - tabDepth : edgeY + tabDepth;
+        const xL = cx - tabSpan * 0.5;
+        const xR = cx + tabSpan * 0.5;
+        cutSegments.push(
+          { x1: xL, y1: edgeY, x2: xL + 4, y2: outY, type: 'CUT', isPartMod: true },
+          { x1: xL + 4, y1: outY, x2: xR - 4, y2: outY, type: 'CUT', isPartMod: true },
+          { x1: xR - 4, y1: outY, x2: xR, y2: edgeY, type: 'CUT', isPartMod: true }
+        );
+        foldSegments.push({ x1: xL, y1: edgeY, x2: xR, y2: edgeY, type: 'FOLD', isPartMod: true });
+      } else {
+        const isRightEdge = cx >= globalMidX;
+        const edgeX = isRightEdge ? fb.maxX : fb.minX;
+        const outX = isRightEdge ? edgeX + tabDepth : edgeX - tabDepth;
+        const yT = cy - tabSpan * 0.5;
+        const yB = cy + tabSpan * 0.5;
+        cutSegments.push(
+          { x1: edgeX, y1: yT, x2: outX, y2: yT + 4, type: 'CUT', isPartMod: true },
+          { x1: outX, y1: yT + 4, x2: outX, y2: yB - 4, type: 'CUT', isPartMod: true },
+          { x1: outX, y1: yB - 4, x2: edgeX, y2: yB, type: 'CUT', isPartMod: true }
+        );
+        foldSegments.push({ x1: edgeX, y1: yT, x2: edgeX, y2: yB, type: 'FOLD', isPartMod: true });
+      }
+    } else if (partKey === 'tear_strip') {
+      // Double parallel zipper tear-strip lines across the flap
+      const bandHalf = 5.5;
+      if (isHorizontalFlap) {
+        const xL = fb.minX + 4;
+        const xR = fb.maxX - 4;
+        const dashCount = Math.max(8, Math.floor((xR - xL) / 14));
+        const step = (xR - xL) / dashCount;
+        for (let i = 0; i < dashCount; i++) {
+          const sx = xL + i * step + 1.5;
+          const ex = sx + step * 0.68;
+          cutSegments.push(
+            { x1: sx, y1: cy - bandHalf, x2: ex, y2: cy - bandHalf, type: 'CUT', isPartMod: true },
+            { x1: sx, y1: cy + bandHalf, x2: ex, y2: cy + bandHalf, type: 'CUT', isPartMod: true }
+          );
+        }
+        cutSegments.push(
+          { x1: xL, y1: cy - bandHalf, x2: xL + 8, y2: cy, type: 'CUT', isPartMod: true },
+          { x1: xL + 8, y1: cy, x2: xL, y2: cy + bandHalf, type: 'CUT', isPartMod: true }
+        );
+      } else {
+        const yT = fb.minY + 4;
+        const yB = fb.maxY - 4;
+        const dashCount = Math.max(8, Math.floor((yB - yT) / 14));
+        const step = (yB - yT) / dashCount;
+        for (let i = 0; i < dashCount; i++) {
+          const sy = yT + i * step + 1.5;
+          const ey = sy + step * 0.68;
+          cutSegments.push(
+            { x1: cx - bandHalf, y1: sy, x2: cx - bandHalf, y2: ey, type: 'CUT', isPartMod: true },
+            { x1: cx + bandHalf, y1: sy, x2: cx + bandHalf, y2: ey, type: 'CUT', isPartMod: true }
+          );
+        }
+        cutSegments.push(
+          { x1: cx - bandHalf, y1: yT, x2: cx, y2: yT + 8, type: 'CUT', isPartMod: true },
+          { x1: cx, y1: yT + 8, x2: cx + bandHalf, y2: yT, type: 'CUT', isPartMod: true }
+        );
+      }
+    }
+
+    return {
+      ...baseModel,
+      activePartVariation: partKey,
+      partTargetFaceId: flap.id,
+      faces,
+      cutSegmentsMm: cutSegments,
+      cutSegments,
+      foldSegmentsMm: foldSegments,
+      foldSegments
+    };
+  }
+
+  /**
+   * Computes outer bleed segments in 1:1 mm for a model:
+   * - If the model already has exact `bleedSegments` from the solver and `bleedMm` matches, returns them.
+   * - Otherwise generates a clean outer bleed contour around the dieline bounds / outer faces.
+   */
+  function getOrBuildBleedSegments(model, bleedMm = 5) {
+    if (!model || bleedMm <= 0) return [];
+    if (Array.isArray(model.bleedSegments) && model.bleedSegments.length > 0 && Math.abs((model.bleedMm || 5) - bleedMm) < 0.2) {
+      return model.bleedSegments;
+    }
+    // Scale existing solver bleed segments around center if bleedMm changed
+    if (Array.isArray(model.bleedSegments) && model.bleedSegments.length > 0) {
+      const b = model.bounds;
+      const cx = (b.minX + b.maxX) * 0.5;
+      const cy = (b.minY + b.maxY) * 0.5;
+      const delta = bleedMm - (model.bleedMm || 5);
+      const sx = (b.width + delta * 2) / Math.max(1, b.width);
+      const sy = (b.height + delta * 2) / Math.max(1, b.height);
+      return model.bleedSegments.map(s => ({
+        x1: cx + (s.x1 - cx) * sx,
+        y1: cy + (s.y1 - cy) * sy,
+        x2: cx + (s.x2 - cx) * sx,
+        y2: cy + (s.y2 - cy) * sy,
+        type: 'BLEED'
+      }));
+    }
+
+    // Fallback: offset each cut segment outward from the centroid of its nearest face by `bleedMm`,
+    // keeping only exterior cut segments (those not shared between two faces).
+    const out = [];
+    const b = model.bounds;
+    const gcx = (b.minX + b.maxX) * 0.5;
+    const gcy = (b.minY + b.maxY) * 0.5;
+    for (const seg of (model.cutSegments || [])) {
+      const mx = (seg.x1 + seg.x2) * 0.5;
+      const my = (seg.y1 + seg.y2) * 0.5;
+      const dx = seg.x2 - seg.x1;
+      const dy = seg.y2 - seg.y1;
+      const len = Math.hypot(dx, dy);
+      if (len < 2.0) continue;
+      let nx = -dy / len;
+      let ny = dx / len;
+      if (nx * (mx - gcx) + ny * (my - gcy) < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      // Check if a point slightly outward in direction (nx, ny) is inside any face
+      const testPt = { x: mx + nx * 1.5, y: my + ny * 1.5 };
+      const insideAny = (model.faces || []).some(f => pointInPolygon(testPt, f.polygon));
+      if (insideAny) continue;
+
+      out.push({
+        x1: seg.x1 + nx * bleedMm,
+        y1: seg.y1 + ny * bleedMm,
+        x2: seg.x2 + nx * bleedMm,
+        y2: seg.y2 + ny * bleedMm,
+        type: 'BLEED'
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Exports any current `dieline` model (whether resized SVG or FEFCO model) to a clean 1:1 mm `.svg` string
+   * with Green (#22c55e) bleed lines, Blue (#009ee3) cut lines, Red (#e5007d) crease lines, and Black dimension cota.
+   */
+  function exportDielineToSVG(model, bleedMm = 5) {
     if (!model) return '';
     const pad = 25;
     const b = model.bounds;
@@ -1944,21 +2292,182 @@
     lines.push(`    <text x="${((b.minX + b.maxX) * 0.5 + ox).toFixed(3)}" y="${(cy - 2).toFixed(3)}" fill="#000000" font-family="Arial, sans-serif" font-size="4.5" text-anchor="middle">${b.width.toFixed(2)} mm</text>`);
     lines.push(`  </g>`);
 
-    // 2. Cut lines (Blue #009ee3)
+    // 2. Bleed lines (Green #22c55e)
+    const bleeds = getOrBuildBleedSegments(model, bleedMm);
+    if (bleeds.length > 0) {
+      lines.push(`  <g id="Bleed_Verde" stroke="#22c55e" stroke-width="0.4" fill="none" stroke-linecap="round">`);
+      for (const s of bleeds) {
+        lines.push(`    <line x1="${(s.x1 + ox).toFixed(3)}" y1="${(s.y1 + oy).toFixed(3)}" x2="${(s.x2 + ox).toFixed(3)}" y2="${(s.y2 + oy).toFixed(3)}" />`);
+      }
+      lines.push(`  </g>`);
+    }
+
+    // 3. Cut lines (Blue #009ee3)
     lines.push(`  <g id="Corte_Azul" stroke="#009ee3" stroke-width="0.5" fill="none" stroke-linecap="round">`);
     for (const s of (model.cutSegments || [])) {
       lines.push(`    <line x1="${(s.x1 + ox).toFixed(3)}" y1="${(s.y1 + oy).toFixed(3)}" x2="${(s.x2 + ox).toFixed(3)}" y2="${(s.y2 + oy).toFixed(3)}" />`);
     }
     lines.push(`  </g>`);
 
-    // 3. Fold / Crease lines (Red/Magenta #e5007d)
+    // 4. Fold / Crease lines (Red/Magenta #e5007d)
+    const foldList = (model.foldSegments && model.foldSegments.length > 0)
+      ? model.foldSegments
+      : (model.hinges || []).map(h => ({ x1: h.p1.x, y1: h.p1.y, x2: h.p2.x, y2: h.p2.y }));
     lines.push(`  <g id="Hendido_Rojo" stroke="#e5007d" stroke-width="0.5" fill="none" stroke-linecap="round">`);
-    for (const h of (model.hinges || [])) {
-      lines.push(`    <line x1="${(h.p1.x + ox).toFixed(3)}" y1="${(h.p1.y + oy).toFixed(3)}" x2="${(h.p2.x + ox).toFixed(3)}" y2="${(h.p2.y + oy).toFixed(3)}" />`);
+    for (const s of foldList) {
+      lines.push(`    <line x1="${(s.x1 + ox).toFixed(3)}" y1="${(s.y1 + oy).toFixed(3)}" x2="${(s.x2 + ox).toFixed(3)}" y2="${(s.y2 + oy).toFixed(3)}" />`);
     }
     lines.push(`  </g>`);
     lines.push(`</svg>`);
     return lines.join('\n');
+  }
+
+  /**
+   * Exports the active dieline to an AutoCAD / ArtiosCAD R12 `.dxf` file in 1:1 mm
+   * with separate layers: `CUT` (color 5 blue), `CREASE` (color 1 red), and `BLEED` (color 3 green).
+   */
+  function exportDielineToDXF(model, bleedMm = 5) {
+    if (!model) return '';
+    const b = model.bounds;
+    const ox = -b.minX;
+    const oy = b.maxY; // Flip Y so CAD Y-up is positive
+
+    const dxf = [];
+    const pushPair = (code, val) => {
+      dxf.push(String(code), String(val));
+    };
+
+    pushPair(0, 'SECTION');
+    pushPair(2, 'HEADER');
+    pushPair(9, '$INSUNITS');
+    pushPair(70, 4); // 4 = millimeters
+    pushPair(0, 'ENDSEC');
+
+    pushPair(0, 'SECTION');
+    pushPair(2, 'TABLES');
+    pushPair(0, 'TABLE');
+    pushPair(2, 'LAYER');
+    pushPair(70, 3);
+
+    const addLayer = (name, colorCode) => {
+      pushPair(0, 'LAYER');
+      pushPair(2, name);
+      pushPair(70, 0);
+      pushPair(62, colorCode);
+      pushPair(6, 'CONTINUOUS');
+    };
+    addLayer('CUT', 5);
+    addLayer('CREASE', 1);
+    addLayer('BLEED', 3);
+
+    pushPair(0, 'ENDTAB');
+    pushPair(0, 'ENDSEC');
+
+    pushPair(0, 'SECTION');
+    pushPair(2, 'ENTITIES');
+
+    const addLine = (layer, x1, y1, x2, y2) => {
+      pushPair(0, 'LINE');
+      pushPair(8, layer);
+      pushPair(10, (x1 + ox).toFixed(4));
+      pushPair(20, (oy - y1).toFixed(4));
+      pushPair(30, '0.0');
+      pushPair(11, (x2 + ox).toFixed(4));
+      pushPair(21, (oy - y2).toFixed(4));
+      pushPair(31, '0.0');
+    };
+
+    const bleeds = getOrBuildBleedSegments(model, bleedMm);
+    for (const s of bleeds) {
+      addLine('BLEED', s.x1, s.y1, s.x2, s.y2);
+    }
+    for (const s of (model.cutSegments || [])) {
+      addLine('CUT', s.x1, s.y1, s.x2, s.y2);
+    }
+    const foldList = (model.foldSegments && model.foldSegments.length > 0)
+      ? model.foldSegments
+      : (model.hinges || []).map(h => ({ x1: h.p1.x, y1: h.p1.y, x2: h.p2.x, y2: h.p2.y }));
+    for (const s of foldList) {
+      addLine('CREASE', s.x1, s.y1, s.x2, s.y2);
+    }
+
+    pushPair(0, 'ENDSEC');
+    pushPair(0, 'EOF');
+    return dxf.join('\r\n');
+  }
+
+  /**
+   * Generates a standalone 1:1 mm vector `.pdf` (and `.ai` Adobe Illustrator PDF-compatible) document
+   * with zero watermarks, exact mm page dimensions, and vector strokes for Bleed, Cut, and Crease.
+   */
+  function exportDielineToPDF(model, bleedMm = 5, isAiFormat = false) {
+    if (!model) return '';
+    const pad = 20;
+    const b = model.bounds;
+    const totalWmm = b.width + pad * 2;
+    const totalHmm = b.height + pad * 2;
+    const MM_TO_PT = 72 / 25.4;
+    const pageW = +(totalWmm * MM_TO_PT).toFixed(3);
+    const pageH = +(totalHmm * MM_TO_PT).toFixed(3);
+
+    const toPtX = (x) => +(((x - b.minX) + pad) * MM_TO_PT).toFixed(3);
+    const toPtY = (y) => +((totalHmm - ((y - b.minY) + pad)) * MM_TO_PT).toFixed(3);
+
+    const streamLines = [];
+    streamLines.push('1 J 1 j'); // Round cap & join
+
+    // 1. Bleed (Green #22c55e -> 0.133 0.773 0.369 RG)
+    const bleeds = getOrBuildBleedSegments(model, bleedMm);
+    if (bleeds.length > 0) {
+      streamLines.push('0.85 w 0.133 0.773 0.369 RG');
+      for (const s of bleeds) {
+        streamLines.push(`${toPtX(s.x1)} ${toPtY(s.y1)} m ${toPtX(s.x2)} ${toPtY(s.y2)} l S`);
+      }
+    }
+
+    // 2. Cut / Trim (Blue #009ee3 -> 0.000 0.620 0.890 RG)
+    streamLines.push('1.15 w 0.000 0.620 0.890 RG');
+    for (const s of (model.cutSegments || [])) {
+      streamLines.push(`${toPtX(s.x1)} ${toPtY(s.y1)} m ${toPtX(s.x2)} ${toPtY(s.y2)} l S`);
+    }
+
+    // 3. Crease / Fold (Red #e5007d -> 0.898 0.000 0.490 RG)
+    const foldList = (model.foldSegments && model.foldSegments.length > 0)
+      ? model.foldSegments
+      : (model.hinges || []).map(h => ({ x1: h.p1.x, y1: h.p1.y, x2: h.p2.x, y2: h.p2.y }));
+    streamLines.push('1.15 w 0.898 0.000 0.490 RG');
+    for (const s of foldList) {
+      streamLines.push(`${toPtX(s.x1)} ${toPtY(s.y1)} m ${toPtX(s.x2)} ${toPtY(s.y2)} l S`);
+    }
+
+    // 4. Header spec text in PDF
+    const titleStr = `Dieline 1:1 mm | Mfg: ${model.boxDimensionsMm.length}x${model.boxDimensionsMm.width}x${model.boxDimensionsMm.depth} mm | Sheet: ${b.width.toFixed(1)}x${b.height.toFixed(1)} mm`;
+    streamLines.push(`BT /F1 9 Tf 0.15 0.20 0.28 rg ${+(pad * MM_TO_PT).toFixed(2)} ${+((totalHmm - 8) * MM_TO_PT).toFixed(2)} Td (${titleStr.replace(/[()\\]/g, '')}) Tj ET`);
+
+    const contentStream = streamLines.join('\n');
+
+    const objects = [];
+    objects.push(`1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj`);
+    objects.push(`2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj`);
+    objects.push(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /TrimBox [0 0 ${pageW} ${pageH}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj`);
+    objects.push(`4 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}\nendstream\nendobj`);
+    objects.push(`5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj`);
+    const creator = isAiFormat ? 'Adobe Illustrator / ArtiosCAD 3D Studio 1:1 mm' : 'ArtiosCAD 3D Studio Vector PDF 1:1 mm';
+    objects.push(`6 0 obj\n<< /Creator (${creator}) /Producer (ArtiosCAD 3D Studio) >>\nendobj`);
+
+    let pdf = `%PDF-1.5\n`;
+    const offsets = [];
+    for (const obj of objects) {
+      offsets.push(pdf.length);
+      pdf += obj + '\n';
+    }
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      pdf += String(off).padStart(10, '0') + ' 00000 n \n';
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 6 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+    return pdf;
   }
 
   // Normalizar catálogo de cartones con alias compatibles
@@ -2037,7 +2546,12 @@
     buildDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,
+    applyPartVariationToModel,
+    findPrimaryLidFlapFace,
+    getOrBuildBleedSegments,
     exportDielineToSVG,
+    exportDielineToDXF,
+    exportDielineToPDF,
     pointInPolygon
   };
 });

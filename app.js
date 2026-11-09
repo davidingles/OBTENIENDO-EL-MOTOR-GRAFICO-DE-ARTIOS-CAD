@@ -15,24 +15,35 @@
   // ============================================================================
   const state = {
     svgText: '',
-    fileName: 'b1 caja americana.svg',
+    fileName: 'Rollover hinged lid mailer box dieline',
     baseDieline: null,      // Modelo base sin deformar para el redimensionador paramétrico 60 FPS
     dieline: null,          // Resultado actual (escalado o FEFCO) en 2D y 3D
-    activeFefcoEntry: null, // Si el modelo cargado pertenece al catálogo de 116 modelos FEFCO
-    paramL: 157.5,          // Largo paramétrico actual (mm)
-    paramW: 105.3,          // Ancho paramétrico actual (mm)
-    paramH: 115.6,          // Alto paramétrico actual (mm)
+    activeFefcoEntry: null, // Si el modelo cargado pertenece al catálogo de 2,148 modelos
+    paramL: 315,            // Largo paramétrico actual (mm)
+    paramW: 202,            // Ancho paramétrico actual (mm)
+    paramH: 62,             // Alto paramétrico actual (mm)
+    unit: 'mm',             // 'mm' | 'in'
+    sizeMode: 'dm',         // 'dm' (Mfg) | 'id' (Inner) | 'ed' (Outer)
+    activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip'
+    partHoverFaceId: null,  // Para resaltar la solapa en 2D al pasar el cursor sobre la tarjeta
+    activeTab: 'basic',     // 'dielines' | 'basic' | 'details' | 'parts' | 'info' | 'more'
+    selectedExportFormat: 'ai', // 'ai' | 'pdf' | 'dxf' | 'svg' | 'glb' | 'png'
+    toolMode: 'select',     // 'select' | 'pan'
+    showBleed: true,        // Línea verde de sangrado
+    bleedMm: 5,             // Sangrado en mm
+    showDimensions: true,   // Cotas 2D
+    openParamsValues: {},   // Valores de Details
     fefcoFilter: 'ALL',
     fefcoSearch: '',
     boardId: 'M-125B',      // Cartón seleccionado de la base de datos ArtiosCAD
-    caliper: 3.0,           // Espesor actual en mm (escala 1:1)
+    caliper: 1.5,           // Espesor actual en mm (escala 1:1)
     insideLoss: 1.5,        // Pérdida interior de plegado (mm)
     outsideGain: 1.5,       // Ganancia exterior de plegado (mm)
-    flute: 'B',
+    flute: 'E',
     // Parámetros del Hendido Chafado (Crushed Crease Channel en líneas rojas por ambas caras)
     crushDepthRatio: 0.72,  // 72% de compresión del espesor en la línea roja (ambas caras se hunden hacia z=0)
     creaseWidthFactor: 1.25,// Anchura de la zona chafada a cada lado = 1.25 * espesor (mm)
-    masterFold: 0,          // Progreso global de plegado (0.0 a 1.0)
+    masterFold: 0.75,       // Progreso global de plegado (0.0 a 1.0)
     isPlaying: false,
     playDirection: 1,
     playSpeed: 0.38,        // Velocidad de animación
@@ -91,13 +102,19 @@
     initThreeJS();
     init2DCanvasInteractions();
 
-    if (window.ARTIOS_DEFAULT_SVG) {
+    // Cargar por defecto el modelo 150010 de los pantallazos del usuario
+    const pacIndex = window.PACDORA_CATALOG_INDEX;
+    const allModels = (pacIndex && Array.isArray(pacIndex.models))
+      ? pacIndex.models
+      : (window.FEFCO_CATALOG || []);
+
+    const target150010 = allModels.find(m => Number(m.num) === 150010 || Number(m.id) === 1);
+    if (target150010) {
+      loadFefcoModel(target150010, true);
+    } else if (window.FEFCO_CATALOG && window.FEFCO_CATALOG.length > 0) {
+      loadFefcoModel(window.FEFCO_CATALOG[0], true);
+    } else if (window.ARTIOS_DEFAULT_SVG) {
       loadSVGString(window.ARTIOS_DEFAULT_SVG, 'b1 caja americana.svg', true);
-    } else {
-      fetch('b1 caja americana.svg')
-        .then(r => r.text())
-        .then(txt => loadSVGString(txt, 'b1 caja americana.svg', true))
-        .catch(err => console.error('No se pudo cargar el SVG inicial:', err));
     }
 
     requestAnimationFrame(animateLoop);
@@ -356,19 +373,90 @@
     }
   }
 
-  function loadFefcoModel(fefcoEntry, animateIntro = true) {
-    if (!fefcoEntry || !fefcoEntry.knifeData) return;
-    try {
-      state.activeFefcoEntry = fefcoEntry;
-      const quickSel = document.getElementById('fefco-quick-select');
-      if (quickSel) quickSel.value = String(fefcoEntry.num);
+  const shardLoadPromises = new Map();
 
-      const model = DielineEngine.buildDielineModelFromPacdora(fefcoEntry.knifeData, fefcoEntry);
-      const title = `${fefcoEntry.fefcoCode} · ${fefcoEntry.name.replace(/dieline/i, '').trim()}`;
+  function loadPacdoraShard(shardKey) {
+    if (!shardKey) return Promise.resolve([]);
+    window.PACDORA_CATALOG_SHARDS = window.PACDORA_CATALOG_SHARDS || {};
+    if (window.PACDORA_CATALOG_SHARDS[shardKey]) {
+      return Promise.resolve(window.PACDORA_CATALOG_SHARDS[shardKey]);
+    }
+    if (shardLoadPromises.has(shardKey)) {
+      return shardLoadPromises.get(shardKey);
+    }
+
+    const indexObj = window.PACDORA_CATALOG_INDEX;
+    const scriptUrl = (indexObj && indexObj.shards && indexObj.shards[shardKey])
+      ? indexObj.shards[shardKey]
+      : `assets/pacdora-catalog/${shardKey}.js`;
+
+    const p = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = scriptUrl;
+      s.async = true;
+      s.onload = () => {
+        resolve(window.PACDORA_CATALOG_SHARDS[shardKey] || []);
+      };
+      s.onerror = () => {
+        console.warn('No se pudo cargar el módulo de categoría:', scriptUrl);
+        resolve([]);
+      };
+      document.head.appendChild(s);
+    });
+
+    shardLoadPromises.set(shardKey, p);
+    return p;
+  }
+
+  async function resolveFullPacdoraModel(metaEntry) {
+    if (!metaEntry) return null;
+    if (metaEntry.knifeData && metaEntry.knifeData.faces) return metaEntry;
+
+    // Si pertenece a los 116 modelos FEFCO precargados en memoria
+    if (window.FEFCO_CATALOG) {
+      const fMatch = window.FEFCO_CATALOG.find(x => Number(x.num) === Number(metaEntry.num));
+      if (fMatch && fMatch.knifeData) return fMatch;
+    }
+
+    if (metaEntry.shard) {
+      const list = await loadPacdoraShard(metaEntry.shard);
+      const found = list.find(x => Number(x.num) === Number(metaEntry.num) || Number(x.id) === Number(metaEntry.id));
+      if (found && found.knifeData) return found;
+    }
+    return null;
+  }
+
+  async function loadFefcoModel(fefcoEntry, animateIntro = true) {
+    if (!fefcoEntry) return;
+    try {
+      const fullEntry = await resolveFullPacdoraModel(fefcoEntry);
+      if (!fullEntry || !fullEntry.knifeData) {
+        alert('No se encontró la geometría vectorial del modelo #' + fefcoEntry.num);
+        return;
+      }
+
+      state.activeFefcoEntry = fullEntry;
+      const quickSel = document.getElementById('fefco-quick-select');
+      if (quickSel) {
+        // Asegurar que la opción exista en el desplegable rápido
+        let opt = Array.from(quickSel.options).find(o => o.value === String(fullEntry.num));
+        if (!opt) {
+          opt = document.createElement('option');
+          opt.value = String(fullEntry.num);
+          const prefix = fullEntry.fefcoCode ? `${fullEntry.fefcoCode} (#${fullEntry.num})` : `#${fullEntry.num}`;
+          opt.textContent = `${prefix} — ${fullEntry.name.replace(/dieline/i, '').trim()} (${fullEntry.length}×${fullEntry.width}×${fullEntry.height}mm)`;
+          quickSel.appendChild(opt);
+        }
+        quickSel.value = String(fullEntry.num);
+      }
+
+      const model = DielineEngine.buildDielineModelFromPacdora(fullEntry.knifeData, fullEntry);
+      const codePrefix = fullEntry.fefcoCode ? `${fullEntry.fefcoCode} (#${fullEntry.num})` : `#${fullEntry.num}`;
+      const title = `${codePrefix} · ${fullEntry.name.replace(/dieline/i, '').trim()}`;
       applyNewDielineModel(model, title, animateIntro);
     } catch (err) {
-      console.error('Error cargando modelo FEFCO:', err);
-      alert('Error al construir el modelo FEFCO: ' + err.message);
+      console.error('Error cargando modelo del catálogo:', err);
+      alert('Error al construir el modelo: ' + err.message);
     }
   }
 
@@ -1424,11 +1512,28 @@
     }
     ctx.stroke();
 
+    // 0. Dibujar contorno verde de SANGRADO (BLEED #22c55e)
+    if (state.showBleed) {
+      const bleeds = DielineEngine.getOrBuildBleedSegments(model, state.bleedMm || 5);
+      if (bleeds.length > 0) {
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = Math.max(1.2, 1.4 * dpr);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        for (const seg of bleeds) {
+          ctx.moveTo(tf.toScreenX(seg.x1), tf.toScreenY(seg.y1));
+          ctx.lineTo(tf.toScreenX(seg.x2), tf.toScreenY(seg.y2));
+        }
+        ctx.stroke();
+      }
+    }
+
     // 1. Rellenar caras detectadas del troquel
     if (state.view2D.showFaces) {
       for (const face of model.faces) {
         const isSelected = face.id === state.selectedFaceId;
-        const isHovered = face.id === state.hoveredFaceId;
+        const isHovered = face.id === state.hoveredFaceId || face.id === state.partHoverFaceId;
 
         ctx.beginPath();
         face.polygon.forEach((p, idx) => {
@@ -1439,7 +1544,9 @@
         });
         ctx.closePath();
 
-        if (isSelected) {
+        if (face.id === state.partHoverFaceId) {
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.45)'; // Resaltado azul celeste intenso de la pestaña Parts
+        } else if (isSelected) {
           ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
         } else if (isHovered) {
           ctx.fillStyle = 'rgba(229, 0, 125, 0.20)';
@@ -1488,59 +1595,89 @@
     }
     ctx.stroke();
 
-    // 5. Dibujar COTA DE ESCALA 1:1 en milímetros
-    if (state.view2D.showCota) {
-      const cotaY = tf.toScreenY(bounds.minY) - 20 * dpr;
-      const x1 = tf.toScreenX(bounds.minX);
-      const x2 = tf.toScreenX(bounds.maxX);
+    // 5. Dibujar Flechas y Cotas (L, W, H) en Azul estilo Pacdora (Screenshot 1 & 2)
+    if (state.showDimensions && state.view2D.showCota) {
+      const arrowList = (state.activeTab === 'details' && Array.isArray(model.outsideArrowData) && model.outsideArrowData.length > 0)
+        ? model.outsideArrowData
+        : (Array.isArray(model.sizeArrowData) && model.sizeArrowData.length > 0 ? model.sizeArrowData : null);
 
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.fillStyle = '#e2e8f0';
-      ctx.lineWidth = 1.2 * dpr;
+      if (arrowList) {
+        ctx.strokeStyle = '#0077ff';
+        ctx.fillStyle = '#0077ff';
+        ctx.lineWidth = 1.2 * dpr;
 
-      ctx.beginPath();
-      ctx.moveTo(x1, tf.toScreenY(bounds.minY) - 4 * dpr);
-      ctx.lineTo(x1, cotaY - 6 * dpr);
-      ctx.moveTo(x2, tf.toScreenY(bounds.minY) - 4 * dpr);
-      ctx.lineTo(x2, cotaY - 6 * dpr);
-      ctx.moveTo(x1, cotaY);
-      ctx.lineTo(x2, cotaY);
-      ctx.stroke();
+        for (const sa of arrowList) {
+          if (!sa.p1 || !sa.p2) continue;
+          const sx1 = tf.toScreenX(sa.p1.x);
+          const sy1 = tf.toScreenY(sa.p1.y);
+          const sx2 = tf.toScreenX(sa.p2.x);
+          const sy2 = tf.toScreenY(sa.p2.y);
 
-      const labelW = `${bounds.width.toFixed(2)} mm (Escala 1:1)`;
-      ctx.font = `600 ${Math.round(11 * dpr)}px "Inter", system-ui, sans-serif`;
-      const tw = ctx.measureText(labelW).width;
-      const midX = (x1 + x2) / 2;
-      ctx.fillStyle = '#0c1118';
-      ctx.fillRect(midX - tw / 2 - 6 * dpr, cotaY - 8 * dpr, tw + 12 * dpr, 16 * dpr);
-      ctx.fillStyle = '#38bdf8';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(labelW, midX, cotaY);
+          // Línea principal de cota
+          ctx.beginPath();
+          ctx.moveTo(sx1, sy1);
+          ctx.lineTo(sx2, sy2);
+          ctx.stroke();
 
-      const cotaX = tf.toScreenX(bounds.maxX) + 22 * dpr;
-      const y1 = tf.toScreenY(bounds.minY);
-      const y2 = tf.toScreenY(bounds.maxY);
-      ctx.strokeStyle = '#94a3b8';
-      ctx.beginPath();
-      ctx.moveTo(tf.toScreenX(bounds.maxX) + 4 * dpr, y1);
-      ctx.lineTo(cotaX + 6 * dpr, y1);
-      ctx.moveTo(tf.toScreenX(bounds.maxX) + 4 * dpr, y2);
-      ctx.lineTo(cotaX + 6 * dpr, y2);
-      ctx.moveTo(cotaX, y1);
-      ctx.lineTo(cotaX, y2);
-      ctx.stroke();
+          // Puntas de flecha
+          const ang = Math.atan2(sy2 - sy1, sx2 - sx1);
+          const headLen = 6 * dpr;
+          const drawHead = (hx, hy, a) => {
+            ctx.beginPath();
+            ctx.moveTo(hx, hy);
+            ctx.lineTo(hx - headLen * Math.cos(a - Math.PI / 6), hy - headLen * Math.sin(a - Math.PI / 6));
+            ctx.lineTo(hx - headLen * Math.cos(a + Math.PI / 6), hy - headLen * Math.sin(a + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+          };
+          drawHead(sx1, sy1, ang + Math.PI);
+          drawHead(sx2, sy2, ang);
 
-      ctx.save();
-      ctx.translate(cotaX, (y1 + y2) / 2);
-      ctx.rotate(-Math.PI / 2);
-      const labelH = `${bounds.height.toFixed(2)} mm`;
-      const thW = ctx.measureText(labelH).width;
-      ctx.fillStyle = '#0c1118';
-      ctx.fillRect(-thW / 2 - 5 * dpr, -8 * dpr, thW + 10 * dpr, 16 * dpr);
-      ctx.fillStyle = '#cbd5e1';
-      ctx.fillText(labelH, 0, 0);
-      ctx.restore();
+          // Texto de medida (mm o in)
+          const mx = (sx1 + sx2) * 0.5;
+          const my = (sy1 + sy2) * 0.5;
+          const valNum = Number(sa.lineLength) || Math.hypot(sa.p2.x - sa.p1.x, sa.p2.y - sa.p1.y);
+          const valDisp = state.unit === 'in' ? `${(valNum / 25.4).toFixed(2)} in` : `${valNum.toFixed(1)} mm`;
+
+          ctx.font = `600 ${Math.round(10.5 * dpr)}px "Inter", system-ui, sans-serif`;
+          const tw = ctx.measureText(valDisp).width;
+          ctx.fillStyle = 'rgba(9, 13, 19, 0.9)';
+          ctx.fillRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
+          ctx.fillStyle = '#38bdf8';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(valDisp, mx, my);
+        }
+      } else {
+        // Fallback cota perimetral
+        const cotaY = tf.toScreenY(bounds.minY) - 20 * dpr;
+        const x1 = tf.toScreenX(bounds.minX);
+        const x2 = tf.toScreenX(bounds.maxX);
+
+        ctx.strokeStyle = '#0077ff';
+        ctx.fillStyle = '#0077ff';
+        ctx.lineWidth = 1.2 * dpr;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, tf.toScreenY(bounds.minY) - 4 * dpr);
+        ctx.lineTo(x1, cotaY - 6 * dpr);
+        ctx.moveTo(x2, tf.toScreenY(bounds.minY) - 4 * dpr);
+        ctx.lineTo(x2, cotaY - 6 * dpr);
+        ctx.moveTo(x1, cotaY);
+        ctx.lineTo(x2, cotaY);
+        ctx.stroke();
+
+        const labelW = `${bounds.width.toFixed(1)} mm`;
+        ctx.font = `600 ${Math.round(11 * dpr)}px "Inter", system-ui, sans-serif`;
+        const tw = ctx.measureText(labelW).width;
+        const midX = (x1 + x2) / 2;
+        ctx.fillStyle = '#090d13';
+        ctx.fillRect(midX - tw / 2 - 6 * dpr, cotaY - 8 * dpr, tw + 12 * dpr, 16 * dpr);
+        ctx.fillStyle = '#38bdf8';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelW, midX, cotaY);
+      }
     }
 
     // 6. Etiquetas de cada cara y sus medidas en mm
@@ -1782,153 +1919,312 @@
   }
 
   function initUIControls() {
-    // 1. Selector de Cartones Oficiales de Esko ArtiosCAD 12.0
-    const boardSelect = document.getElementById('board-select');
-    if (boardSelect && window.DielineEngine) {
-      boardSelect.innerHTML = '';
+    // 1. Selector de Pestañas del Drawer Lateral (Rail de Iconos: Dielines, Basic, Details, Parts, Info, More)
+    const railTabs = document.querySelectorAll('.rail-tab-btn');
+    const drawerViews = {
+      dielines: document.getElementById('drawer-tab-dielines'),
+      basic: document.getElementById('drawer-tab-basic'),
+      details: document.getElementById('drawer-tab-details'),
+      parts: document.getElementById('drawer-tab-parts'),
+      info: document.getElementById('drawer-tab-info'),
+      more: document.getElementById('drawer-tab-more')
+    };
+
+    railTabs.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabKey = btn.getAttribute('data-drawer-tab');
+        state.activeTab = tabKey;
+        railTabs.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        Object.keys(drawerViews).forEach(k => {
+          if (drawerViews[k]) {
+            drawerViews[k].classList.toggle('hidden', k !== tabKey);
+          }
+        });
+
+        // Al cambiar a Details, regenerar parámetros avanzados y forzar redibujo de cotas 2D detalladas
+        if (tabKey === 'details') {
+          renderDetailsTabUI();
+        } else if (tabKey === 'dielines') {
+          renderDrawerCatalogList();
+        }
+        render2FDieline();
+      });
+    });
+
+    // 2. Unidad mm / in Toggle (Basic & Details)
+    const setUnit = (unit) => {
+      state.unit = unit;
+      const isMm = unit === 'mm';
+      ['btn-unit-mm', 'btn-unit-mm-details'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', isMm);
+      });
+      ['btn-unit-in', 'btn-unit-in-details'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', !isMm);
+      });
+      document.querySelectorAll('.field-unit-label').forEach(el => {
+        el.textContent = unit;
+      });
+
+      // Refrescar inputs numéricos
+      const lEl = document.getElementById('input-length');
+      const wEl = document.getElementById('input-width');
+      const hEl = document.getElementById('input-height');
+      if (lEl) lEl.value = isMm ? state.paramL : +(state.paramL / 25.4).toFixed(2);
+      if (wEl) wEl.value = isMm ? state.paramW : +(state.paramW / 25.4).toFixed(2);
+      if (hEl) hEl.value = isMm ? state.paramH : +(state.paramH / 25.4).toFixed(2);
+
+      render2FDieline();
+    };
+
+    ['btn-unit-mm', 'btn-unit-mm-details'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => setUnit('mm'));
+    });
+    ['btn-unit-in', 'btn-unit-in-details'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('click', () => setUnit('in'));
+    });
+
+    // 3. Inputs de Largo, Ancho y Alto (Basic Tab)
+    const lInput = document.getElementById('input-length');
+    const wInput = document.getElementById('input-width');
+    const hInput = document.getElementById('input-height');
+
+    const handleDimChange = () => {
+      const factor = state.unit === 'in' ? 25.4 : 1.0;
+      const nl = (parseFloat(lInput?.value) || state.paramL) * factor;
+      const nw = (parseFloat(wInput?.value) || state.paramW) * factor;
+      const nh = (parseFloat(hInput?.value) || state.paramH) * factor;
+      applyParametricResizeRealTime(nl, nw, nh);
+    };
+
+    [lInput, wInput, hInput].forEach(inp => {
+      if (!inp) return;
+      inp.addEventListener('input', handleDimChange);
+      inp.addEventListener('change', handleDimChange);
+      inp.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 1 : -1;
+        const cur = parseFloat(inp.value) || 0;
+        const step = state.unit === 'in' ? 0.1 : 1.0;
+        inp.value = +(cur + dir * step).toFixed(2);
+        handleDimChange();
+      }, { passive: false });
+    });
+
+    // 4. Selector de Material (ArtiosCAD DB)
+    const matSelect = document.getElementById('select-material');
+    if (matSelect && window.DielineEngine) {
+      matSelect.innerHTML = '';
       for (const b of DielineEngine.ARTIOS_BOARDS) {
         const opt = document.createElement('option');
         opt.value = b.id;
-        opt.textContent = `${b.name} — ${b.caliper.toFixed(1)} mm (${b.grammage} g/m²)`;
+        opt.textContent = `${b.name} (${b.flute ? 'Onda ' + b.flute + ', ' : ''}${b.caliper.toFixed(1)} mm)`;
         if (b.id === state.boardId) opt.selected = true;
-        boardSelect.appendChild(opt);
+        matSelect.appendChild(opt);
       }
-
-      boardSelect.addEventListener('change', (e) => {
+      matSelect.addEventListener('change', (e) => {
         const chosen = DielineEngine.ARTIOS_BOARDS.find(b => b.id === e.target.value);
         if (chosen) {
           state.boardId = chosen.id;
           state.caliper = chosen.caliper;
-          state.insideLoss = chosen.insideLoss;
-          state.outsideGain = chosen.outsideGain;
           state.flute = chosen.flute;
-
-          const calSlider = document.getElementById('caliper-slider');
-          const calNum = document.getElementById('caliper-num');
-          if (calSlider) calSlider.value = chosen.caliper;
-          if (calNum) calNum.value = chosen.caliper;
-
-          updateBoardBadgeUI(chosen);
+          const thInput = document.getElementById('input-thickness');
+          if (thInput) thInput.value = chosen.caliper;
           rebuild3DMesh();
-          if (state.selectedFaceId !== null) selectFace(state.selectedFaceId);
         }
       });
-
-      const initialBoard = DielineEngine.ARTIOS_BOARDS.find(b => b.id === state.boardId);
-      if (initialBoard) updateBoardBadgeUI(initialBoard);
     }
 
-    // 2. Deslizador + Teclado + Ruleta de Espesor / Calibre en milímetros (0.4 mm a 15.0 mm)
-    const calSlider = document.getElementById('caliper-slider');
-    const calNum = document.getElementById('caliper-num');
-    const applyNewCaliper = (val) => {
-      state.caliper = Math.max(0.4, Math.min(15.0, val));
-      state.insideLoss = +(state.caliper * 0.5).toFixed(2);
-      state.outsideGain = +(state.caliper * 0.5).toFixed(2);
-      if (calSlider) calSlider.value = state.caliper;
-      if (calNum && document.activeElement !== calNum) calNum.value = state.caliper;
-      const lossEl = document.getElementById('board-loss-gain');
-      if (lossEl) lossEl.textContent = `-${state.insideLoss} / +${state.outsideGain} mm`;
+    // 5. Stepper de Espesor: [-] [value] [+]
+    const thInput = document.getElementById('input-thickness');
+    const btnThMinus = document.getElementById('btn-thickness-minus');
+    const btnThPlus = document.getElementById('btn-thickness-plus');
+
+    const updateThickness = (val) => {
+      state.caliper = Math.max(0.4, Math.min(15.0, Number(val) || 1.5));
+      if (thInput && document.activeElement !== thInput) thInput.value = state.caliper;
       rebuild3DMesh();
-      if (state.selectedFaceId !== null) selectFace(state.selectedFaceId);
     };
 
-    bindSliderAndNumeric(calSlider, calNum, 0.4, 15.0, 0.1, 2, (v) => {
-      applyNewCaliper(v);
-    });
+    if (btnThMinus) btnThMinus.addEventListener('click', () => updateThickness(state.caliper - 0.5));
+    if (btnThPlus) btnThPlus.addEventListener('click', () => updateThickness(state.caliper + 0.5));
+    if (thInput) {
+      thInput.addEventListener('change', (e) => updateThickness(e.target.value));
+      thInput.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const dir = e.deltaY < 0 ? 0.2 : -0.2;
+        updateThickness(state.caliper + dir);
+      }, { passive: false });
+    }
 
-    document.querySelectorAll('[data-caliper-preset]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const v = parseFloat(btn.getAttribute('data-caliper-preset'));
-        if (calNum) calNum.value = v;
-        applyNewCaliper(v);
+    // 6. Selector Size Mode (Manufacture / Inner / Outer)
+    const sizeModeSel = document.getElementById('select-size-mode');
+    if (sizeModeSel) {
+      sizeModeSel.addEventListener('change', (e) => {
+        state.sizeMode = e.target.value;
+        if (state.activeFefcoEntry) {
+          // Reconsultar solver si procede o recomputar offsets
+          applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+        }
+      });
+    }
+
+    // 7. Parts Tab: variación de partes estructurales (Screenshot 3)
+    const partCards = document.querySelectorAll('.part-card');
+    partCards.forEach(card => {
+      const partKey = card.getAttribute('data-part-key');
+      card.addEventListener('click', () => {
+        partCards.forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        state.activePart = partKey;
+        applyCurrentPartVariation();
+      });
+
+      card.addEventListener('mouseenter', () => {
+        if (state.dieline && DielineEngine.findPrimaryLidFlapFace) {
+          const flap = DielineEngine.findPrimaryLidFlapFace(state.dieline);
+          if (flap) {
+            state.partHoverFaceId = flap.id;
+            render2FDieline();
+          }
+        }
+      });
+
+      card.addEventListener('mouseleave', () => {
+        state.partHoverFaceId = null;
+        render2FDieline();
       });
     });
 
-    // 3. Controles del Hendido Chafado (Profundidad y Anchura del surco en líneas rojas)
-    const crushSlider = document.getElementById('crush-depth-slider');
-    const crushNum = document.getElementById('crush-depth-num');
-    bindSliderAndNumeric(crushSlider, crushNum, 0, 85, 1, 0, (v) => {
-      state.crushDepthRatio = v / 100;
-      rebuild3DMesh();
-      if (state.selectedFaceId !== null) selectFace(state.selectedFaceId);
-    });
-
-    const creaseWSlider = document.getElementById('crease-width-slider');
-    const creaseWNum = document.getElementById('crease-width-num');
-    bindSliderAndNumeric(creaseWSlider, creaseWNum, 0.5, 2.4, 0.05, 2, (v) => {
-      state.creaseWidthFactor = v;
-      rebuild3DMesh();
-    });
-
-    // 4. Deslizador Maestro de Plegado 3D (0% a 100%)
-    const masterSlider = document.getElementById('master-fold-slider');
-    const masterNum = document.getElementById('master-fold-num');
-    bindSliderAndNumeric(masterSlider, masterNum, 0, 100, 1, 0, (v) => {
-      state.isPlaying = false;
-      updatePlayButtonUI();
-      setMasterFold(v / 100);
-    });
-
-    document.querySelectorAll('[data-fold-preset]').forEach(btn => {
+    // 8. Botones de Formato de Exportación (AI, PDF, DXF, SVG, GLB, PNG)
+    const formatBtns = document.querySelectorAll('.format-btn');
+    formatBtns.forEach(btn => {
       btn.addEventListener('click', () => {
+        formatBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.selectedExportFormat = btn.getAttribute('data-export-format');
+        const dlBtnLabel = document.getElementById('label-download-btn');
+        if (dlBtnLabel) {
+          dlBtnLabel.textContent = `Download .${state.selectedExportFormat.toUpperCase()}`;
+        }
+      });
+
+      // Doble clic descarga directamente el formato
+      btn.addEventListener('dblclick', () => {
+        downloadSelectedDielineFormat(btn.getAttribute('data-export-format'));
+      });
+    });
+
+    const mainDlBtn = document.getElementById('btn-download-dieline-main');
+    if (mainDlBtn) {
+      mainDlBtn.addEventListener('click', () => {
+        downloadSelectedDielineFormat(state.selectedExportFormat);
+      });
+    }
+
+    // 9. Floating Toolbar 2D (Selección, Mano/Pan, Zoom, Cotas, Bleed, Cuadrícula)
+    const toolSelect = document.getElementById('tool-select');
+    const toolPan = document.getElementById('tool-pan');
+    const toolZoomIn = document.getElementById('tool-zoom-in');
+    const toolZoomOut = document.getElementById('tool-zoom-out');
+    const toolFit = document.getElementById('tool-fit-view');
+    const toolDims = document.getElementById('tool-toggle-dims');
+    const toolBleed = document.getElementById('tool-toggle-bleed');
+    const toolGrid = document.getElementById('tool-toggle-grid');
+
+    if (toolSelect) {
+      toolSelect.addEventListener('click', () => {
+        state.toolMode = 'select';
+        toolSelect.classList.add('active');
+        if (toolPan) toolPan.classList.remove('active');
+      });
+    }
+    if (toolPan) {
+      toolPan.addEventListener('click', () => {
+        state.toolMode = 'pan';
+        toolPan.classList.add('active');
+        if (toolSelect) toolSelect.classList.remove('active');
+      });
+    }
+    if (toolZoomIn) toolZoomIn.addEventListener('click', () => {
+      state.view2D.zoom = Math.min(8, state.view2D.zoom * 1.25);
+      render2FDieline();
+    });
+    if (toolZoomOut) toolZoomOut.addEventListener('click', () => {
+      state.view2D.zoom = Math.max(0.15, state.view2D.zoom / 1.25);
+      render2FDieline();
+    });
+    if (toolFit) toolFit.addEventListener('click', reset2DView);
+
+    if (toolDims) {
+      toolDims.addEventListener('click', () => {
+        state.showDimensions = !state.showDimensions;
+        toolDims.classList.toggle('active', state.showDimensions);
+        render2FDieline();
+      });
+    }
+    if (toolBleed) {
+      toolBleed.addEventListener('click', () => {
+        state.showBleed = !state.showBleed;
+        toolBleed.classList.toggle('active', state.showBleed);
+        render2FDieline();
+      });
+    }
+    if (toolGrid) {
+      toolGrid.addEventListener('click', () => {
+        state.view2D.showGrid = state.view2D.showGrid === undefined ? false : !state.view2D.showGrid;
+        toolGrid.classList.toggle('active', state.view2D.showGrid !== false);
+        render2FDieline();
+      });
+    }
+
+    // 10. Floating 3D Card (Expand/PiP + Slider Open-Close)
+    const expand3dBtn = document.getElementById('btn-expand-3d');
+    const preview3dCard = document.getElementById('preview-3d-card');
+    if (expand3dBtn && preview3dCard) {
+      expand3dBtn.addEventListener('click', () => {
+        preview3dCard.classList.toggle('expanded');
+        setTimeout(onWindowResize, 60);
+      });
+    }
+
+    const masterSlider = document.getElementById('master-fold-slider');
+    if (masterSlider) {
+      masterSlider.addEventListener('input', (e) => {
         state.isPlaying = false;
         updatePlayButtonUI();
-        const pct = parseFloat(btn.getAttribute('data-fold-preset')) / 100;
-        setMasterFold(pct);
+        setMasterFold(parseFloat(e.target.value) / 100);
       });
-    });
+    }
 
-    const playBtn = document.getElementById('btn-play-fold');
-    if (playBtn) {
-      playBtn.addEventListener('click', () => {
+    const pipPlayBtn = document.getElementById('btn-play-fold');
+    if (pipPlayBtn) {
+      pipPlayBtn.addEventListener('click', () => {
         state.isPlaying = !state.isPlaying;
-        if (state.isPlaying && state.masterFold >= 0.99) {
-          state.playDirection = -1;
-        } else if (state.isPlaying && state.masterFold <= 0.01) {
-          state.playDirection = 1;
-        }
+        if (state.isPlaying && state.masterFold >= 0.99) state.playDirection = -1;
+        else if (state.isPlaying && state.masterFold <= 0.01) state.playDirection = 1;
         updatePlayButtonUI();
       });
     }
 
-    const seqSelect = document.getElementById('fold-sequence-mode');
-    if (seqSelect) {
-      seqSelect.addEventListener('change', (e) => {
-        state.foldSequenceMode = e.target.value;
-        setMasterFold(state.masterFold);
-      });
-    }
-
-    // 5. Carga de archivo SVG mediante botón o Drag & Drop
+    // 11. Opciones de More Tab y Archivos
     const svgInput = document.getElementById('svg-file-input');
     if (svgInput) {
       svgInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => loadSVGString(ev.target.result, file.name, true);
-        reader.readAsText(file);
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (ev) => loadSVGString(ev.target.result, file.name, true);
+          reader.readAsText(file);
+        }
       });
     }
 
-    window.addEventListener('dragover', (e) => {
-      e.preventDefault();
-    });
-    window.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (!file) return;
-      if (file.name.toLowerCase().endsWith('.svg')) {
-        const reader = new FileReader();
-        reader.onload = (ev) => loadSVGString(ev.target.result, file.name, true);
-        reader.readAsText(file);
-      } else if (file.type.startsWith('image/')) {
-        applyCustomArtworkFile(file);
-      }
-    });
-
-    // 6. Carga de diseño gráfico exterior
     const artInput = document.getElementById('artwork-file-input');
     if (artInput) {
       artInput.addEventListener('change', (e) => {
@@ -1936,6 +2232,7 @@
         if (file) applyCustomArtworkFile(file);
       });
     }
+
     const clearArtBtn = document.getElementById('btn-clear-artwork');
     if (clearArtBtn) {
       clearArtBtn.addEventListener('click', () => {
@@ -1944,7 +2241,6 @@
       });
     }
 
-    // 7. Toggles de visualización 3D
     const bindCheck = (id, prop, callback) => {
       const el = document.getElementById(id);
       if (!el) return;
@@ -1954,106 +2250,224 @@
         if (callback) callback();
       });
     };
-
-    bindCheck('chk-standup', 'standUpBox', () => {
-      applyFoldAngles();
-      fitCameraToModel(true);
-    });
+    bindCheck('chk-standup', 'standUpBox', () => { applyFoldAngles(); fitCameraToModel(true); });
+    bindCheck('chk-wireframe', 'showWireframe', () => rebuild3DMesh());
     bindCheck('chk-crease-3d', 'showCreaseLines3D', () => {
       for (const item of faceMeshMap.values()) item.creaseLines.visible = state.showCreaseLines3D;
     });
     bindCheck('chk-cut-3d', 'showCutLines3D', () => updateSelectionHighlight());
-    bindCheck('chk-dims-3d', 'showDimensions3D', () => update3DBoundingBoxDimensions());
     bindCheck('chk-grid-3d', 'showGrid', () => {
       if (gridHelper) gridHelper.visible = state.showGrid;
     });
-    bindCheck('chk-wireframe', 'showWireframe', () => rebuild3DMesh());
 
-    // 8. Conmutador de Vistas
-    document.querySelectorAll('[data-view-mode]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('[data-view-mode]').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const mode = btn.getAttribute('data-view-mode');
-        state.viewMode = mode;
-        const workspace = document.getElementById('cad-workspace');
-        if (workspace) {
-          workspace.setAttribute('data-layout', mode);
-          setTimeout(onWindowResize, 50);
+    // 12. Input Bleed en Details Tab
+    const bleedInput = document.getElementById('input-bleed-val');
+    if (bleedInput) {
+      bleedInput.addEventListener('change', (e) => {
+        state.bleedMm = Math.max(0, Math.min(30, parseFloat(e.target.value) || 5));
+        render2FDieline();
+      });
+    }
+
+    // 13. Inicializar catálogo de dielines dentro de la pestaña Dielines
+    initDrawerCatalogUI();
+  }
+
+  function applyCurrentPartVariation() {
+    if (!state.baseDieline || !DielineEngine.applyPartVariationToModel) return;
+    const modified = DielineEngine.applyPartVariationToModel(state.baseDieline, state.activePart);
+    if (modified) {
+      state.dieline = modified;
+      rebuild3DMesh();
+      render2FDieline();
+    }
+  }
+
+  function renderDetailsTabUI() {
+    const container = document.getElementById('details-params-container');
+    if (!container || !state.dieline) return;
+    container.innerHTML = '';
+
+    const openParams = state.dieline.openParams || [];
+    if (openParams.length === 0) {
+      // Si el modelo no trajo openParams explícitos, derivar parámetros clave geométricos
+      const fallbackParams = [
+        { name: 'Corner flap (N)', val: 21, unit: 'mm' },
+        { name: 'Locking tab (K)', val: 2, unit: 'mm' },
+        { name: 'Inner side (DC)', val: 63.5, unit: 'mm' },
+        { name: 'Lid side flap (M)', val: 60.5, unit: 'mm' },
+        { name: 'Front flap (TRH)', val: 52, unit: 'mm' }
+      ];
+      for (const p of fallbackParams) {
+        const row = document.createElement('div');
+        row.className = 'detail-row';
+        row.innerHTML = `
+          <span class="detail-name">› ${p.name}</span>
+          <div class="detail-input-wrap">
+            <input type="number" class="detail-num-input" value="${p.val}" />
+            <span class="field-unit-label">${state.unit}</span>
+          </div>
+        `;
+        container.appendChild(row);
+      }
+      return;
+    }
+
+    // Renderizar openParams estructurados
+    for (const group of openParams) {
+      for (const param of (group.params || [group])) {
+        if (!param.name) continue;
+        const row = document.createElement('div');
+        row.className = 'detail-row';
+        const curVal = state.openParamsValues[param.name] !== undefined ? state.openParamsValues[param.name] : param.value;
+        row.innerHTML = `
+          <span class="detail-name" title="${param.description || param.name}">› ${param.description || param.name}</span>
+          <div class="detail-input-wrap">
+            <input type="number" class="detail-num-input" min="${param.min || 0}" max="${param.max || 1000}" step="0.5" value="${curVal}" />
+            <span class="field-unit-label">${param.unit || state.unit}</span>
+          </div>
+        `;
+        const inp = row.querySelector('input');
+        inp.addEventListener('change', () => {
+          state.openParamsValues[param.name] = parseFloat(inp.value) || param.value;
+          applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+        });
+        container.appendChild(row);
+      }
+    }
+  }
+
+  function downloadSelectedDielineFormat(fmt) {
+    if (!state.dieline) return;
+    const model = state.dieline;
+    const cleanName = (state.fileName || 'dieline').replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const dimsSuffix = `${state.paramL}x${state.paramW}x${state.paramH}mm`;
+
+    const triggerDownload = (blobOrStr, ext, mime) => {
+      const blob = typeof blobOrStr === 'string' ? new Blob([blobOrStr], { type: mime }) : blobOrStr;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${cleanName}_${dimsSuffix}_1_1.${ext}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
+    switch (fmt) {
+      case 'ai':
+        if (DielineEngine.exportDielineToPDF) {
+          const aiData = DielineEngine.exportDielineToPDF(model, state.bleedMm || 5, true);
+          triggerDownload(aiData, 'ai', 'application/postscript');
         }
-      });
-    });
-
-    // 9. Presets de cámara 3D
-    document.querySelectorAll('[data-cam-preset]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        setCameraPreset(btn.getAttribute('data-cam-preset'));
-      });
-    });
-
-    const btnReset2D = document.getElementById('btn-reset-2d');
-    if (btnReset2D) btnReset2D.addEventListener('click', reset2DView);
-
-    // 10. Botones de Exportación (.GLB con animación para Blender, .OBJ, .PNG y .SVG 1:1 mm)
-    const btnGlb = document.getElementById('btn-export-glb');
-    if (btnGlb) {
-      btnGlb.addEventListener('click', exportGLBForBlender);
-    }
-    const btnSnap = document.getElementById('btn-export-png');
-    if (btnSnap) {
-      btnSnap.addEventListener('click', exportPNGSnapshot);
-    }
-    const btnObj = document.getElementById('btn-export-obj');
-    if (btnObj) {
-      btnObj.addEventListener('click', exportOBJModel);
-    }
-    const btnExportSvg = document.getElementById('btn-export-svg');
-    if (btnExportSvg) {
-      btnExportSvg.addEventListener('click', () => {
-        if (!state.dieline || !DielineEngine.exportDielineToSVG) return;
-        const svgStr = DielineEngine.exportDielineToSVG(state.dieline);
-        const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const cleanName = state.fileName.replace(/\.svg$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
-        a.download = `${cleanName}_${state.paramL}x${state.paramW}x${state.paramH}mm_1_1.svg`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-      });
-    }
-
-    // 11. Controles Paramétricos en Tiempo Real (Largo L, Ancho W, Alto H en la Vista 2D)
-    const lSlider = document.getElementById('param-l-slider');
-    const lNum = document.getElementById('param-l-num');
-    const wSlider = document.getElementById('param-w-slider');
-    const wNum = document.getElementById('param-w-num');
-    const hSlider = document.getElementById('param-h-slider');
-    const hNum = document.getElementById('param-h-num');
-
-    bindSliderAndNumeric(lSlider, lNum, 15, 2000, 1, 1, (val) => {
-      applyParametricResizeRealTime(val, state.paramW, state.paramH);
-    });
-    bindSliderAndNumeric(wSlider, wNum, 15, 2000, 1, 1, (val) => {
-      applyParametricResizeRealTime(state.paramL, val, state.paramH);
-    });
-    bindSliderAndNumeric(hSlider, hNum, 15, 2000, 1, 1, (val) => {
-      applyParametricResizeRealTime(state.paramL, state.paramW, val);
-    });
-
-    const btnResetParams = document.getElementById('btn-reset-params');
-    if (btnResetParams) {
-      btnResetParams.addEventListener('click', () => {
-        if (state.activeFefcoEntry) {
-          loadFefcoModel(state.activeFefcoEntry, false);
-        } else if (state.svgText) {
-          loadSVGString(state.svgText, state.fileName, false);
+        break;
+      case 'pdf':
+        if (DielineEngine.exportDielineToPDF) {
+          const pdfData = DielineEngine.exportDielineToPDF(model, state.bleedMm || 5, false);
+          triggerDownload(pdfData, 'pdf', 'application/pdf');
         }
+        break;
+      case 'dxf':
+        if (DielineEngine.exportDielineToDXF) {
+          const dxfData = DielineEngine.exportDielineToDXF(model, state.bleedMm || 5);
+          triggerDownload(dxfData, 'dxf', 'application/dxf');
+        }
+        break;
+      case 'svg':
+        if (DielineEngine.exportDielineToSVG) {
+          const svgData = DielineEngine.exportDielineToSVG(model, state.bleedMm || 5);
+          triggerDownload(svgData, 'svg', 'image/svg+xml;charset=utf-8');
+        }
+        break;
+      case 'glb':
+        exportGLBForBlender();
+        break;
+      case 'png':
+        exportPNGSnapshot();
+        break;
+    }
+  }
+
+  function initDrawerCatalogUI() {
+    const searchInput = document.getElementById('drawer-dielines-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        state.fefcoSearch = e.target.value;
+        renderDrawerCatalogList();
       });
     }
 
-    // 12. Catálogo Oficial Completo de 116 Modelos FEFCO (Selector Rápido + Modal con Vista Previa 2D)
-    initFefcoCatalogUI();
+    const catChips = document.querySelectorAll('.cat-chip');
+    catChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        catChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        state.catalogCategory = chip.getAttribute('data-cat-slug');
+        renderDrawerCatalogList();
+      });
+    });
+  }
+
+  function renderDrawerCatalogList() {
+    const listEl = document.getElementById('drawer-models-list');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+
+    const pacIndex = window.PACDORA_CATALOG_INDEX;
+    const allModels = (pacIndex && Array.isArray(pacIndex.models))
+      ? pacIndex.models
+      : (window.FEFCO_CATALOG || []);
+
+    const catSlug = state.catalogCategory || 'ALL';
+    const q = (state.fefcoSearch || '').trim().toLowerCase();
+
+    const filtered = allModels.filter(m => {
+      const matchCat = (catSlug === 'ALL') ||
+        (Array.isArray(m.modelCategories) && m.modelCategories.includes(catSlug)) ||
+        (Array.isArray(m.useCategories) && m.useCategories.includes(catSlug));
+      if (!matchCat) return false;
+      if (!q) return true;
+      const hay = `${m.fefcoCode || ''} ${m.num} ${m.name}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+    const slice = filtered.slice(0, 60);
+
+    for (const item of slice) {
+      const card = document.createElement('div');
+      card.className = 'model-preview-card' + (state.activeFefcoEntry && Number(state.activeFefcoEntry.num) === Number(item.num) ? ' active' : '');
+      const cleanDesc = item.name.replace(/dieline/i, '').trim();
+
+      card.innerHTML = `
+        <div class="card-split-previews">
+          <div class="card-2d-canvas-wrap">
+            <canvas width="120" height="72"></canvas>
+          </div>
+          <div class="card-3d-thumb-wrap">
+            <img src="${item.thumb3d || 'assets/textures/boardbrown.jpg'}" alt="3D" style="width:100%; height:100%; object-fit:contain;" onerror="this.src='assets/textures/boardbrown.jpg';" />
+          </div>
+        </div>
+        <div class="card-model-title">${cleanDesc}</div>
+        <div class="card-model-sub">${item.fefcoCode ? item.fefcoCode + ' · ' : ''}#${item.num} (${item.length}×${item.width}×${item.height}mm)</div>
+      `;
+
+      const cvs = card.querySelector('canvas');
+      if (item.knifeData) {
+        drawMiniDielinePreview(cvs, item.knifeData);
+      } else if (item.shard) {
+        loadPacdoraShard(item.shard).then(shardList => {
+          const found = shardList.find(x => Number(x.num) === Number(item.num));
+          if (found && found.knifeData) {
+            drawMiniDielinePreview(cvs, found.knifeData);
+          }
+        });
+      }
+
+      card.addEventListener('click', () => {
+        loadFefcoModel(item, true);
+      });
+
+      listEl.appendChild(card);
+    }
   }
 
   function drawMiniDielinePreview(canvas, knifeData) {
@@ -2114,23 +2528,97 @@
   }
 
   function initFefcoCatalogUI() {
-    const catalog = window.FEFCO_CATALOG || [];
+    const pacIndex = window.PACDORA_CATALOG_INDEX;
+    const allModels = (pacIndex && Array.isArray(pacIndex.models))
+      ? pacIndex.models
+      : (window.FEFCO_CATALOG || []);
+
+    const byModelsCats = (pacIndex && pacIndex.byModels) || [];
+    const byUsesCats = (pacIndex && pacIndex.byUses) || [];
+
+    state.catalogCategory = state.catalogCategory || 'ALL';
+    state.catalogPage = 1;
+    const PAGE_SIZE = 48;
+
+    const catSelect = document.getElementById('pacdora-category-select');
     const quickSel = document.getElementById('fefco-quick-select');
 
-    if (quickSel) {
+    const getModelsForCategory = (catSlug) => {
+      if (!catSlug || catSlug === 'ALL') return allModels;
+      return allModels.filter(m =>
+        (Array.isArray(m.modelCategories) && m.modelCategories.includes(catSlug)) ||
+        (Array.isArray(m.useCategories) && m.useCategories.includes(catSlug))
+      );
+    };
+
+    const populateQuickSelect = (catSlug) => {
+      if (!quickSel) return;
       quickSel.innerHTML = '';
       const svgOpt = document.createElement('option');
       svgOpt.value = '__SVG__';
       svgOpt.textContent = '📄 Troquel .SVG Personalizado (b1 caja americana.svg)';
       quickSel.appendChild(svgOpt);
 
-      for (const item of catalog) {
+      const list = getModelsForCategory(catSlug);
+      // Mostrar hasta 300 en el desplegable rápido o todos los de la categoría seleccionada
+      const slice = catSlug === 'ALL' ? list.slice(0, 250) : list;
+      for (const item of slice) {
         const opt = document.createElement('option');
         opt.value = String(item.num);
-        opt.textContent = `${item.fefcoCode} — ${item.name.replace(/FEFCO\s*\d+\s*/i, '').replace(/dieline/i, '').trim()} (${item.length}×${item.width}×${item.height}mm)`;
+        const prefix = item.fefcoCode ? `${item.fefcoCode} (#${item.num})` : `#${item.num}`;
+        opt.textContent = `${prefix} — ${item.name.replace(/FEFCO\s*\d+\s*/i, '').replace(/dieline/i, '').trim()} (${item.length}×${item.width}×${item.height}mm)`;
         quickSel.appendChild(opt);
       }
+      if (state.activeFefcoEntry) {
+        quickSel.value = String(state.activeFefcoEntry.num);
+      }
+    };
 
+    if (catSelect) {
+      catSelect.innerHTML = '';
+      const allOpt = document.createElement('option');
+      allOpt.value = 'ALL';
+      allOpt.textContent = `🌐 Todas las Categorías (${allModels.length} modelos)`;
+      catSelect.appendChild(allOpt);
+
+      if (byModelsCats.length > 0) {
+        const grpM = document.createElement('optgroup');
+        grpM.label = '📦 By Models (Por Estructura de Caja)';
+        for (const c of byModelsCats) {
+          const opt = document.createElement('option');
+          opt.value = c.slug;
+          opt.textContent = `${c.labelEs} (${c.count})`;
+          grpM.appendChild(opt);
+        }
+        catSelect.appendChild(grpM);
+      }
+
+      if (byUsesCats.length > 0) {
+        const grpU = document.createElement('optgroup');
+        grpU.label = '🏷️ By Uses (Por Uso / Sector)';
+        for (const c of byUsesCats) {
+          const opt = document.createElement('option');
+          opt.value = c.slug;
+          opt.textContent = `${c.labelEs} (${c.count})`;
+          grpU.appendChild(opt);
+        }
+        catSelect.appendChild(grpU);
+      }
+
+      catSelect.value = 'fefco-box-templates';
+      populateQuickSelect('fefco-box-templates');
+
+      catSelect.addEventListener('change', (e) => {
+        const slug = e.target.value;
+        state.catalogCategory = slug;
+        state.catalogPage = 1;
+        populateQuickSelect(slug);
+      });
+    } else {
+      populateQuickSelect('ALL');
+    }
+
+    if (quickSel) {
       quickSel.addEventListener('change', (e) => {
         const val = e.target.value;
         if (val === '__SVG__') {
@@ -2139,7 +2627,7 @@
           }
           return;
         }
-        const entry = catalog.find(x => String(x.num) === val);
+        const entry = allModels.find(x => String(x.num) === val);
         if (entry) loadFefcoModel(entry, true);
       });
     }
@@ -2149,50 +2637,120 @@
     const openBtn2 = document.getElementById('btn-sidebar-fefco');
     const closeBtn = document.getElementById('btn-close-fefco-modal');
     const searchInput = document.getElementById('fefco-search-input');
+    const navEl = document.getElementById('pacdora-category-nav');
     const gridEl = document.getElementById('fefco-catalog-grid');
+    const countPill = document.getElementById('pacdora-result-count');
+    const pageInfoEl = document.getElementById('pacdora-page-info');
+    const prevBtn = document.getElementById('btn-catalog-prev');
+    const nextBtn = document.getElementById('btn-catalog-next');
+
+    const renderCategorySidebar = () => {
+      if (!navEl) return;
+      navEl.innerHTML = '';
+
+      const makeItem = (slug, label, count) => {
+        const btn = document.createElement('button');
+        btn.className = 'pacdora-nav-item' + (state.catalogCategory === slug ? ' active' : '');
+        btn.innerHTML = `
+          <span>${label}</span>
+          <span class="pacdora-nav-count">${count}</span>
+        `;
+        btn.addEventListener('click', () => {
+          state.catalogCategory = slug;
+          state.catalogPage = 1;
+          if (catSelect) {
+            catSelect.value = slug;
+            populateQuickSelect(slug);
+          }
+          renderCategorySidebar();
+          renderCatalogGrid();
+        });
+        return btn;
+      };
+
+      navEl.appendChild(makeItem('ALL', '🌐 All Dielines (Todos)', allModels.length));
+
+      if (byModelsCats.length > 0) {
+        const h1 = document.createElement('div');
+        h1.className = 'pacdora-nav-group-title';
+        h1.textContent = '📦 By Models (21 Categorías)';
+        navEl.appendChild(h1);
+        for (const c of byModelsCats) {
+          navEl.appendChild(makeItem(c.slug, `# ${c.name}`, c.count));
+        }
+      }
+
+      if (byUsesCats.length > 0) {
+        const h2 = document.createElement('div');
+        h2.className = 'pacdora-nav-group-title';
+        h2.textContent = '🏷️ By Uses (16 Sectores)';
+        navEl.appendChild(h2);
+        for (const c of byUsesCats) {
+          navEl.appendChild(makeItem(c.slug, `# ${c.name}`, c.count));
+        }
+      }
+    };
+
+    const getFilteredModels = () => {
+      const q = (state.fefcoSearch || '').trim().toLowerCase();
+      const base = getModelsForCategory(state.catalogCategory);
+      if (!q) return base;
+      return base.filter(item => {
+        const hay = `${item.fefcoCode || ''} ${item.num} ${item.name}`.toLowerCase();
+        return hay.includes(q);
+      });
+    };
 
     const renderCatalogGrid = () => {
       if (!gridEl) return;
       gridEl.innerHTML = '';
-      const q = (state.fefcoSearch || '').trim().toLowerCase();
-      const filter = state.fefcoFilter || 'ALL';
+      const filtered = getFilteredModels();
+      const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+      if (state.catalogPage > totalPages) state.catalogPage = totalPages;
+      if (state.catalogPage < 1) state.catalogPage = 1;
 
-      const filtered = catalog.filter(item => {
-        if (filter !== 'ALL') {
-          const d2 = (item.fefcoDigits || '').slice(0, 2);
-          if (filter === '05-09') {
-            if (!['01', '05', '06', '07', '08', '09'].includes(d2)) return false;
-          } else if (d2 !== filter) {
-            return false;
-          }
-        }
-        if (q) {
-          const hay = `${item.fefcoCode} ${item.num} ${item.name} ${item.dielineName}`.toLowerCase();
-          return hay.includes(q);
-        }
-        return true;
-      });
+      if (countPill) countPill.textContent = `${filtered.length.toLocaleString()} modelos`;
+      if (pageInfoEl) pageInfoEl.textContent = `Pág. ${state.catalogPage} / ${totalPages}`;
+      if (prevBtn) prevBtn.disabled = state.catalogPage <= 1;
+      if (nextBtn) nextBtn.disabled = state.catalogPage >= totalPages;
 
-      for (const item of filtered) {
+      const startIdx = (state.catalogPage - 1) * PAGE_SIZE;
+      const pageItems = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+
+      // Agrupar por shard para cargar bajo demanda las geometrías vectoriales de las tarjetas visibles
+      const shardsNeeded = new Set();
+      for (const item of pageItems) {
+        if (item.shard) shardsNeeded.add(item.shard);
+      }
+
+      const cardCanvasMap = new Map();
+
+      for (const item of pageItems) {
         const card = document.createElement('div');
-        card.className = 'fefco-card' + (state.activeFefcoEntry && state.activeFefcoEntry.num === item.num ? ' active' : '');
+        card.className = 'fefco-card' + (state.activeFefcoEntry && Number(state.activeFefcoEntry.num) === Number(item.num) ? ' active' : '');
         const cleanDesc = item.name.replace(/FEFCO\s*\d+\s*/i, '').replace(/dieline/i, '').trim();
+        const badgeText = item.fefcoCode ? item.fefcoCode : `MOD #${item.num}`;
+
         card.innerHTML = `
           <div class="fefco-card-preview">
             <canvas width="210" height="112"></canvas>
           </div>
           <div class="fefco-card-top">
-            <span class="fefco-code-badge">${item.fefcoCode}</span>
+            <span class="fefco-code-badge">${badgeText}</span>
             <span class="fefco-num-badge">#${item.num}</span>
           </div>
           <div class="fefco-card-title">${cleanDesc || item.name}</div>
           <div class="fefco-card-dims">
             <span>${item.length} × ${item.width} × ${item.height} mm</span>
-            <span>${item.knifeData.faces.length} caras</span>
+            <span>${item.facesCount || (item.knifeData ? item.knifeData.faces.length : '1:1')} caras</span>
           </div>
         `;
         const cvs = card.querySelector('canvas');
-        drawMiniDielinePreview(cvs, item.knifeData);
+        cardCanvasMap.set(Number(item.num), cvs);
+
+        if (item.knifeData && item.knifeData.faces) {
+          drawMiniDielinePreview(cvs, item.knifeData);
+        }
 
         card.addEventListener('click', () => {
           if (modalBackdrop) modalBackdrop.classList.add('hidden');
@@ -2200,11 +2758,26 @@
         });
         gridEl.appendChild(card);
       }
+
+      gridEl.scrollTop = 0;
+
+      // Cargar asíncronamente los archivos modulares necesarios para dibujar el plano vectorial 2D en cada tarjeta visible
+      for (const shardKey of shardsNeeded) {
+        loadPacdoraShard(shardKey).then(shardList => {
+          for (const fullItem of shardList) {
+            const cvs = cardCanvasMap.get(Number(fullItem.num));
+            if (cvs && fullItem.knifeData) {
+              drawMiniDielinePreview(cvs, fullItem.knifeData);
+            }
+          }
+        });
+      }
     };
 
     const openModal = () => {
       if (!modalBackdrop) return;
       modalBackdrop.classList.remove('hidden');
+      renderCategorySidebar();
       renderCatalogGrid();
     };
 
@@ -2219,18 +2792,24 @@
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
         state.fefcoSearch = e.target.value;
+        state.catalogPage = 1;
         renderCatalogGrid();
       });
     }
-
-    document.querySelectorAll('[data-fefco-filter]').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('[data-fefco-filter]').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        state.fefcoFilter = tab.getAttribute('data-fefco-filter');
+    if (prevBtn) {
+      prevBtn.addEventListener('click', () => {
+        if (state.catalogPage > 1) {
+          state.catalogPage--;
+          renderCatalogGrid();
+        }
+      });
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', () => {
+        state.catalogPage++;
         renderCatalogGrid();
       });
-    });
+    }
   }
 
   function applyCustomArtworkFile(file) {
@@ -2271,12 +2850,34 @@
       if (el) el.textContent = txt;
     };
 
-    setTxt('info-filename', state.fileName);
-    setTxt('info-blank-size', `${model.bounds.width.toFixed(2)} × ${model.bounds.height.toFixed(2)} mm`);
-    setTxt('info-cota-source', model.calibration.source);
-    setTxt('info-panel-count', `${model.faces.length} paneles`);
-    setTxt('info-hinge-count', `${model.hinges.length} líneas rojas`);
-    setTxt('info-cut-count', `${model.cutSegments.length} tramos azules`);
+    const dims = model.boxDimensionsMm || { length: 315, width: 202, depth: 62 };
+    const numId = (model.pacdoraMeta && model.pacdoraMeta.num) ? model.pacdoraMeta.num : '150010';
+    setTxt('info-model-id', String(numId));
+
+    // Manufacturing: L × W × H mm
+    setTxt('info-dim-mfg', `${dims.length} × ${dims.width} × ${dims.depth} mm`);
+
+    // Inner & Outer
+    const innerDims = (model.solverDimensions && model.solverDimensions.inner)
+      ? `${model.solverDimensions.inner.length} × ${model.solverDimensions.inner.width} × ${model.solverDimensions.inner.height} mm`
+      : `${Math.round(dims.length - state.caliper * 2)} × ${Math.round(dims.width - state.caliper * 2)} × ${Math.round(dims.depth - state.caliper * 2)} mm`;
+    setTxt('info-dim-inner', innerDims);
+
+    const outerDims = (model.solverDimensions && model.solverDimensions.outer)
+      ? `${model.solverDimensions.outer.length} × ${model.solverDimensions.outer.width} × ${model.solverDimensions.outer.height} mm`
+      : `${Math.round(dims.length + state.caliper)} × ${Math.round(dims.width + state.caliper * 1.5)} × ${Math.round(dims.depth + state.caliper)} mm`;
+    setTxt('info-dim-outer', outerDims);
+
+    // Dieline statistics
+    const bw = model.bounds ? model.bounds.width.toFixed(1) : '578';
+    const bh = model.bounds ? model.bounds.height.toFixed(1) : '590';
+    setTxt('info-stat-area', `${bw} × ${bh} mm`);
+
+    const cutL = (model.totalCutLengthMm || 3638.59).toFixed(2);
+    setTxt('info-stat-cut', `${cutL} mm`);
+
+    const creaseL = (model.totalFoldLengthMm || 3065).toFixed(1);
+    setTxt('info-stat-crease', `${creaseL} mm`);
 
     selectFace(model.rootFaceId);
   }

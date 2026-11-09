@@ -1,17 +1,16 @@
-# Mi ArtiosCAD Personalizado · Motor Gráfico 3D & 2D de Packaging + 116 Modelos FEFCO Paramétricos
+# Mi ArtiosCAD Personalizado · Motor Gráfico 3D & 2D de Packaging + 2,148 Modelos Pacdora & FEFCO Paramétricos
 
-Estudio CAD de Packaging 2D y 3D en **escala 1:1 en milímetros (`mm`)**, construido combinando la base de datos de cartones y texturas reales extraídas de **Esko ArtiosCAD 12.0** con el **catálogo completo de 116 plantillas estructurales FEFCO parametrizables en tiempo real**.
+Estudio CAD de Packaging 2D y 3D en **escala 1:1 en milímetros (`mm`)**, construido combinando la base de datos de cartones y texturas reales extraídas de **Esko ArtiosCAD 12.0** con el **catálogo completo de 2,148 plantillas estructurales de `https://www.pacdora.com/dielines` (incluyendo las 116 normas FEFCO) parametrizables en tiempo real**.
 
 ---
 
 ## ✨ Características Principales
 
-1. **Catálogo Completo de 116 Modelos FEFCO Integrado ([`assets/fefco-catalog.js`](assets/fefco-catalog.js)):**
-   - Incluye las **116 normas FEFCO** extraídas con su geometría paramétrica a escala 1:1 en `mm` (`faces`, comandos vectoriales `M/L/A/Q/Z`, `holes`, `cuts`, `folds`, `sizeArrowData`) y su secuencia cinemática de plegado 3D multicapa (`animations`):
-     - **Serie 02xx:** Cajas Americanas Ranuradas (FEFCO 0201, 0200, 0202, 0203, 0204, 0210, 0211, 0215, 0216, 0217...).
-     - **Serie 03xx:** Cajas Telescópicas de Tapa y Fondo (FEFCO 0300, 0301, 0306, 0312, 0320, 0330...).
-     - **Serie 04xx:** Estuches Automontables, Bandejas y Cajas de Envíos E-Commerce (incluyendo **FEFCO 0427 / `#150011`**, FEFCO 0422, 0420, 0421, 0426, 0452...).
-     - **Series 05xx – 09xx:** Fondos Automáticos (FEFCO 0701, 0711, 0713), Expositores PLV (FEFCO 0801, 0840) y Separadores/Rejillas.
+1. **Catálogo Completo de 2,148 Modelos Distribuido por Categorías Web ([`assets/pacdora-catalog/`](assets/pacdora-catalog/)):**
+   - Incluye los **2,148 troqueles estructurales de Pacdora Dielines** extraídos con su geometría paramétrica a escala 1:1 en `mm` (`faces`, comandos vectoriales `M/L/A/Q/Z`, `holes`, `cuts`, `folds`, `sizeArrowData`) y su secuencia cinemática de plegado 3D multicapa (`animations`).
+   - **Distribución Modular Ligera idéntica a `pacdora.com/dielines`:**
+     - **[`assets/pacdora-catalog/catalog-index.js`](assets/pacdora-catalog/catalog-index.js):** Índice maestro ligero con buscador instantáneo y el árbol oficial de **21 categorías *By Models*** (`FEFCO Boxes`, `Folding Boxes`, `Tray Boxes`, `Display Boxes`, `Tuck End Boxes`, `Box Inserts`, `Paper Bags`, `Rigid Boxes`, `Window Boxes`, `Boxes with Lid`, `Storage Boxes`, `Tuck End Variations`, `Envelopes`, `Sleeves`, `Folders`, `Cards & Tags`, `Polygonal Boxes`, `Sphere Boxes`, `Triangle Boxes`, `Pouches`, `Others`) y **16 categorías *By Uses*** (`Gift Boxes`, `DIY Boxes`, `Shipping Boxes`, `Mailer Boxes`, `Food`, `Toys`, `Coffee`, `Tobacco`, `Personal Care`, `Beverage`, `Office`, `Barbie Box`, `Candies`, `Medicine`, `Alcohol`, `Milk & Yogurt`).
+     - **30 Módulos de Geometría Bajo Demanda (`≤ 2 MB` por archivo):** Cada categoría carga únicamente el módulo `.js` que necesita en el momento de visualizarse o abrirse.
 2. **Parametrización en Tiempo Real (`Largo L × Ancho W × Alto H`) en la Vista 2D:**
    - Modifica **Largo (`L`)**, **Ancho (`W`)** y **Alto (`H`)** en milímetros directamente en la barra flotante de la vista **Plano Troquel 2D** (arrastrando el deslizador, escribiendo con el teclado numérico o girando la ruleta del ratón).
    - **Doble Motor Paramétrico:**

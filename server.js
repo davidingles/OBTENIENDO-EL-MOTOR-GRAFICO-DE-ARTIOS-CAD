@@ -75,8 +75,28 @@ async function getExperienceCookie() {
   return cachedPacdoraCookie;
 }
 
+function extractBestLayer(layerObj) {
+  if (!layerObj || typeof layerObj !== 'object') return null;
+  if (layerObj.traditional && Array.isArray(layerObj.traditional.faces) && layerObj.traditional.faces.length > 0) {
+    return layerObj.traditional;
+  }
+  let best = null;
+  let bestScore = -1;
+  for (const key of Object.keys(layerObj)) {
+    const sub = layerObj[key];
+    if (sub && Array.isArray(sub.faces) && sub.faces.length > 0) {
+      const score = sub.faces.length * 10 + (Array.isArray(sub.folds) ? sub.folds.length * 5 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        best = sub;
+      }
+    }
+  }
+  return best;
+}
+
 http.createServer(async (req, res) => {
-  // Endpoint de recálculo paramétrico en vivo contra el motor FEFCO de Pacdora
+  // Endpoint de recálculo paramétrico en vivo contra el motor FEFCO / Pacdora (2,148 modelos)
   if (req.method === 'POST' && req.url.startsWith('/api/pacdora/knife')) {
     let body = '';
     req.on('data', c => body += c);
@@ -84,22 +104,27 @@ http.createServer(async (req, res) => {
       try {
         const params = JSON.parse(body || '{}');
         const cookie = await getExperienceCookie();
+        const sizeType = ['dm', 'id', 'ed'].includes(params.size_type) ? params.size_type : 'dm';
+        const bleedVal = params.bleed !== undefined ? Number(params.bleed) : 5;
+        const openParamsObj = (params.openParams && typeof params.openParams === 'object') ? params.openParams : {};
+
         const apiRes = await requestPacdora('/api/v2/project/knife', 'POST', { Cookie: cookie }, {
           post_dto: {
             id: Number(params.id),
             export_type: 'model',
             window_mode: 'base',
-            size_type: 'dm',
+            size_type: sizeType,
             length: Number(params.length) || 250,
             width: Number(params.width) || 180,
             height: Number(params.height) || 120,
             thickness: Number(params.thickness) || 1.5,
-            bleed: 0,
-            openParams: {}
+            bleed: bleedVal,
+            openParams: openParamsObj
           }
         });
 
-        const trad = apiRes.json?.data?.layer?.traditional;
+        const apiData = apiRes.json?.data || {};
+        const trad = extractBestLayer(apiData.layer);
         if (!trad) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
           return res.end(JSON.stringify({ error: 'Sin geometría devuelta por el solver remoto' }));
@@ -111,9 +136,16 @@ http.createServer(async (req, res) => {
           faces: trad.faces || [],
           holes: trad.holes || [],
           cuts: trad.cuts || [],
+          bleeds: trad.bleeds || [],
           folds: trad.folds || [],
           sizeArrowData: trad.sizeArrowData || [],
-          animations: (trad.animation && trad.animation.animations) || []
+          outsideArrowData: trad.outsideArrowData || [],
+          animations: (trad.animation && trad.animation.animations) || trad.animations || [],
+          openParams: apiData.openParams || [],
+          size: apiData.size || null,
+          outSize: apiData.outSize || null,
+          knifeSize: apiData.knifeSize || null,
+          bleedMm: bleedVal
         };
 
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
