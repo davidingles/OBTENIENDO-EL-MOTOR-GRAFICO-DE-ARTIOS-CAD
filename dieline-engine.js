@@ -1856,11 +1856,45 @@
       }
     }
 
+    // Main dimension arrows define authoritative bands. Nearby flap bounds can
+    // overlap these bands by a few mm; do not let them swallow the L/W/H span.
+    const anchorDimensionBands = (intervals, axis) => {
+      const targets = { L: targetL, W: targetW, H: targetH };
+      const anchors = (baseModel.sizeArrowData || []).filter(sa => {
+        if (!Object.hasOwn(targets, sa.lineName) || !sa.p1 || !sa.p2) return false;
+        const crossAxis = axis === 'x' ? 'y' : 'x';
+        return Math.abs(sa.p2[crossAxis] - sa.p1[crossAxis]) < 0.01 &&
+          Math.abs(sa.p2[axis] - sa.p1[axis]) > 1;
+      }).map(sa => ({
+        min: Math.min(sa.p1[axis], sa.p2[axis]),
+        max: Math.max(sa.p1[axis], sa.p2[axis]),
+        targetSpan: targets[sa.lineName]
+      }));
+      if (!anchors.length) return intervals;
+      const remaining = intervals.flatMap(interval => {
+        const scale = interval.targetSpan / (interval.max - interval.min);
+        let pieces = [interval];
+        for (const anchor of anchors) {
+          pieces = pieces.flatMap(piece => {
+            if (piece.max <= anchor.min || piece.min >= anchor.max) return [piece];
+            return [
+              { min: piece.min, max: Math.min(piece.max, anchor.min) },
+              { min: Math.max(piece.min, anchor.max), max: piece.max }
+            ].filter(part => part.max - part.min > 1);
+          });
+        }
+        return pieces.map(piece => ({ ...piece, targetSpan: (piece.max - piece.min) * scale }));
+      });
+      return [...anchors, ...remaining];
+    };
+    const anchoredXIntervals = anchorDimensionBands(xIntervals, 'x');
+    const anchoredYIntervals = anchorDimensionBands(yIntervals, 'y');
+
     // Fallback global scaling if a custom irregular dieline had no matching standard bands
-    const warpX = bandEdit ? (bandEdit.axis === 'x' ? buildPiecewiseAxisMap([bandEdit]) : (x => x)) : xIntervals.length > 0
-      ? buildPiecewiseAxisMap(xIntervals) : (x => x * (targetL / origL));
-    const warpY = bandEdit ? (bandEdit.axis === 'y' ? buildPiecewiseAxisMap([bandEdit]) : (y => y)) : yIntervals.length > 0
-      ? buildPiecewiseAxisMap(yIntervals) : (y => y * (targetH / origH));
+    const warpX = bandEdit ? (bandEdit.axis === 'x' ? buildPiecewiseAxisMap([bandEdit]) : (x => x)) : anchoredXIntervals.length > 0
+      ? buildPiecewiseAxisMap(anchoredXIntervals) : (x => x * (targetL / origL));
+    const warpY = bandEdit ? (bandEdit.axis === 'y' ? buildPiecewiseAxisMap([bandEdit]) : (y => y)) : anchoredYIntervals.length > 0
+      ? buildPiecewiseAxisMap(anchoredYIntervals) : (y => y * (targetH / origH));
 
     // Apply coordinate maps to all faces, holes, cutSegments, foldSegments, and hinges
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

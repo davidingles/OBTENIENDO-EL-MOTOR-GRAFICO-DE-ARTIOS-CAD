@@ -1,0 +1,19 @@
+[package]
+name = "troqueles-vicente"
+version = "0.2.0"
+description = "Estudio local de troqueles 2D y 3D"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true

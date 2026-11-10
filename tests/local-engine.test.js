@@ -6,6 +6,23 @@ require('../assets/pacdora-catalog/folding-box-dielines-p1.js');
 const entry = global.PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(item => item.num === 150010);
 function model() { return engine.buildDielineModelFromPacdora(entry.knifeData, entry); }
 
+test('largo, ancho y alto cambian la geometría y coinciden con sus cotas', () => {
+  const base = model();
+  for (const [length, width, depth] of [[400, 202, 62], [250, 202, 62], [315, 300, 62], [315, 202, 120], [300, 300, 120]]) {
+    const resized = engine.resizeDielineParametric(base, length, width, depth);
+    for (const [name, expected] of Object.entries({L: length, W: width, H: depth})) {
+      const arrow = resized.sizeArrowData.find(a => a.lineName === name);
+      const span = Math.hypot(arrow.p2.x - arrow.p1.x, arrow.p2.y - arrow.p1.y);
+      assert.ok(Math.abs(span - expected) < 1e-6, `${name}: ${span} debe ser ${expected}`);
+      assert.equal(arrow.lineLength, expected);
+    }
+    const panel = resized.faces.find(f => f.pacdoraName === 'H');
+    assert.ok(Math.abs(panel.bounds.width - length) < 1e-6);
+    assert.ok(Math.abs(panel.bounds.height - width) < 1e-6);
+  }
+  assert.equal(base.faces.find(f => f.pacdoraName === 'H').bounds.width, 315);
+});
+
 test('la banda local cambia el ancho elegido sin modificar el modelo base', () => {
   const base = model();
   const face = base.faces.find(f => f.pacdoraName === 'FL');

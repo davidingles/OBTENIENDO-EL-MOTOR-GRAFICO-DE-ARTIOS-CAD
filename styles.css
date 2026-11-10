@@ -825,12 +825,12 @@ html, body {
 
 .legend-swatch.trim {
   background: var(--accent-cut);
-  box-shadow: 0 0 4px var(--accent-cut);
+  box-shadow: none;
 }
 
 .legend-swatch.crease {
   background: var(--accent-crease);
-  box-shadow: 0 0 4px var(--accent-crease);
+  box-shadow: none;
 }
 
 .legend-text {
@@ -892,7 +892,7 @@ html, body {
    6. CONTENEDOR DERECHO: TARJETAS FLOTANTES (3D PREVIEW + FILE FORMATS)
    ============================================================================ */
 .right-floating-container {
-  width: 280px;
+  width: 400px;
   position: absolute;
   top: 14px;
   right: 16px;
@@ -902,6 +902,8 @@ html, body {
   gap: 12px;
   pointer-events: none;
   z-index: 10;
+  overflow-y: auto;
+  overflow-x: visible;
 }
 
 .right-floating-container > * {
@@ -910,15 +912,34 @@ html, body {
 
 /* Tarjeta 3D Preview */
 .preview-3d-card {
-  height: 220px;
+  height: 320px;
+  flex-shrink: 0;
   background: #111722;
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   position: relative;
   overflow: hidden;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
-  transition: all 0.25s ease;
 }
+
+.resize-3d-handle {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  z-index: 8;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 0 8px 0 0;
+  background: #fff;
+  color: #0788c6;
+  font-size: 24px;
+  cursor: nesw-resize;
+  touch-action: none;
+}
+
+.resize-3d-handle:focus-visible { outline: 2px solid #0788c6; outline-offset: -3px; }
+.preview-3d-card.expanded .resize-3d-handle { display: none; }
 
 .preview-3d-card.expanded {
   position: fixed;
@@ -927,7 +948,7 @@ html, body {
   right: 310px;
   bottom: 20px;
   width: auto;
-  height: auto;
+  height: auto !important;
   z-index: 30;
 }
 
@@ -955,7 +976,7 @@ html, body {
 .btn-expand-pip {
   position: absolute;
   bottom: 8px;
-  left: 8px;
+  left: 38px;
   width: 26px;
   height: 26px;
   background: rgba(0, 0, 0, 0.65);

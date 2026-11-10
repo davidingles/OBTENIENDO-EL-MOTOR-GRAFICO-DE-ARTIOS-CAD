@@ -53,8 +53,8 @@
     standUpBox: true,       // Posicionar caja de pie sobre la base en 3D
     showWireframe: false,
     showCreaseLines3D: false,// Desactivado por defecto para apreciar limpio el surco chafado 3D
-    showCutLines3D: true,
-    showDimensions3D: true,
+    showCutLines3D: false,
+    showDimensions3D: false,
     showGrid: true,
     selectedFaceId: null,
     hoveredFaceId: null,
@@ -195,7 +195,7 @@
     const planeMat = new THREE.ShadowMaterial({ opacity: 0.34 });
     shadowPlane = new THREE.Mesh(planeGeo, planeMat);
     shadowPlane.rotation.x = -Math.PI / 2;
-    shadowPlane.position.y = -0.15;
+    shadowPlane.position.y = 0;
     shadowPlane.receiveShadow = true;
     scene.add(shadowPlane);
 
@@ -224,6 +224,7 @@
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
         renderer.setSize(w, h);
+        fitCameraToModel(true, true);
       }
     }
     render2FDieline();
@@ -760,7 +761,7 @@
 
         // Cara Exterior (Grupo 0, mira hacia -Z, orientación CCW vista desde fuera)
         pushVertex(0, v0.x3d, v0.y3d, v0.zOuter, v0.nOx, v0.nOy, v0.nOz, v0.uOut, v0.vOut, v0.shade);
-        pushVertex(0, v1.x3d, v1.y3d, v1.zOuter, v0.nOx, v0.nOy, v0.nOz, v0.uOut, v1.vOut, v1.shade);
+        pushVertex(0, v1.x3d, v1.y3d, v1.zOuter, v1.nOx, v1.nOy, v1.nOz, v1.uOut, v1.vOut, v1.shade);
         pushVertex(0, v2.x3d, v2.y3d, v2.zOuter, v2.nOx, v2.nOy, v2.nOz, v2.uOut, v2.vOut, v2.shade);
 
         // Cara Interior (Grupo 1, mira hacia +Z, orientación CCW vista desde dentro)
@@ -1143,26 +1144,17 @@
       pivotGroup.setRotationFromAxisAngle(axis3d, rad);
     }
 
-    dielineRootGroup.rotation.set(0, 0, 0);
+    // The root is the same base panel identified in 2D. Its interior (+Z)
+    // faces up (+Y); folding never changes this panel's contact with the floor.
+    dielineRootGroup.rotation.set(-Math.PI / 2, 0, 0);
     dielineRootGroup.position.set(0, 0, 0);
 
-    if (state.standUpBox) {
-      dielineRootGroup.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(dielineRootGroup);
-      if (!box.isEmpty()) {
-        const center = new THREE.Vector3();
-        box.getCenter(center);
-        dielineRootGroup.position.set(-center.x, -box.min.y, -center.z);
-      }
-    } else {
-      dielineRootGroup.rotation.x = -Math.PI / 2;
-      dielineRootGroup.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(dielineRootGroup);
-      if (!box.isEmpty()) {
-        const center = new THREE.Vector3();
-        box.getCenter(center);
-        dielineRootGroup.position.set(-center.x, -box.min.y, -center.z);
-      }
+    dielineRootGroup.updateMatrixWorld(true);
+    const baseMesh = faceMeshMap.get(state.dieline.rootFaceId)?.mesh;
+    if (baseMesh) {
+      const baseBox = new THREE.Box3().setFromObject(baseMesh);
+      const center = baseBox.getCenter(new THREE.Vector3());
+      dielineRootGroup.position.set(-center.x, -baseBox.min.y, -center.z);
     }
 
     update3DBoundingBoxDimensions();
@@ -1296,13 +1288,8 @@
 
         if (result instanceof ArrayBuffer) {
           const blob = new Blob([result], { type: 'model/gltf-binary' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
           const baseName = state.fileName.replace(/\.svg$/i, '');
-          a.download = `${baseName}_${state.boardId}_${state.caliper}mm_Animado_Blender.glb`;
-          a.click();
-          setTimeout(() => URL.revokeObjectURL(url), 1500);
+          saveExport(blob, `${baseName}_${state.boardId}_${state.caliper}mm_Animado_Blender.glb`);
         }
       },
       {
@@ -1337,12 +1324,6 @@
       dim3dEl.textContent = `${size.x.toFixed(1)} × ${size.z.toFixed(1)} × ${size.y.toFixed(1)} mm`;
     }
 
-    if (!state.showDimensions3D) return;
-
-    const helper = new THREE.Box3Helper(box, 0x38bdf8);
-    helper.material.transparent = true;
-    helper.material.opacity = 0.28;
-    bboxHelperGroup.add(helper);
   }
 
   // ============================================================================
@@ -1522,7 +1503,6 @@
     if (state.view2D.showFaces) {
       for (const face of model.faces) {
         const isSelected = face.id === state.selectedFaceId;
-        const isHovered = face.id === state.hoveredFaceId || face.id === state.partHoverFaceId;
 
         ctx.beginPath();
         face.polygon.forEach((p, idx) => {
@@ -1537,8 +1517,6 @@
           ctx.fillStyle = 'rgba(56, 189, 248, 0.45)'; // Resaltado azul celeste intenso de la pestaña Parts
         } else if (isSelected) {
           ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
-        } else if (isHovered) {
-          ctx.fillStyle = 'rgba(229, 0, 125, 0.20)';
         } else if (face.role === 'BODY') {
           ctx.fillStyle = 'rgba(198, 156, 109, 0.16)';
         } else if (face.role === 'GLUE_FLAP') {
@@ -1550,21 +1528,9 @@
       }
     }
 
-    // 2. Visualizar banda de chafado del hendido en 2D alrededor de cada línea roja
-    const creaseWpx = Math.max(2, state.caliper * state.creaseWidthFactor * 2 * tf.scale);
-    ctx.strokeStyle = 'rgba(229, 0, 125, 0.16)';
-    ctx.lineWidth = creaseWpx;
-    ctx.lineCap = 'butt';
-    ctx.beginPath();
-    for (const h of model.hinges) {
-      ctx.moveTo(tf.toScreenX(h.p1.x), tf.toScreenY(h.p1.y));
-      ctx.lineTo(tf.toScreenX(h.p2.x), tf.toScreenY(h.p2.y));
-    }
-    ctx.stroke();
-
     // 3. Dibujar líneas de CORTE (AZUL #009ee3)
     ctx.strokeStyle = '#009ee3';
-    ctx.lineWidth = Math.max(1.5, 1.8 * dpr);
+    ctx.lineWidth = dpr;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.beginPath();
@@ -1576,7 +1542,7 @@
 
     // 4. Dibujar líneas de DOBLEZ / HENDIDO (ROJO/MAGENTA #e5007d)
     ctx.strokeStyle = '#e5007d';
-    ctx.lineWidth = Math.max(1.8, 2.1 * dpr);
+    ctx.lineWidth = dpr;
     ctx.beginPath();
     for (const h of model.hinges) {
       ctx.moveTo(tf.toScreenX(h.p1.x), tf.toScreenY(h.p1.y));
@@ -1586,11 +1552,15 @@
 
     // 5. Dibujar Flechas y Cotas (L, W, H) en Azul estilo Pacdora (Screenshot 1 & 2)
     if (state.showDimensions && state.view2D.showCota) {
-      const arrowList = (state.activeTab === 'details' && Array.isArray(model.outsideArrowData) && model.outsideArrowData.length > 0)
+      const showDetailDimensions = state.activeTab === 'details';
+      const availableArrows = (showDetailDimensions && Array.isArray(model.outsideArrowData) && model.outsideArrowData.length > 0)
         ? model.outsideArrowData
-        : (Array.isArray(model.sizeArrowData) && model.sizeArrowData.length > 0 ? model.sizeArrowData : null);
+        : (Array.isArray(model.sizeArrowData) ? model.sizeArrowData : []);
+      const arrowList = showDetailDimensions
+        ? availableArrows
+        : availableArrows.filter(sa => ['L', 'W', 'H'].includes(sa.lineName));
 
-      if (arrowList) {
+      if (arrowList.length > 0) {
         ctx.strokeStyle = '#0077ff';
         ctx.fillStyle = '#0077ff';
         ctx.lineWidth = 1.2 * dpr;
@@ -1637,7 +1607,7 @@
           ctx.textBaseline = 'middle';
           ctx.fillText(valDisp, mx, my);
         }
-      } else {
+      } else if (showDetailDimensions) {
         // Fallback cota perimetral
         const cotaY = tf.toScreenY(bounds.minY) - 20 * dpr;
         const x1 = tf.toScreenX(bounds.minX);
@@ -1692,9 +1662,11 @@
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
         ctx.fillText(shortName, 0, -6 * dpr);
 
-        ctx.font = `500 ${Math.round(8.5 * dpr)}px "JetBrains Mono", monospace`;
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(`${face.bounds.width.toFixed(1)}×${face.bounds.height.toFixed(1)}mm`, 0, 6 * dpr);
+        if (state.activeTab === 'details' && state.showDimensions && state.view2D.showCota) {
+          ctx.font = `500 ${Math.round(8.5 * dpr)}px "JetBrains Mono", monospace`;
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText(`${face.bounds.width.toFixed(1)}×${face.bounds.height.toFixed(1)}mm`, 0, 6 * dpr);
+        }
         ctx.restore();
       }
     }
@@ -1775,16 +1747,14 @@
 
   function updateSelectionHighlight() {
     for (const [fid, item] of faceMeshMap.entries()) {
-      const isSelected = fid === state.selectedFaceId;
-      const isHovered = fid === state.hoveredFaceId;
-      item.cutOutline.visible = state.showCutLines3D || isSelected || isHovered;
+      item.cutOutline.visible = state.showCutLines3D;
     }
   }
 
   // ============================================================================
   // CÁMARA Y PRESETS DE VISTA 3D
   // ============================================================================
-  function fitCameraToModel(instant = false) {
+  function fitCameraToModel(instant = false, preserveDirection = false) {
     if (!dielineRootGroup || !camera || !controls) return;
     dielineRootGroup.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(dielineRootGroup);
@@ -1795,12 +1765,17 @@
     box.getCenter(center);
     box.getSize(size);
 
-    const maxDim = Math.max(size.x, size.y, size.z, 120);
-    const dist = maxDim * 1.65;
+    const halfVerticalFov = THREE.MathUtils.degToRad(camera.fov) * 0.5;
+    const halfHorizontalFov = Math.atan(Math.tan(halfVerticalFov) * camera.aspect);
+    const radius = Math.max(size.length() * 0.5, 60);
+    const dist = radius / Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)) * 1.12;
+    const direction = preserveDirection
+      ? camera.position.clone().sub(controls.target).normalize()
+      : new THREE.Vector3(0.78, 0.62, 0.85).normalize();
 
     controls.target.copy(center);
     if (instant) {
-      camera.position.set(center.x + dist * 0.78, center.y + dist * 0.62, center.z + dist * 0.85);
+      camera.position.copy(center).addScaledVector(direction, dist);
     }
     controls.update();
   }
@@ -2149,6 +2124,39 @@
       });
     }
 
+    const resize3dHandle = document.getElementById('resize-3d-handle');
+    if (resize3dHandle && preview3dCard) {
+      const floatingPanel = preview3dCard.parentElement;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      let drag = null;
+      resize3dHandle.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || preview3dCard.classList.contains('expanded')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = preview3dCard.getBoundingClientRect();
+        drag = {x: e.clientX, y: e.clientY, width: rect.width, height: rect.height};
+        resize3dHandle.setPointerCapture(e.pointerId);
+      });
+      resize3dHandle.addEventListener('pointermove', e => {
+        if (!drag) return;
+        // The card is anchored at the right, so drag left to widen it.
+        floatingPanel.style.width = `${clamp(drag.width + drag.x - e.clientX, 340, Math.max(340, window.innerWidth - 420))}px`;
+        preview3dCard.style.height = `${clamp(drag.height + e.clientY - drag.y, 280, Math.max(280, window.innerHeight - 120))}px`;
+      });
+      const stopResize = () => { drag = null; };
+      resize3dHandle.addEventListener('pointerup', stopResize);
+      resize3dHandle.addEventListener('pointercancel', stopResize);
+      resize3dHandle.addEventListener('lostpointercapture', stopResize);
+      resize3dHandle.addEventListener('keydown', e => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        const rect = preview3dCard.getBoundingClientRect();
+        floatingPanel.style.width = `${clamp(rect.width + (e.key === 'ArrowLeft' ? 20 : e.key === 'ArrowRight' ? -20 : 0), 340, Math.max(340, window.innerWidth - 420))}px`;
+        preview3dCard.style.height = `${clamp(rect.height + (e.key === 'ArrowDown' ? 20 : e.key === 'ArrowUp' ? -20 : 0), 280, Math.max(280, window.innerHeight - 120))}px`;
+      });
+      if (window.ResizeObserver) new ResizeObserver(onWindowResize).observe(preview3dCard);
+    }
+
     const masterSlider = document.getElementById('master-fold-slider');
     if (masterSlider) {
       masterSlider.addEventListener('input', (e) => {
@@ -2206,7 +2214,6 @@
         if (callback) callback();
       });
     };
-    bindCheck('chk-standup', 'standUpBox', () => { applyFoldAngles(); fitCameraToModel(true); });
     bindCheck('chk-wireframe', 'showWireframe', () => rebuild3DMesh());
     bindCheck('chk-crease-3d', 'showCreaseLines3D', () => {
       for (const item of faceMeshMap.values()) item.creaseLines.visible = state.showCreaseLines3D;
@@ -2301,6 +2308,25 @@
     }
   }
 
+  async function saveExport(blob, filename) {
+    try {
+      if (window.__TAURI__?.core?.invoke) {
+        const data = Array.from(new Uint8Array(await blob.arrayBuffer()));
+        await window.__TAURI__.core.invoke('save_export', { filename, data });
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (error) {
+      console.error('Error guardando exportación:', error);
+      alert('No se pudo guardar el archivo: ' + (error.message || error));
+    }
+  }
+
   function downloadSelectedDielineFormat(fmt) {
     if (!state.dieline) return;
     const model = state.dieline;
@@ -2309,12 +2335,7 @@
 
     const triggerDownload = (blobOrStr, ext, mime) => {
       const blob = typeof blobOrStr === 'string' ? new Blob([blobOrStr], { type: mime }) : blobOrStr;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${cleanName}_${dimsSuffix}_1_1.${ext}`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      saveExport(blob, `${cleanName}_${dimsSuffix}_1_1.${ext}`);
     };
 
     switch (fmt) {
@@ -2996,11 +3017,9 @@
   function exportPNGSnapshot() {
     if (!renderer || !scene || !camera) return;
     renderer.render(scene, camera);
-    const dataUrl = renderer.domElement.toDataURL('image/png');
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `${state.fileName.replace(/\.svg$/i, '')}_3D_${state.caliper}mm.png`;
-    a.click();
+    renderer.domElement.toBlob(blob => {
+      if (blob) saveExport(blob, `${state.fileName.replace(/\.svg$/i, '')}_3D_${state.caliper}mm.png`);
+    }, 'image/png');
   }
 
   function exportOBJModel() {
@@ -3036,12 +3055,7 @@
     }
 
     const blob = new Blob([obj], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${state.fileName.replace(/\.svg$/i, '')}_${state.caliper}mm.obj`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveExport(blob, `${state.fileName.replace(/\.svg$/i, '')}_${state.caliper}mm.obj`);
   }
 
   // ============================================================================
