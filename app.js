@@ -59,7 +59,9 @@
     fefcoFilter: 'ALL',
     fefcoSearch: '',
     boardId: 'M-125B',      // Cartón seleccionado de la base de datos ArtiosCAD
-    caliper: 3.0,           // Espesor actual en mm (escala 1:1)
+    caliper: 1.5,           // C1 confirmado por el usuario
+    boardCode: 'C1',
+    canAddToLibrary: false,
     insideLoss: 1.5,        // Pérdida interior de plegado (mm)
     outsideGain: 1.5,       // Ganancia exterior de plegado (mm)
     flute: 'B',
@@ -126,6 +128,7 @@
     initUIControls();
     initThreeJS();
     init2DCanvasInteractions();
+    userLibraryReady = loadUserLibrary();
 
     // Cargar por defecto el modelo 150010 de los pantallazos del usuario
     const pacIndex = window.PACDORA_CATALOG_INDEX;
@@ -366,10 +369,12 @@
     }
   }
 
-  function applyNewDielineModel(model, displayTitle, animateIntro = false) {
+  function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false) {
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
+    state.canAddToLibrary = allowLibraryAdd;
+    document.getElementById('btn-add-library')?.classList.toggle('hidden',!allowLibraryAdd);
     clearArtwork();
     state.baseDieline = model;
     state.dieline = model;
@@ -402,7 +407,8 @@
       setMasterFold(state.masterFold || 0.75);
       fitCameraToModel(false);
     }
-    applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
+    if(state.activeFefcoEntry?.userModel)state.parametricDieline=model;
+    else applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
     if (state.activeTab === 'details') renderDetailsTabUI();
   }
 
@@ -415,7 +421,8 @@
       if (quickSel) quickSel.value = '__SVG__';
 
       const model = DielineEngine.buildDielineModel(svgString);
-      applyNewDielineModel(model, fileName || 'troquel.svg', animateIntro);
+      state.boardCode='C1';state.caliper=1.5;
+      applyNewDielineModel(model, fileName || 'troquel.svg', animateIntro, true);
     } catch (err) {
       console.error('Error procesando el archivo SVG:', err);
       alert('Error al procesar el archivo SVG: ' + err.message);
@@ -479,6 +486,14 @@
     if (!fefcoEntry) return;
     const revision = ++modelRevision;
     try {
+      if(fefcoEntry.userModel){
+        UserLibrary.validate(fefcoEntry);
+        state.activeFefcoEntry=fefcoEntry;
+        state.boardCode=fefcoEntry.boardCode;
+        state.caliper=UserLibrary.boardThicknessMm[fefcoEntry.boardCode]||1.5;
+        applyNewDielineModel(JSON.parse(JSON.stringify(fefcoEntry.geometry)),fefcoEntry.name,animateIntro);
+        return;
+      }
       const fullEntry = await resolveFullPacdoraModel(fefcoEntry);
       if (revision !== modelRevision) return;
       if (!fullEntry || !fullEntry.knifeData) {
@@ -487,6 +502,7 @@
       }
 
       state.activeFefcoEntry = fullEntry;
+      state.boardCode='C1';state.caliper=1.5;
       const quickSel = document.getElementById('fefco-quick-select');
       if (quickSel) {
         // Asegurar que la opción exista en el desplegable rápido
@@ -1319,7 +1335,7 @@
     exportRoot.traverse(obj=>{if(obj.userData?.isCADHelper)obj.visible=false;});
     exportRoot.scale.multiplyScalar(0.001);
     exportRoot.position.multiplyScalar(0.001);
-    exportRoot.userData={...exportRoot.userData,units:'meters',dimensionsMm:{length:state.paramL,width:state.paramW,height:state.paramH}};
+    exportRoot.userData={...exportRoot.userData,units:'meters',boardCode:state.boardCode,thicknessMm:UserLibrary.boardThicknessMm[state.boardCode],dimensionsMm:{length:state.paramL,width:state.paramW,height:state.paramH}};
 
     const clips = buildBlenderAnimationClips();
     const exporter = new THREE.GLTFExporter();
@@ -1331,7 +1347,7 @@
         if (result instanceof ArrayBuffer) {
           const blob = new Blob([result], { type: 'model/gltf-binary' });
           const baseName = state.fileName.replace(/\.[^.]+$/, '');
-          saveExport(blob, `${baseName}_${state.boardId}_${state.caliper}mm_Animado_Blender.glb`);
+          saveExport(blob, `${baseName}_${state.boardId}_${state.boardCode}_Animado_Blender.glb`);
         }
       },
       {
@@ -1801,12 +1817,11 @@
     const face = state.dieline.faces.find(f => f.id === faceId);
     const selBox = document.getElementById('selected-face-info');
     if (face && selBox) {
-      const pinchedMM = (state.caliper * (1 - state.crushDepthRatio)).toFixed(2);
       selBox.innerHTML = `
         <div class="sel-face-title">${face.label} <span class="badge-id">#${face.id}</span></div>
         <div class="sel-face-grid">
           <div><span>Dimensiones:</span> <strong>${face.bounds.width.toFixed(2)} × ${face.bounds.height.toFixed(2)} mm</strong></div>
-          <div><span>Espesor cara / hendido:</span> <strong>${state.caliper.toFixed(2)} mm → ${pinchedMM} mm</strong></div>
+          <div><span>Cartón:</span> <strong>${state.boardCode} · ${String(state.caliper).replace('.',',')} mm</strong></div>
           <div><span>Eje rotación:</span> <strong>Centro del espesor (z = 0.00 mm)</strong></div>
         </div>
       `;
@@ -2033,28 +2048,6 @@
       });
     }
 
-    // 5. Stepper de Espesor: [-] [value] [+]
-    const thInput = document.getElementById('input-thickness');
-    const btnThMinus = document.getElementById('btn-thickness-minus');
-    const btnThPlus = document.getElementById('btn-thickness-plus');
-
-    const updateThickness = (val) => {
-      state.caliper = Math.max(0.4, Math.min(15.0, Number(val) || 1.5));
-      if (thInput) thInput.value = state.caliper;
-      applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
-    };
-
-    if (btnThMinus) btnThMinus.addEventListener('click', () => updateThickness(state.caliper - 0.5));
-    if (btnThPlus) btnThPlus.addEventListener('click', () => updateThickness(state.caliper + 0.5));
-    if (thInput) {
-      thInput.addEventListener('change', (e) => updateThickness(e.target.value));
-      thInput.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const dir = e.deltaY < 0 ? 0.2 : -0.2;
-        updateThickness(state.caliper + dir);
-      }, { passive: false });
-    }
-
     // 7. Parts Tab: variación de partes estructurales (Screenshot 3)
     const partCards = document.querySelectorAll('.part-card');
     partCards.forEach(card => {
@@ -2264,11 +2257,12 @@
     }
 
     document.getElementById('btn-art-settings')?.addEventListener('click', openArtworkOptions);
+    initUserLibraryUI();
     document.getElementById('btn-set-base')?.addEventListener('click',async()=>{
       try{
         const artwork=state.artwork?{...state.artwork}:null;
         const model=DielineEngine.rerootDielineModel(state.baseDieline,state.selectedFaceId);
-        applyNewDielineModel(model,state.fileName,true);
+        applyNewDielineModel(model,state.fileName,true,state.canAddToLibrary);
         if(artwork)await loadArtworkData(artwork.dataUrl,artwork);
       }catch(error){alert(error.message);}
     });
@@ -2535,6 +2529,7 @@
   }
 
   function nombreModelo(item) {
+    if(item.userModel)return item.name;
     const text = (item.name || '').toLowerCase();
     if (item.fefcoCode) return 'Caja ' + item.fefcoCode;
     if (text.includes('mailer') || text.includes('shipping')) return 'Caja de envío';
@@ -2550,6 +2545,92 @@
     if (text.includes('lid') || text.includes('flip top')) return 'Caja con tapa';
     if (text.includes('box')) return 'Caja';
     return 'Troquel';
+  }
+
+  const USER_LIBRARY_KEY='troqueles-vicente-user-library-v1';
+  let userLibraryModels=[];
+  let userLibraryReady=Promise.resolve();
+  function allCatalogModels(){
+    const stock=window.PACDORA_CATALOG_INDEX?.models||window.FEFCO_CATALOG||[];
+    return userLibraryModels.concat(stock);
+  }
+  async function loadUserLibrary(){
+    try{
+      let result;
+      if(window.__TAURI__?.core?.invoke)result=await window.__TAURI__.core.invoke('load_library_models');
+      else result={models:JSON.parse(window.localStorage.getItem(USER_LIBRARY_KEY)||'[]'),warnings:[]};
+      userLibraryModels=UserLibrary.normalize(result.models);
+      if(result.warnings?.length)alert('No se pudieron cargar '+result.warnings.length+' modelos guardados de la biblioteca.');
+      if(state.activeTab==='dielines')renderDrawerCatalogList();
+    }catch(error){alert('No se pudo cargar tu biblioteca: '+(error.message||error));}
+  }
+  function initUserLibraryUI(){
+    const dialog=document.getElementById('add-library-dialog'),status=document.getElementById('library-model-status');
+    const profile=document.getElementById('library-model-board');
+    const showProfile=()=>{
+      const mm=UserLibrary.boardThicknessMm[profile.value];
+      status.textContent='Espesor: '+String(mm).replace('.',',')+' mm. Se conservan los retranqueos y tolerancias del archivo.';
+    };
+    document.getElementById('btn-add-library').onclick=()=>{
+      if(!state.canAddToLibrary||!state.dieline)return;
+      document.getElementById('library-model-name').value=state.fileName.replace(/\.[^.]+$/,'').slice(0,100);
+      profile.value=state.boardCode||'C1';showProfile();dialog.showModal();
+    };
+    profile.onchange=showProfile;
+    document.getElementById('library-model-cancel').onclick=()=>dialog.close();
+    document.getElementById('library-model-save').onclick=async()=>{
+      const button=document.getElementById('library-model-save');button.disabled=true;
+      try{
+        await userLibraryReady;
+        const name=document.getElementById('library-model-name').value;
+        const item=UserLibrary.create(name,profile.value,state.dieline,state.fileName);
+        if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('add_library_model',{model:item});
+        else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
+        userLibraryModels.unshift(item);state.activeFefcoEntry=item;state.fileName=item.name;
+        state.boardCode=item.boardCode;state.caliper=UserLibrary.boardThicknessMm[item.boardCode]||1.5;
+        state.canAddToLibrary=false;document.getElementById('btn-add-library').classList.add('hidden');
+        dialog.close();rebuild3DMesh();setMasterFold(state.masterFold);updateDielineInfoUI(state.dieline);
+        state.catalogCategory='user-models';state.fefcoSearch='';catalogLimit=60;
+        document.getElementById('drawer-dielines-search').value='';
+        document.querySelectorAll('.cat-chip').forEach(chip=>chip.classList.toggle('active',chip.getAttribute('data-cat-slug')==='user-models'));
+        document.querySelector('.rail-tab-btn[data-drawer-tab="dielines"]')?.click();
+        renderDrawerCatalogList();
+      }catch(error){status.textContent=error.message||String(error);}
+      finally{button.disabled=false;}
+    };
+  }
+
+  const FAVORITES_KEY = 'troqueles-vicente-favorites-v1';
+  function readFavoriteModels(storage) {
+    try {
+      const values=JSON.parse((storage||window.localStorage)?.getItem(FAVORITES_KEY)||'[]');
+      return new Set(Array.isArray(values)?values.filter(id=>Number.isSafeInteger(id)&&id>0):[]);
+    }catch{return new Set();}
+  }
+  let favoriteModelIds = readFavoriteModels();
+  function toggleFavoriteModel(num) {
+    const next=new Set(favoriteModelIds);
+    if(next.has(num))next.delete(num);else next.add(num);
+    try{window.localStorage.setItem(FAVORITES_KEY,JSON.stringify([...next]));}
+    catch{alert('No se pudo guardar la selección de preferidos.');return false;}
+    favoriteModelIds=next;return true;
+  }
+  function createFavoriteButton(item) {
+    const button=document.createElement('button');button.type='button';button.className='favorite-model-button';
+    const update=()=>{
+      const active=favoriteModelIds.has(Number(item.num));
+      button.setAttribute('aria-pressed',String(active));
+      const label=(active?'Quitar de preferidos: ':'Añadir a preferidos: ')+nombreModelo(item)+' #'+item.num;
+      button.setAttribute('aria-label',label);button.title=label;
+      button.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z" fill="'+(active?'currentColor':'none')+'" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    };
+    update();
+    button.addEventListener('click',e=>{
+      e.preventDefault();e.stopPropagation();
+      if(!toggleFavoriteModel(Number(item.num)))return;
+      if(state.catalogCategory==='FAVORITES')renderDrawerCatalogList();else update();
+    });
+    return button;
   }
 
   let catalogPreviewObserver = null;
@@ -2579,9 +2660,9 @@
           return;
         }
         let full = item;
-        if (!full.knifeData && item.shard) full = (await loadPacdoraShard(item.shard)).find(x => Number(x.num) === Number(item.num));
-        if (!card.isConnected || !full?.knifeData) return;
-        const model = DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
+        if (!item.userModel && !full.knifeData && item.shard) full = (await loadPacdoraShard(item.shard)).find(x => Number(x.num) === Number(item.num));
+        if (!card.isConnected || (!item.userModel && !full?.knifeData)) return;
+        const model = item.userModel?item.geometry:DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
         drawMiniDielinePreview(flat, model);
         drawCatalog3DPreview(folded, model);
         const copy = source => {const c=document.createElement('canvas');c.width=source.width;c.height=source.height;c.getContext('2d').drawImage(source,0,0);return c;};
@@ -2593,22 +2674,19 @@
       for (const entry of entries) if (entry.isIntersecting) {catalogPreviewObserver.unobserve(entry.target);enqueue(entry.target);}
     }, {root:listEl, rootMargin:'120px'});
 
-    const pacIndex = window.PACDORA_CATALOG_INDEX;
-    const allModels = (pacIndex && Array.isArray(pacIndex.models))
-      ? pacIndex.models
-      : (window.FEFCO_CATALOG || []);
+    const allModels = allCatalogModels();
 
     const catSlug = state.catalogCategory || 'ALL';
     const normalizar = value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const q = normalizar((state.fefcoSearch || '').trim());
 
     const filtered = allModels.filter(m => {
-      const matchCat = (catSlug === 'ALL') ||
+      const matchCat = catSlug === 'FAVORITES' ? favoriteModelIds.has(Number(m.num)) : (catSlug === 'ALL') ||
         (Array.isArray(m.modelCategories) && m.modelCategories.includes(catSlug)) ||
         (Array.isArray(m.useCategories) && m.useCategories.includes(catSlug));
       if (!matchCat) return false;
       if (!q) return true;
-      const hay = normalizar(`${m.fefcoCode || ''} ${m.num} ${m.name} ${nombreModelo(m)}`);
+      const hay = normalizar(`${m.fefcoCode || ''} ${m.num} ${m.name} ${nombreModelo(m)} ${m.boardCode||'C1'}`);
       return hay.includes(q);
     });
 
@@ -2628,9 +2706,14 @@
             <canvas width="240" height="176" aria-label="Vista 3D del modelo"></canvas>
           </div>
         </div>
-        <div class="card-model-title">${cleanDesc}</div>
-        <div class="card-model-sub">#${item.num} (${item.length}×${item.width}×${item.height}mm)</div>
+        <div class="card-model-title"></div>
+        <div class="card-model-sub"></div>
       `;
+      card.querySelector('.card-model-title').textContent=cleanDesc;
+      const code=item.userModel?item.boardCode:'C1',mm=UserLibrary.boardThicknessMm[code];
+      card.querySelector('.card-model-sub').textContent=`${item.userModel?'':'#'+item.num+' · '}${item.length}×${item.width}×${item.height} mm · ${code}${mm?' · '+String(mm).replace('.',',')+' mm':''}`;
+      card.title=cleanDesc+' · '+code+(item.userModel?'':' · #'+item.num);
+      card.appendChild(createFavoriteButton(item));
 
       card.addEventListener('click', () => {
         loadFefcoModel(item, true);
@@ -2646,7 +2729,7 @@
       more.textContent = `Mostrar más (${filtered.length - catalogLimit} restantes)`;
       more.addEventListener('click', () => { catalogLimit += 60; renderDrawerCatalogList(); });
       listEl.appendChild(more);
-    } else if (!filtered.length) listEl.textContent = 'No se encontraron modelos.';
+    } else if (!filtered.length) listEl.textContent = catSlug==='FAVORITES'&&!q?'Todavía no has marcado troqueles como preferidos.':'No se encontraron modelos.';
   }
 
   function drawMiniDielinePreview(canvas, data) {
@@ -3049,7 +3132,8 @@
           if(!model.faces.length)throw new Error('No se encontraron paneles cerrados. Revisa los cortes y los hendidos.');
           model.boxDimensionsMm=DielineEngine.dimensionsFromBase(model);
           state.svgText=svg;state.activeFefcoEntry=null;
-          applyNewDielineModel(model,filename,true);dialog.close();
+          state.boardCode='C1';state.caliper=1.5;
+          applyNewDielineModel(model,filename,true,true);dialog.close();
           if(model.hinges.length<model.faces.length-1)document.getElementById('param-sync-status').textContent='DXF abierto · hay paneles sin unión: revisa los hendidos';
         }catch(error){status.textContent=error.message;}
       };

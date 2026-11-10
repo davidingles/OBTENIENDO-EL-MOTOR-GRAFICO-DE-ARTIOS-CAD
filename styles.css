@@ -695,6 +695,7 @@ html, body {
 }
 
 .model-preview-card {
+  position: relative;
   background: var(--bg-input);
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
@@ -702,6 +703,18 @@ html, body {
   cursor: pointer;
   transition: all 0.15s ease;
 }
+
+.favorite-model-button {
+  position:absolute; top:5px; right:5px; z-index:2;
+  display:flex; align-items:center; justify-content:center;
+  width:26px; height:26px; padding:4px;
+  border:0; border-radius:50%; background:rgba(255,255,255,.94);
+  color:#8995a1; cursor:pointer;
+}
+.favorite-model-button svg { width:17px; height:17px; }
+.favorite-model-button[aria-pressed="true"] { color:#b16a7a; }
+.favorite-model-button:hover { color:#9c5264; }
+.favorite-model-button:focus-visible { outline:2px solid #0788c6; outline-offset:1px; }
 
 .model-preview-card:hover {
   border-color: #38bdf8;
@@ -972,6 +985,9 @@ html, body {
 .cad-layer-row select,.cad-scale-row input,.art-field input,.art-field select { max-width:160px; padding:7px; border:1px solid #dce5ee; border-radius:6px; background:#f4f7fa; color:#263548; }
 .cad-import-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
 #cad-import-status { color:#b04435; }
+#library-model-status { color:#b04435; }
+#add-library-dialog input[type="text"] { width:100%; max-width:370px; }
+#add-library-dialog select { padding:7px; border:1px solid #dce5ee; border-radius:6px; background:#f4f7fa; color:#263548; }
 #art-options-dialog { max-height:calc(100vh - 135px); overflow:auto; }
 #art-options-dialog > input[type="range"] { width:100%; accent-color:#0788c6; }
 #art-options-dialog > label:not(.art-field) { display:block; font-size:12px; margin:10px 0; }

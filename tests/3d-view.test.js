@@ -10,7 +10,7 @@ const entry = global.PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(e =>
 
 function app() {
   const source = fs.readFileSync(require.resolve('../app.js'), 'utf8');
-  const context = {THREE, DielineEngine: engine, console, performance, window: {addEventListener() {}}, document: {getElementById() { return null; }}};
+  const context = {THREE, DielineEngine: engine, UserLibrary:require('../library-models'), console, performance, alert() {}, window: {addEventListener() {}}, document: {getElementById() { return null; }}};
   vm.createContext(context);
   vm.runInContext(source.replace(/\}\)\(\);\s*$/, `
     const realBuildBoardMaterials = buildBoardMaterials;
@@ -22,6 +22,9 @@ function app() {
       MATERIAL_FINISHES, resolveMaterialFinish, getDetailGroups, realBuildBoardMaterials,
       get2DTransform, drawMiniDielinePreview, createCatalogPreviewGroup,
       exportGLBForBlender,
+      readFavoriteModels, toggleFavoriteModel, createFavoriteButton,
+      setFavoritesStorage(storage) {window.localStorage=storage;favoriteModelIds=readFavoriteModels(storage);},
+      setCreateElement(factory) {document.createElement=factory;},
       setOverlay(rect) { document.querySelector = () => rect ? {getBoundingClientRect:()=>rect} : null; },
       setup(model) {
         state.dieline = model;
@@ -57,6 +60,36 @@ test('la base marcada en 2D permanece horizontal, inmóvil y apoyada en el suelo
     if (!reference) reference = matrix.slice();
     matrix.forEach((value, i) => assert.ok(Math.abs(value - reference[i]) < 1e-6));
   }
+});
+
+test('los preferidos se conservan al reabrir y pueden desmarcarse',()=>{
+  const values=new Map(),storage={getItem:key=>values.get(key)||null,setItem:(key,value)=>values.set(key,value)};
+  const first=app();first.setFavoritesStorage(storage);
+  assert.equal(first.toggleFavoriteModel(150010),true);
+  const second=app();second.setFavoritesStorage(storage);
+  assert.equal(second.readFavoriteModels(storage).has(150010),true);
+  second.toggleFavoriteModel(150010);
+  assert.equal(first.readFavoriteModels(storage).has(150010),false);
+  assert.equal(first.readFavoriteModels({getItem:()=>'{invalid'}).size,0);
+});
+
+test('el corazón cambia de vacío a macizo sin propagar el clic de selección del troquel',()=>{
+  const ui=app(),values=new Map();ui.setFavoritesStorage({getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)});
+  ui.setCreateElement(()=>({attributes:{},handlers:{},setAttribute(key,value){this.attributes[key]=value;},addEventListener(key,handler){this.handlers[key]=handler;}}));
+  const button=ui.createFavoriteButton(entry);
+  assert.equal(button.attributes['aria-pressed'],'false');
+  assert.match(button.innerHTML,/fill="none"/);
+  let stopped=false,prevented=false;
+  button.handlers.click({preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});
+  assert.ok(stopped&&prevented);
+  assert.equal(button.attributes['aria-pressed'],'true');
+  assert.match(button.innerHTML,/fill="currentColor"/);
+});
+
+test('si falla el guardado de preferidos, la selección no se muestra como guardada',()=>{
+  const ui=app(),storage={getItem:()=>null,setItem(){throw new Error('Cuota');}};
+  ui.setFavoritesStorage(storage);
+  assert.equal(ui.toggleFavoriteModel(150010),false);
 });
 
 

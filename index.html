@@ -50,6 +50,7 @@
         <span>Abrir SVG / DXF</span>
       </label>
       <input type="file" id="svg-file-input" accept=".svg,.dxf" class="hidden-input" />
+      <button id="btn-add-library" type="button" class="btn-outline hidden">Añadir a biblioteca</button>
 
       <label for="artwork-file-input" class="btn-outline" title="Cargar textura o diseño exterior">
         <span>🎨 Arte</span>
@@ -155,6 +156,8 @@
         <!-- Categorías en scroll horizontal de chips -->
         <div id="dielines-categories-bar" class="categories-chip-bar">
           <button class="cat-chip active" data-cat-slug="ALL">Todos</button>
+          <button class="cat-chip" data-cat-slug="FAVORITES">Preferidos</button>
+          <button class="cat-chip" data-cat-slug="user-models">Mis modelos</button>
           <button class="cat-chip" data-cat-slug="fefco-box-templates">Cajas FEFCO</button>
           <button class="cat-chip" data-cat-slug="folding-box-dielines">Estuches plegables</button>
           <button class="cat-chip" data-cat-slug="tray-box-dielines">Bandejas</button>
@@ -216,18 +219,6 @@
           </div>
         </div>
 
-        <!-- Custom thickness con botones - [value] + -->
-        <div class="drawer-group">
-          <div class="section-title-wrap">
-            <span class="field-label-bold">Espesor personalizado</span>
-            <span id="label-thickness-range" class="thickness-range-text">(0.4-15mm)</span>
-          </div>
-          <div class="stepper-wrap">
-            <button id="btn-thickness-minus" class="stepper-btn" title="Disminuir espesor">-</button>
-            <input type="number" id="input-thickness" class="stepper-input" min="0.4" max="15.0" step="0.1" value="3" />
-            <button id="btn-thickness-plus" class="stepper-btn" title="Aumentar espesor">+</button>
-          </div>
-        </div>
 
       </div>
 
@@ -610,6 +601,7 @@
   <script src="dieline-engine.js"></script>
   <script src="cad-io.js"></script>
   <script src="artwork-layout.js"></script>
+  <script src="library-models.js"></script>
   <script src="app.js"></script>
   <dialog id="part-options-dialog" class="part-options-dialog" aria-labelledby="part-options-title">
     <div class="part-options-head">
@@ -644,6 +636,14 @@
     <button id="art-drag" class="btn-outline" aria-pressed="false">Mover imagen sobre el plano</button>
     <p class="part-options-status">Los cambios se ven en 2D y 3D. La imagen solo se aplica al exterior.</p>
     <button id="art-options-done" class="btn-primary-blue">Listo</button>
+  </dialog>
+  <dialog id="add-library-dialog" class="cad-import-dialog" aria-labelledby="add-library-title">
+    <h3 id="add-library-title">Añadir modelo a la biblioteca</h3>
+    <label class="cad-scale-row">Nombre <input id="library-model-name" type="text" maxlength="100" autocomplete="off" /></label>
+    <label class="cad-scale-row">Cartón <select id="library-model-board"><option value="C1">C1 · 1,5 mm</option><option value="C3">C3 · 3 mm</option><option value="C5">C5 · 4,5 mm</option><option value="C8">C8 · 7 mm</option></select></label>
+    <p>Se guarda el troquel con su geometría actual. Elegir el cartón no modifica sus retranqueos ni tolerancias.</p>
+    <p id="library-model-status" role="status"></p>
+    <div class="cad-import-actions"><button id="library-model-cancel" class="btn-outline">Cancelar</button><button id="library-model-save" class="btn-primary-blue">Añadir a biblioteca</button></div>
   </dialog>
 </body>
 </html>
