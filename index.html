@@ -447,6 +447,35 @@
         </div>
       </div>
 
+      <div class="vector-editor" id="vector-editor">
+        <button id="vector-toggle" type="button" aria-expanded="false">Editar vectores</button>
+        <div id="vector-controls" hidden>
+          <div class="vector-panel-heading">Herramientas 2D <button id="vector-close" type="button" aria-label="Cerrar editor">×</button></div>
+          <div class="vector-tools" role="group" aria-label="Herramientas de vectores">
+            <button id="vector-tool-select" type="button" class="active">↖ Seleccionar</button>
+            <button id="vector-tool-erase" type="button">⌫ Borrador</button>
+            <button id="vector-tool-line" type="button">╱ Línea</button>
+            <button id="vector-tool-circle" type="button">◯ Círculo</button>
+            <button id="vector-tool-extend" type="button">↗ Extender</button>
+            <button id="vector-tool-trim" type="button">↙ Contraer</button>
+            <button id="vector-tool-chamfer" type="button">⌁ Chaflán</button>
+            <button id="vector-tool-fillet" type="button">◜ Radio</button>
+          </div>
+          <label>Tipo de trazo <select id="vector-kind"><option value="cut">Azul · Corte</option><option value="fold">Rojo · Hendido</option></select></label>
+          <div id="vector-color-controls" hidden><button id="vector-apply-kind" type="button">Aplicar tipo a la selección</button></div>
+          <label id="vector-value-label">Radio / chaflán (mm) <input id="vector-value" type="number" min="0.1" step="0.1" value="5"></label>
+          <p id="vector-help">Selecciona un trazo o el interior de un agujero. Mayús para desplazar. Esc cancela.</p>
+          <div id="vector-selection">Sin selección</div>
+          <div id="vector-hole-controls" hidden>
+            <label>Ancho (mm) <input id="vector-hole-width" type="number" min="0.1" step="0.1"></label>
+            <label>Alto (mm) <input id="vector-hole-height" type="number" min="0.1" step="0.1"></label>
+            <button id="vector-apply-hole" type="button">Cambiar tamaño del agujero</button>
+          </div>
+          <div class="vector-history"><button id="vector-undo" type="button">↶ Deshacer</button><button id="vector-redo" type="button">↷ Rehacer</button></div>
+          <button id="vector-save" class="vector-save" type="button">Guardar en biblioteca</button>
+          <p id="vector-status" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
+        </div>
+      </div>
       <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
       <canvas id="canvas-2d"></canvas>
 
@@ -602,6 +631,7 @@
   <script src="cad-io.js"></script>
   <script src="artwork-layout.js"></script>
   <script src="library-models.js"></script>
+  <script src="vector-cad.js"></script>
   <script src="app.js"></script>
   <dialog id="part-options-dialog" class="part-options-dialog" aria-labelledby="part-options-title">
     <div class="part-options-head">

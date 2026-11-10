@@ -117,6 +117,27 @@ async fn add_library_model(app: tauri::AppHandle, model: Value) -> Result<(), St
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn update_library_model(app: tauri::AppHandle, model: Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let id = validate_library_model(&model)?;
+        let bytes = serde_json::to_vec(&model).map_err(|e| e.to_string())?;
+        if bytes.len() > 8_000_000 { return Err("El modelo supera el límite de 8 MB".into()); }
+        let directory = app.path().app_data_dir().map_err(|e| e.to_string())?.join("library");
+        let destination = directory.join(format!("{}.json", id));
+        if !destination.is_file() { return Err("No existe el modelo en la biblioteca".into()); }
+        // Keep a recoverable copy until the replacement has been written successfully.
+        let backup = directory.join(format!("{}.backup", id));
+        std::fs::copy(&destination, &backup).map_err(|e| e.to_string())?;
+        if let Err(e) = std::fs::write(&destination, &bytes) {
+            let _ = std::fs::copy(&backup, &destination);
+            return Err(e.to_string());
+        }
+        let _ = std::fs::remove_file(backup);
+        Ok(())
+    }).await.map_err(|e| e.to_string())?
+}
+
 fn store_library_model(directory: &std::path::Path, model: &Value) -> Result<(), String> {
     let id = validate_library_model(&model)?;
     let bytes = serde_json::to_vec(&model).map_err(|e| e.to_string())?;
@@ -207,7 +228,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             save_export,
             load_library_models,
-            add_library_model
+            add_library_model,
+            update_library_model
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Troqueles Vicente");

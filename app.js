@@ -370,6 +370,9 @@
   }
 
   function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false) {
+    model = DielineEngine.enforceFlapLengthLimit(VectorCAD.normalize(model));
+    vectorSelection = null; vectorDraft=null; vectorRedo=[];
+    vectorHistory = [];
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
@@ -1325,6 +1328,7 @@
   }
 
   function exportGLBForBlender() {
+    if(state.dieline?.vector3DStale){alert('Cierra los contornos del plano antes de exportar el modelo 3D.');return;}
     if (!dielineRootGroup || !THREE.GLTFExporter) {
       alert('El exportador GLTF/GLB no está disponible.');
       return;
@@ -1393,12 +1397,11 @@
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.12 : 0.89;
-      state.view2D.zoom = Math.max(0.25, Math.min(12, state.view2D.zoom * factor));
-      render2FDieline();
+      zoom2D(e.deltaY < 0 ? 1.12 : 1/1.12, e);
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (vectorEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) { vectorCanvasClick(e); return; }
       if (state.artwork && state.artworkEditing && e.button === 0 && !e.shiftKey) {
         const tf = get2DTransform(canvas, state.dieline.bounds), rect = canvas.getBoundingClientRect();
         const ratio = canvas.width/rect.width;
@@ -1432,6 +1435,11 @@
         return;
       }
 
+      if (vectorEditing && state.toolMode !== 'pan') {
+        const rect=canvas.getBoundingClientRect();
+        if(e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom) { vectorPointer=vectorWorldPoint(e,canvas,true); canvas.style.cursor=vectorTool==='select'?'default':'crosshair'; render2FDieline(); }
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       if (
         e.clientX >= rect.left && e.clientX <= rect.right &&
@@ -1469,7 +1477,8 @@
     // Measure the actual overlay, including the user's resized 3D panel.
     const right = panelRect && panelRect.width > 0 && panelRect.left > rect.left && panelRect.left < rect.right && panelRect.top < rect.bottom && panelRect.bottom > rect.top
       ? (panelRect.left - rect.left - 16) * pixelScale : canvas.width;
-    const availW = Math.max(1, right);
+    const left = vectorEditing ? Math.min(272 * pixelScale, right * 0.45) : 0;
+    const availW = Math.max(1, right - left);
     const availH = Math.max(1, canvas.height);
     const baseScale = 0.75 * Math.min(availW / Math.max(1, bounds.width), availH / Math.max(1, bounds.height));
     const scale = baseScale * state.view2D.zoom;
@@ -1477,11 +1486,11 @@
     const cx = bounds.minX + bounds.width / 2;
     const cy = bounds.minY + bounds.height / 2;
 
-    const offsetX = availW / 2 - cx * scale + state.view2D.panX;
-    const offsetY = availH / 2 - cy * scale + state.view2D.panY;
+    const offsetX = left + availW / 2 - cx * scale + state.view2D.panX * pixelScale;
+    const offsetY = availH / 2 - cy * scale + state.view2D.panY * pixelScale;
 
     return {
-      scale,
+      scale, centerX: left + availW / 2, centerY: availH / 2,
       toScreenX: (x) => x * scale + offsetX,
       toScreenY: (y) => y * scale + offsetY,
       toWorldX: (sx) => (sx - offsetX) / scale,
@@ -1612,27 +1621,24 @@
 
     drawArtwork2D(ctx, tf, model);
 
-    // 3. Dibujar líneas de CORTE (AZUL #009ee3)
-    ctx.strokeStyle = '#009ee3';
-    ctx.lineWidth = dpr;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    for (const seg of model.cutSegments) {
-      ctx.moveTo(tf.toScreenX(seg.x1), tf.toScreenY(seg.y1));
-      ctx.lineTo(tf.toScreenX(seg.x2), tf.toScreenY(seg.y2));
+    // Individual cut colors are retained for export and library saves.
+    ctx.lineWidth = dpr; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const [index, seg] of model.cutSegments.entries()) {
+      ctx.strokeStyle = vectorEditing && vectorSelection?.type === 'line' && vectorSelection.kind !== 'fold' && vectorSelection.index === index ? '#00567e' : '#009ee3';
+      ctx.beginPath(); ctx.moveTo(tf.toScreenX(seg.x1), tf.toScreenY(seg.y1)); ctx.lineTo(tf.toScreenX(seg.x2), tf.toScreenY(seg.y2)); ctx.stroke();
     }
-    ctx.stroke();
+    if (vectorEditing && vectorSelection?.type === 'hole') {
+      const hole = model.faces[vectorSelection.face]?.holes?.[vectorSelection.index];
+      if (hole) { ctx.beginPath(); hole.forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y))); ctx.closePath(); ctx.strokeStyle='#00567e'; ctx.lineWidth=3*dpr; ctx.stroke(); }
+    }
 
-    // 4. Dibujar líneas de DOBLEZ / HENDIDO (ROJO/MAGENTA #e5007d)
-    ctx.strokeStyle = '#e5007d';
-    ctx.lineWidth = dpr;
-    ctx.beginPath();
-    for (const h of model.hinges) {
-      ctx.moveTo(tf.toScreenX(h.p1.x), tf.toScreenY(h.p1.y));
-      ctx.lineTo(tf.toScreenX(h.p2.x), tf.toScreenY(h.p2.y));
+    // Fold segments are the editable source of truth, including loose crease strokes.
+    ctx.lineWidth=dpr;
+    for(const [index,seg] of model.foldSegments.entries()) {
+      ctx.strokeStyle=vectorEditing&&vectorSelection?.type==='line'&&vectorSelection.kind==='fold'&&vectorSelection.index===index?'#99002e':'#e5007d';
+      ctx.beginPath();ctx.moveTo(tf.toScreenX(seg.x1),tf.toScreenY(seg.y1));ctx.lineTo(tf.toScreenX(seg.x2),tf.toScreenY(seg.y2));ctx.stroke();
     }
-    ctx.stroke();
+    drawVectorDraft(ctx,tf,dpr);
 
     // 5. Dibujar Flechas y Cotas (L, W, H) en Azul estilo Pacdora (Screenshot 1 & 2)
     if (state.showDimensions && state.view2D.showCota) {
@@ -2128,12 +2134,10 @@
       });
     }
     if (toolZoomIn) toolZoomIn.addEventListener('click', () => {
-      state.view2D.zoom = Math.min(8, state.view2D.zoom * 1.25);
-      render2FDieline();
+      zoom2D(1.25);
     });
     if (toolZoomOut) toolZoomOut.addEventListener('click', () => {
-      state.view2D.zoom = Math.max(0.15, state.view2D.zoom / 1.25);
-      render2FDieline();
+      zoom2D(1/1.25);
     });
     if (toolFit) toolFit.addEventListener('click', reset2DView);
 
@@ -2258,6 +2262,7 @@
 
     document.getElementById('btn-art-settings')?.addEventListener('click', openArtworkOptions);
     initUserLibraryUI();
+    initVectorEditor();
     document.getElementById('btn-set-base')?.addEventListener('click',async()=>{
       try{
         const artwork=state.artwork?{...state.artwork}:null;
@@ -2545,6 +2550,164 @@
     if (text.includes('lid') || text.includes('flip top')) return 'Caja con tapa';
     if (text.includes('box')) return 'Caja';
     return 'Troquel';
+  }
+
+  // Edits are applied to a private model snapshot until explicitly saved.
+  let vectorEditing=false, vectorSelection=null, vectorHistory=[], vectorRedo=[];
+  let vectorTool='select', vectorDraft=null, vectorPointer=null;
+  const vectorClone = value => JSON.parse(JSON.stringify(value));
+  function vectorInside(p, poly) {
+    let inside=false;
+    for(let i=0,j=poly.length-1;i<poly.length;j=i++) { const a=poly[i],b=poly[j]; if ((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) inside=!inside; }
+    return inside;
+  }
+  function vectorBounds(poly) {
+    const xs=poly.map(p=>p.x),ys=poly.map(p=>p.y);
+    return {minX:Math.min(...xs),maxX:Math.max(...xs),minY:Math.min(...ys),maxY:Math.max(...ys)};
+  }
+  function vectorEdgesCross(a, b) {
+    const cross=(p,q,r)=>(q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x);
+    for(let i=0;i<a.length;i++) for(let j=0;j<b.length;j++) {
+      const p=a[i],q=a[(i+1)%a.length],r=b[j],s=b[(j+1)%b.length];
+      if(cross(p,q,r)*cross(p,q,s)<=0 && cross(r,s,p)*cross(r,s,q)<=0 &&
+         Math.max(Math.min(p.x,q.x),Math.min(r.x,s.x))<=Math.min(Math.max(p.x,q.x),Math.max(r.x,s.x)) &&
+         Math.max(Math.min(p.y,q.y),Math.min(r.y,s.y))<=Math.min(Math.max(p.y,q.y),Math.max(r.y,s.y))) return true;
+    }
+    return false;
+  }
+
+  function vectorMessage(message) { document.getElementById('vector-status').textContent=message; }
+  function vectorLine() { return vectorSelection?.type==='line' ? VectorCAD.get(state.dieline,vectorSelection) : null; }
+  function vectorRefreshControls() {
+    const sel=vectorSelection,model=state.dieline,hole=sel?.type==='hole'?model?.faces[sel.face]?.holes?.[sel.index]:null;
+    const line=vectorLine();
+    document.getElementById('vector-color-controls').hidden=!line;
+    document.getElementById('vector-hole-controls').hidden=!hole;
+    document.getElementById('vector-selection').textContent=hole?'Agujero seleccionado':line?(sel.kind==='fold'?'Hendido seleccionado':'Corte seleccionado'):'Sin selección';
+    if(hole) {const b=vectorBounds(hole);document.getElementById('vector-hole-width').value=(b.maxX-b.minX).toFixed(2);document.getElementById('vector-hole-height').value=(b.maxY-b.minY).toFixed(2);}
+    if(line&&vectorTool==='select')document.getElementById('vector-kind').value=sel.kind||'cut';
+    document.getElementById('vector-undo').disabled=!vectorHistory.length;
+    document.getElementById('vector-redo').disabled=!vectorRedo.length;
+    render2FDieline();
+  }
+  function vectorWorldPoint(e,canvas,snapping=false) {
+    const rect=canvas.getBoundingClientRect(),ratio=canvas.width/rect.width,tf=get2DTransform(canvas,state.dieline.bounds);
+    const p={x:tf.toWorldX((e.clientX-rect.left)*ratio),y:tf.toWorldY((e.clientY-rect.top)*ratio)};
+    return snapping?VectorCAD.snap(state.dieline,p,8*ratio/tf.scale):p;
+  }
+  function zoom2D(factor,event) {
+    if(!state.dieline)return;
+    const canvas=document.getElementById('canvas-2d'),rect=canvas.getBoundingClientRect(),ratio=canvas.width/rect.width;
+    const before=get2DTransform(canvas,state.dieline.bounds),line=vectorLine();
+    let focus,selected=false;
+    if(line){focus={x:(line.x1+line.x2)/2,y:(line.y1+line.y2)/2};selected=true;}
+    else if(vectorSelection?.type==='hole') {const hole=state.dieline.faces[vectorSelection.face]?.holes?.[vectorSelection.index];if(hole){const b=vectorBounds(hole);focus={x:(b.minX+b.maxX)/2,y:(b.minY+b.maxY)/2};selected=true;}}
+    else if(!vectorEditing&&state.selectedFaceId!==null) {const face=state.dieline.faces.find(f=>f.id===state.selectedFaceId);if(face){focus=face.centroid||{x:(face.bounds.minX+face.bounds.maxX)/2,y:(face.bounds.minY+face.bounds.maxY)/2};selected=true;}}
+    if(!focus)focus=event?vectorWorldPoint(event,canvas):{x:before.toWorldX(before.centerX),y:before.toWorldY(before.centerY)};
+    const screen={x:selected?before.centerX:before.toScreenX(focus.x),y:selected?before.centerY:before.toScreenY(focus.y)};
+    state.view2D.zoom=Math.max(0.15,Math.min(24,state.view2D.zoom*factor));
+    const after=get2DTransform(canvas,state.dieline.bounds);
+    state.view2D.panX+=(screen.x-after.toScreenX(focus.x))/ratio;
+    state.view2D.panY+=(screen.y-after.toScreenY(focus.y))/ratio;
+    render2FDieline();
+  }
+  function setVectorTool(tool) {
+    vectorTool=tool;vectorDraft=null;vectorPointer=null;state.toolMode='select';
+    const help={select:'Selecciona un trazo o el interior de un agujero.',erase:'Pulsa un trazo para borrarlo. Los círculos nuevos se borran completos.',line:'Pulsa el inicio y después el final de la línea. Se ajusta a los extremos cercanos.',circle:'Pulsa el centro y después un punto del perímetro. El radio se muestra en mm.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
+    for(const key of Object.keys(help))document.getElementById('vector-tool-'+key).classList.toggle('active',tool===key);
+    document.getElementById('vector-help').textContent=help[tool]+' Mayús: desplazar · Esc: cancelar.';
+    document.getElementById('vector-value-label').hidden=!['chamfer','fillet'].includes(tool);
+    vectorRefreshControls();
+  }
+  function vectorCanvasClick(e) {
+    if(!state.dieline)return;
+    const canvas=e.currentTarget,p=vectorWorldPoint(e,canvas,true),raw=vectorWorldPoint(e,canvas);
+    const rect=canvas.getBoundingClientRect(),tf=get2DTransform(canvas,state.dieline.bounds),hit=VectorCAD.hit(state.dieline,raw,8*canvas.width/rect.width/tf.scale);
+    const kind=document.getElementById('vector-kind').value==='fold'?'fold':'cut';
+    try {
+      if(vectorTool==='line'||vectorTool==='circle') {
+        if(!vectorDraft){vectorDraft={point:p};vectorPointer=p;vectorMessage(vectorTool==='line'?'Pulsa el final de la línea.':'Pulsa el perímetro del círculo.');render2FDieline();return;}
+        const model=vectorTool==='line'?VectorCAD.addLine(state.dieline,vectorDraft.point,p,kind):VectorCAD.circle(state.dieline,vectorDraft.point,Math.hypot(p.x-vectorDraft.point.x,p.y-vectorDraft.point.y),kind);
+        vectorDraft=null;vectorSelection=null;commitVectorEdit(model);return;
+      }
+      if(vectorTool==='select') {
+        vectorSelection=hit;
+        if(!hit)for(let f=0;f<state.dieline.faces.length;f++)for(let i=0;i<(state.dieline.faces[f].holes||[]).length;i++)if(vectorInside(raw,state.dieline.faces[f].holes[i]))vectorSelection={type:'hole',face:f,index:i};
+        vectorRefreshControls();return;
+      }
+      if(!hit){vectorMessage('Pulsa sobre una línea de corte o de hendido.');return;}
+      vectorSelection=hit;
+      if(vectorTool==='erase'){vectorSelection=null;commitVectorEdit(VectorCAD.erase(state.dieline,hit));}
+      else if(vectorTool==='extend'||vectorTool==='trim'){vectorSelection=null;commitVectorEdit(VectorCAD.collide(state.dieline,hit,raw,vectorTool==='extend'));}
+      else {
+        if(!vectorDraft){vectorDraft={ref:hit};vectorMessage('Primera línea seleccionada. Pulsa la segunda línea de la esquina.');vectorRefreshControls();return;}
+        const model=VectorCAD.corner(state.dieline,vectorDraft.ref,hit,Number(document.getElementById('vector-value').value),vectorTool==='fillet');
+        vectorDraft=null;vectorSelection=null;commitVectorEdit(model);
+      }
+    }catch(error){vectorMessage(error.message||String(error));}
+  }
+  function drawVectorDraft(ctx,tf,dpr) {
+    if(!vectorEditing||!vectorDraft?.point||!vectorPointer)return;
+    const p=vectorDraft.point,q=vectorPointer;
+    ctx.save();ctx.strokeStyle=document.getElementById('vector-kind').value==='fold'?'#e5007d':'#009ee3';ctx.lineWidth=1.5*dpr;ctx.setLineDash([5*dpr,4*dpr]);ctx.beginPath();
+    if(vectorTool==='circle')ctx.arc(tf.toScreenX(p.x),tf.toScreenY(p.y),Math.hypot(q.x-p.x,q.y-p.y)*tf.scale,0,2*Math.PI);
+    else {ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y));ctx.lineTo(tf.toScreenX(q.x),tf.toScreenY(q.y));}
+    ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=ctx.strokeStyle;ctx.font=12*dpr+'px sans-serif';
+    ctx.fillText((vectorTool==='circle'?'R ':'')+Math.hypot(q.x-p.x,q.y-p.y).toFixed(2)+' mm',tf.toScreenX(q.x)+8*dpr,tf.toScreenY(q.y)-8*dpr);ctx.restore();
+  }
+  function displayVectorModel(model) {
+    state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};
+    state.selectedFaceId=model.rootFaceId;state.hoveredFaceId=null;
+    state.hingeAngles=Object.fromEntries(model.hinges.map(h=>[h.id,0]));
+    rebuild3DMesh();setMasterFold(state.masterFold);buildHingeSlidersUI(model);vectorRefreshControls();
+  }
+  function commitVectorEdit(model) {
+    model=VectorCAD.rebuild(model,DielineEngine);
+    vectorHistory.push(vectorClone(state.dieline));if(vectorHistory.length>30)vectorHistory.shift();vectorRedo=[];
+    displayVectorModel(model);
+    vectorMessage(model.vectorWarning||'Cambio aplicado. Exporta o guarda en la biblioteca.');
+  }
+  function initVectorEditor() {
+    const controls=document.getElementById('vector-controls');
+    const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
+    document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
+    document.getElementById('vector-close').onclick=()=>toggle(false);
+    for(const tool of ['select','erase','line','circle','extend','trim','chamfer','fillet'])document.getElementById('vector-tool-'+tool).onclick=()=>setVectorTool(tool);
+    window.addEventListener('keydown',e=>{if(e.key==='Escape'&&vectorEditing){vectorDraft=null;vectorSelection=null;vectorMessage('Operación cancelada.');vectorRefreshControls();}});
+    document.getElementById('vector-apply-kind').onclick=()=>{if(!vectorLine())return;try {const model=VectorCAD.classify(state.dieline,vectorSelection,document.getElementById('vector-kind').value==='fold'?'fold':'cut');vectorSelection=null;commitVectorEdit(model);}catch(error){vectorMessage(error.message);}};
+    document.getElementById('vector-apply-hole').onclick=()=>{
+      if(vectorSelection?.type!=='hole')return;
+      const model=vectorClone(state.dieline),face=model.faces[vectorSelection.face],old=face.holes[vectorSelection.index],b=vectorBounds(old);
+      const w=Number(document.getElementById('vector-hole-width').value),h=Number(document.getElementById('vector-hole-height').value),ow=b.maxX-b.minX,oh=b.maxY-b.minY;
+      if(!(w>0&&h>0&&ow>0&&oh>0&&Number.isFinite(w)&&Number.isFinite(h))){alert('Indica medidas positivas y válidas.');return;}
+      const cx=(b.minX+b.maxX)/2,cy=(b.minY+b.maxY)/2;
+      const next=old.map(p=>({...p,x:cx+(p.x-cx)*w/ow,y:cy+(p.y-cy)*h/oh}));
+      if(!next.every(p=>vectorInside(p,face.polygon)) || vectorEdgesCross(next,face.polygon) ||
+        face.holes.some((hole,i)=>i!==vectorSelection.index && (vectorEdgesCross(next,hole) || vectorInside(next[0],hole) || vectorInside(hole[0],next)))) {
+        alert('El agujero debe quedar dentro del panel y no cruzar otros agujeros.');return;
+      }
+      const same=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y)<0.01;
+      const matches=[];
+      for(let i=0;i<old.length;i++){const j=(i+1)%old.length;const k=model.cutSegments.findIndex(s=>(same({x:s.x1,y:s.y1},old[i])&&same({x:s.x2,y:s.y2},old[j]))||(same({x:s.x2,y:s.y2},old[i])&&same({x:s.x1,y:s.y1},old[j])));if(k<0){alert('Este agujero no tiene un contorno de corte editable de forma segura.');return;}matches.push(k);}
+      if(new Set(matches).size!==old.length){alert('No se puede modificar este contorno de forma segura.');return;}
+      matches.forEach((k,i)=>{const j=(i+1)%old.length,s=model.cutSegments[k]; if(same({x:s.x1,y:s.y1},old[i])) Object.assign(s,{x1:next[i].x,y1:next[i].y,x2:next[j].x,y2:next[j].y}); else Object.assign(s,{x1:next[j].x,y1:next[j].y,x2:next[i].x,y2:next[i].y});});
+      face.holes[vectorSelection.index]=next;commitVectorEdit(model);
+    };
+    document.getElementById('vector-undo').onclick=()=>{if(!vectorHistory.length)return;vectorRedo.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorHistory.pop());vectorMessage('Cambio deshecho.');};
+    document.getElementById('vector-redo').onclick=()=>{if(!vectorRedo.length)return;vectorHistory.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorRedo.pop());vectorMessage('Cambio rehecho.');};
+    document.getElementById('vector-save').onclick=async()=>{
+      const button=document.getElementById('vector-save');button.disabled=true;
+      try { await userLibraryReady;
+        const current=state.activeFefcoEntry?.userModel?state.activeFefcoEntry:null;
+        const item=current ? {...current,geometry:vectorClone(state.dieline),length:state.dieline.boxDimensionsMm?.length,width:state.dieline.boxDimensionsMm?.width,height:state.dieline.boxDimensionsMm?.depth,updatedAt:new Date().toISOString()} : UserLibrary.create(state.fileName.slice(0,100),state.boardCode,state.dieline,state.fileName);
+        UserLibrary.validate(item);
+        if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke(current?'update_library_model':'add_library_model',{model:item});
+        else {const list=current?userLibraryModels.map(m=>m.num===item.num?item:m):[item,...userLibraryModels];window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify(list));}
+        userLibraryModels=current?userLibraryModels.map(m=>m.num===item.num?item:m):[item,...userLibraryModels];state.activeFefcoEntry=item;state.canAddToLibrary=false;document.getElementById('btn-add-library')?.classList.add('hidden');
+        document.getElementById('vector-status').textContent=current?'Modelo de tu biblioteca actualizado.':'Copia guardada en Mis modelos de la biblioteca.';
+        if(state.activeTab==='dielines')renderDrawerCatalogList();
+      }catch(error){document.getElementById('vector-status').textContent='No se pudo guardar: '+(error.message||error);}finally{button.disabled=false;}
+    };
   }
 
   const USER_LIBRARY_KEY='troqueles-vicente-user-library-v1';

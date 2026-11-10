@@ -1836,7 +1836,7 @@
     const targetH = Math.max(10, Number(newH) || origH);
 
     if (!bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
-      return baseModel;
+      return enforceFlapLengthLimit(baseModel);
     }
 
     const xIntervals = [];
@@ -2020,7 +2020,7 @@
     const blankW = Math.max(1, maxX - minX);
     const blankH = Math.max(1, maxY - minY);
 
-    return {
+    return enforceFlapLengthLimit({
       ...baseModel,
       blankWidthMm: blankW,
       blankHeightMm: blankH,
@@ -2050,7 +2050,76 @@
       bleedSegments: newBleedSegments,
       faces: newFaces,
       hinges: newHinges
+    });
+  }
+
+  // These four end flaps must fit across half the width of the main H panel.
+  // Work on the finished geometry, including Details edits, and keep each
+  // attachment edge fixed. No change to the caller's parametric source model.
+  function enforceFlapLengthLimit(model) {
+    if (!model) return model;
+    const code = f => f.pacdoraName || f.shortName;
+    const base = model.faces.find(f => code(f) === 'H');
+    const limit = base?.bounds?.height / 2;
+    if (!(limit > 0)) return model;
+    const names = new Set(['FBL', 'FBR', 'HBL', 'HBR']);
+    const edits = model.faces.filter(f => names.has(code(f)) && f.bounds.width > limit + 1e-8).map(face => {
+      const b = face.bounds;
+      const anchor = code(face).endsWith('L') ? b.maxX : b.minX;
+      return {face, anchor, scale: limit / b.width};
+    });
+    if (!edits.length) return model;
+    const mapInFace = (p, edit) => ({...p, x: edit.anchor + (p.x - edit.anchor) * edit.scale});
+    const belongs = (p, face) => {
+      const b = face.bounds, eps = 1e-6;
+      if (p.x < b.minX-eps || p.x > b.maxX+eps || p.y < b.minY-eps || p.y > b.maxY+eps) return false;
+      if (pointInPolygon(p, face.polygon)) return true;
+      return face.polygon.some((a,i) => {
+        const q = face.polygon[(i+1)%face.polygon.length], dx=q.x-a.x, dy=q.y-a.y;
+        const t=Math.max(0,Math.min(1,((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy||1)));
+        return Math.hypot(p.x-a.x-t*dx,p.y-a.y-t*dy)<eps;
+      });
     };
+    const mapPoint = p => {
+      const edit = edits.find(e => belongs(p,e.face));
+      return edit ? mapInFace(p,edit) : {...p};
+    };
+    const area = poly => Math.abs(poly.reduce((s,p,i) => {const q=poly[(i+1)%poly.length];return s+p.x*q.y-q.x*p.y;},0)/2);
+    const faces = model.faces.map(face => {
+      const edit = edits.find(e => e.face.id === face.id);
+      if (!edit) return face;
+      const polygon = face.polygon.map(p => mapInFace(p,edit));
+      const holes = (face.holes || []).map(h => h.map(p => mapInFace(p,edit)));
+      const xs=polygon.map(p=>p.x),ys=polygon.map(p=>p.y);
+      const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+      const bounds={minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY};
+      const areaMm2=area(polygon)-holes.reduce((s,h)=>s+area(h),0);
+      return {...face,polygon,points:polygon,holes,bounds,bbox:{...bounds},areaMm2,area:areaMm2,
+        centroid:face.centroid ? mapInFace(face.centroid,edit) : face.centroid};
+    });
+    const segments = list => (list || []).map(s => {
+      const a=mapPoint({x:s.x1,y:s.y1}),b=mapPoint({x:s.x2,y:s.y2});
+      return {...s,x1:a.x,y1:a.y,x2:b.x,y2:b.y};
+    });
+    const cutSegments=segments(model.cutSegments),foldSegments=segments(model.foldSegments);
+    const hinges=(model.hinges || []).map(h => {
+      const p1=mapPoint(h.p1),p2=mapPoint(h.p2),length=Math.hypot(p2.x-p1.x,p2.y-p1.y);
+      return {...h,p1,p2,midpoint:{x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2},length,lengthMm:length};
+    });
+    const arrows = list => (list || []).map(a => {
+      const p1=a.p1 ? mapPoint(a.p1) : a.p1,p2=a.p2 ? mapPoint(a.p2) : a.p2;
+      const moved=p1 && p2 && (p1.x!==a.p1.x || p2.x!==a.p2.x);
+      return {...a,p1,p2,tpointer:a.tpointer ? mapPoint(a.tpointer) : a.tpointer,
+        lineLength:moved ? Math.hypot(p2.x-p1.x,p2.y-p1.y) : a.lineLength};
+    });
+    const minX=Math.min(...faces.map(f=>f.bounds.minX)),maxX=Math.max(...faces.map(f=>f.bounds.maxX));
+    const minY=Math.min(...faces.map(f=>f.bounds.minY)),maxY=Math.max(...faces.map(f=>f.bounds.maxY));
+    const length=s=>Math.hypot(s.x2-s.x1,s.y2-s.y1);
+    return {...model,faces,hinges,cutSegments,foldSegments,cutSegmentsMm:cutSegments,foldSegmentsMm:foldSegments,
+      bleedSegments:[],bleedSegmentsMm:[],sizeArrowData:arrows(model.sizeArrowData),outsideArrowData:arrows(model.outsideArrowData),
+      bounds:{minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY},blankWidthMm:maxX-minX,blankHeightMm:maxY-minY,
+      totalAreaMm2:faces.reduce((s,f)=>s+area(f.polygon)-(f.holes||[]).reduce((n,h)=>n+area(h),0),0),
+      totalCutLengthMm:cutSegments.reduce((s,e)=>s+length(e),0),totalFoldLengthMm:foldSegments.reduce((s,e)=>s+length(e),0)};
   }
 
   /**
@@ -2640,7 +2709,7 @@
     pushPair(0, 'SECTION');
     pushPair(2, 'ENTITIES');
 
-    const addLine = (layer, x1, y1, x2, y2) => {
+    const addLine = (layer, x1, y1, x2, y2, color) => {
       pushPair(0, 'LINE');
       pushPair(8, layer);
       pushPair(10, (x1 + ox).toFixed(4));
@@ -2656,7 +2725,7 @@
       addLine('BLEED', s.x1, s.y1, s.x2, s.y2);
     }
     for (const s of (model.cutSegments || [])) {
-      addLine('CUT', s.x1, s.y1, s.x2, s.y2);
+      addLine('CUT', s.x1, s.y1, s.x2, s.y2, s.color);
     }
     const foldList = (model.foldSegments && model.foldSegments.length > 0)
       ? model.foldSegments
@@ -2820,6 +2889,7 @@
     buildDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,
+    enforceFlapLengthLimit,
     applyPartVariationToModel,
     getPartVariationSettings,
     findPrimaryLidFlapFace,
