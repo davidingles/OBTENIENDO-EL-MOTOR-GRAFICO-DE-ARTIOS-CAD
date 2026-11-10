@@ -10,6 +10,26 @@
 (function () {
   'use strict';
 
+  const kraftBoard = DielineEngine.ARTIOS_BOARDS.find(b => b.id === 'M-125B');
+  const MATERIAL_FINISHES = [
+    {...kraftBoard, id: 'WHITE-WHITE', name: 'Blanco por fuera y por dentro', surfaceTex: 'WhiteBoard3.JPG', innerTex: 'WhiteBoard3.JPG', colorHex: 0xffffff, innerColorHex: 0xffffff},
+    {...kraftBoard, id: 'W-175B', name: 'Blanco por fuera y marrón por dentro', surfaceTex: 'WhiteBoard3.JPG', colorHex: 0xffffff, innerColorHex: 0xcfa778},
+    {...kraftBoard, name: 'Marrón por fuera y por dentro', innerColorHex: 0xcfa778}
+  ];
+
+  function resolveMaterialFinish(id) {
+    const finish = MATERIAL_FINISHES.find(b => b.id === id);
+    if (finish) return finish;
+    const old = DielineEngine.ARTIOS_BOARDS.find(b => b.id === id);
+    const isWhite = color => {
+      const hex = parseInt((color || '#000000').slice(1), 16);
+      return ((hex >> 16) + ((hex >> 8) & 255) + (hex & 255)) / 3 > 185;
+    };
+    return old && isWhite(old.outerColor)
+      ? MATERIAL_FINISHES[isWhite(old.innerColor) ? 0 : 1]
+      : MATERIAL_FINISHES[2];
+  }
+
   // ============================================================================
   // ESTADO GLOBAL DE LA APLICACIÓN
   // ============================================================================
@@ -27,6 +47,7 @@
     solverPending: false,
     sizeMode: 'dm',         // 'dm' (Mfg) | 'id' (Inner) | 'ed' (Outer)
     activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip'
+    partParams: {},
     partHoverFaceId: null,  // Para resaltar la solapa en 2D al pasar el cursor sobre la tarjeta
     activeTab: 'basic',     // 'dielines' | 'basic' | 'details' | 'parts' | 'info' | 'more'
     selectedExportFormat: 'svg', // 'ai' | 'pdf' | 'dxf' | 'svg' | 'glb' | 'png'
@@ -260,7 +281,7 @@
   }
 
   function buildBoardMaterials() {
-    const board = DielineEngine.ARTIOS_BOARDS.find(b => b.id === state.boardId) || DielineEngine.ARTIOS_BOARDS[0];
+    const board = resolveMaterialFinish(state.boardId);
 
     const surfaceTex = getArtiosTexture(board.surfaceTex, 1, 1);
     const innerTex = getArtiosTexture(board.innerTex || board.surfaceTex, 1, 1);
@@ -281,7 +302,7 @@
     matInnerFace = new THREE.MeshStandardMaterial({
       name: 'Carton_Cara_Interior',
       map: innerTex,
-      color: board.innerTex === 'GreyBoard3.JPG' ? 0xb5b3ae : 0xcfa778,
+      color: board.innerColorHex,
       vertexColors: true,
       roughness: 0.84,
       metalness: 0.02,
@@ -351,6 +372,8 @@
     state.openParamsValues = {};
     state.symmetryLinks = {};
     state.activePart = 'standard';
+    state.partParams = {};
+    document.getElementById('part-options-dialog')?.close();
     document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
     state.sizeMode = 'dm';
     state.solverAvailable = true;
@@ -495,7 +518,7 @@
     state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
     state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
     state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
-    const board = DielineEngine.ARTIOS_BOARDS.find(b => b.id === state.boardId);
+    const board = resolveMaterialFinish(state.boardId);
     const ratio = state.caliper / (board?.caliper || state.caliper);
     const inside = (board?.insideLoss || 0) * ratio;
     const outside = (board?.outsideGain || 0) * ratio;
@@ -517,7 +540,7 @@
     // Offsets are material-based estimates, not the original model's manufacturing rules.
     resized = {...resized, solverDimensions: {mfg: dims(mfg), inner: dims(mfg.map(v => Math.max(0, v - inside))), outer: dims(mfg.map(v => v + outside))}};
     state.parametricDieline = resized;
-    state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart);
+    state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart, state.partParams[state.activePart]);
     state.solverAvailable = true;
     state.solverPending = false;
     document.getElementById('select-size-mode').disabled = false;
@@ -646,7 +669,18 @@
     });
 
     // 1. Subdividir el polígono del panel en franjas paralelas a cada línea roja (6 escalones por hendido)
-    let subPolys = [face.polygon];
+    // Triangulate the actual contour and holes before clipping crease bands.
+    // Starting with triangles also handles concave notches without filling them in.
+    const contour = face.polygon.map(p => new THREE.Vector2(p.x, p.y));
+    const holes = (face.holes || []).map(ring => ring.map(p => new THREE.Vector2(p.x, p.y)));
+    const triangles = THREE.ShapeUtils.triangulateShape(contour, holes);
+    const points = contour.concat(...holes);
+    let subPolys = triangles.map(indices => {
+      const ring = indices.map(i => ({x: points[i].x, y: points[i].y}));
+      const [a,b,c] = ring;
+      if ((b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x) < 0) ring.reverse();
+      return ring;
+    });
     const stepRatios = [0.14, 0.28, 0.45, 0.64, 0.82, 1.0];
 
     for (const hd of faceHingeData) {
@@ -773,7 +807,9 @@
 
     // 3. Generar el Canto Perimetral (Grupo 2: Flauta Corrugada en bordes azules y cierre biselado en líneas rojas)
     // Subdividimos los segmentos del perímetro cuando están cerca de un hendido para que el canto acompañe la curva chafada
-    const ring = face.polygon;
+    for (const [ringIndex, sourceRing] of [face.polygon, ...(face.holes || [])].entries()) {
+    const signedArea = sourceRing.reduce((sum,p,i) => {const q=sourceRing[(i+1)%sourceRing.length]; return sum+p.x*q.y-q.x*p.y;},0);
+    const ring = (signedArea > 0) === (ringIndex === 0) ? sourceRing : sourceRing.slice().reverse();
     let perimeterRunMM = 0;
 
     for (let i = 0; i < ring.length; i++) {
@@ -828,6 +864,7 @@
 
       perimeterRunMM += segLen;
     }
+    }
 
     // 4. Ensamblar el THREE.BufferGeometry final con sus 3 grupos de materiales
     const allPos = [];
@@ -873,6 +910,12 @@
     while (rootBoxGroup.children.length > 0) {
       const child = rootBoxGroup.children[0];
       rootBoxGroup.remove(child);
+      const materials = new Set();
+      child.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) for (const material of Array.isArray(obj.material) ? obj.material : [obj.material]) if (material) materials.add(material);
+      });
+      for (const material of materials) material.dispose();
     }
     pivotMap.clear();
     faceMeshMap.clear();
@@ -1391,20 +1434,23 @@
   }
 
   function get2DTransform(canvas, bounds) {
-    const padX = 48;
-    const topReserve = 104;
-    const botReserve = 42;
-    const rightReserve = window.innerWidth > 1000 ? 312 * (window.devicePixelRatio || 1) : 0;
-    const availW = Math.max(50, canvas.width - rightReserve - padX * 2);
-    const availH = Math.max(50, canvas.height - topReserve - botReserve);
-    const baseScale = Math.min(availW / bounds.width, availH / bounds.height);
+    const rect = canvas.getBoundingClientRect();
+    const pixelScale = canvas.width / Math.max(1, rect.width);
+    const panel = document.querySelector('.right-floating-container');
+    const panelRect = panel?.getBoundingClientRect();
+    // Measure the actual overlay, including the user's resized 3D panel.
+    const right = panelRect && panelRect.width > 0 && panelRect.left > rect.left && panelRect.left < rect.right && panelRect.top < rect.bottom && panelRect.bottom > rect.top
+      ? (panelRect.left - rect.left - 16) * pixelScale : canvas.width;
+    const availW = Math.max(1, right);
+    const availH = Math.max(1, canvas.height);
+    const baseScale = 0.75 * Math.min(availW / Math.max(1, bounds.width), availH / Math.max(1, bounds.height));
     const scale = baseScale * state.view2D.zoom;
 
     const cx = bounds.minX + bounds.width / 2;
     const cy = bounds.minY + bounds.height / 2;
 
-    const offsetX = (canvas.width - rightReserve) / 2 - cx * scale + state.view2D.panX;
-    const offsetY = topReserve + availH / 2 - cy * scale + state.view2D.panY;
+    const offsetX = availW / 2 - cx * scale + state.view2D.panX;
+    const offsetY = availH / 2 - cy * scale + state.view2D.panY;
 
     return {
       scale,
@@ -1428,7 +1474,7 @@
     const wy = tf.toWorldY(sy);
 
     for (const face of state.dieline.faces) {
-      if (DielineEngine.pointInPolygon({ x: wx, y: wy }, face.polygon)) {
+      if (DielineEngine.pointInPolygon({ x: wx, y: wy }, face.polygon) && !(face.holes || []).some(h => DielineEngine.pointInPolygon({x:wx,y:wy}, h))) {
         return face;
       }
     }
@@ -1513,6 +1559,14 @@
         });
         ctx.closePath();
 
+        for (const hole of (face.holes || [])) {
+          hole.forEach((p, idx) => {
+            const sx = tf.toScreenX(p.x), sy = tf.toScreenY(p.y);
+            if (idx === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+          });
+          ctx.closePath();
+        }
+
         if (face.id === state.partHoverFaceId) {
           ctx.fillStyle = 'rgba(56, 189, 248, 0.45)'; // Resaltado azul celeste intenso de la pestaña Parts
         } else if (isSelected) {
@@ -1524,7 +1578,7 @@
         } else {
           ctx.fillStyle = 'rgba(198, 156, 109, 0.10)';
         }
-        ctx.fill();
+        ctx.fill('evenodd');
       }
     }
 
@@ -1948,21 +2002,18 @@
     const matSelect = document.getElementById('select-material');
     if (matSelect && window.DielineEngine) {
       matSelect.innerHTML = '';
-      for (const b of DielineEngine.ARTIOS_BOARDS) {
+      for (const b of MATERIAL_FINISHES) {
         const opt = document.createElement('option');
         opt.value = b.id;
-        opt.textContent = `${b.name} (${b.flute ? 'Onda ' + b.flute + ', ' : ''}${b.caliper.toFixed(1)} mm)`;
+        opt.textContent = b.name;
         if (b.id === state.boardId) opt.selected = true;
         matSelect.appendChild(opt);
       }
       matSelect.addEventListener('change', (e) => {
-        const chosen = DielineEngine.ARTIOS_BOARDS.find(b => b.id === e.target.value);
+        const chosen = MATERIAL_FINISHES.find(b => b.id === e.target.value);
         if (chosen) {
           state.boardId = chosen.id;
-          state.caliper = chosen.caliper;
           state.flute = chosen.flute;
-          const thInput = document.getElementById('input-thickness');
-          if (thInput) thInput.value = chosen.caliper;
           applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
         }
       });
@@ -2010,10 +2061,12 @@
     partCards.forEach(card => {
       const partKey = card.getAttribute('data-part-key');
       card.addEventListener('click', () => {
+        document.getElementById('part-options-dialog')?.close();
         partCards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         state.activePart = partKey;
         applyCurrentPartVariation();
+        if (['handle', 'thumb_notch', 'tab_lock'].includes(partKey)) openPartOptions(partKey);
       });
 
       card.addEventListener('mouseenter', () => {
@@ -2244,67 +2297,138 @@
 
   function applyCurrentPartVariation() {
     if (!state.parametricDieline || !DielineEngine.applyPartVariationToModel) return;
-    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart);
+    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart, state.partParams[state.activePart]);
     if (modified) {
       state.dieline = modified;
+      const status = document.getElementById('part-options-status');
+      if (status) status.textContent = modified.partError || 'Cambios en tiempo real en el plano y el 3D.';
       rebuild3DMesh();
+      setMasterFold(state.masterFold);
       render2FDieline();
     }
+  }
+
+  let partUpdateFrame = 0;
+  function openPartOptions(key) {
+    const dialog = document.getElementById('part-options-dialog');
+    const fields = document.getElementById('part-options-fields');
+    if (!dialog || !fields || !state.parametricDieline) return;
+    fields.replaceChildren();
+    const titles = {handle:'Asa', thumb_notch:'Uñero', tab_lock:'Pestaña de cierre'};
+    document.getElementById('part-options-title').textContent = titles[key];
+    const controls = new Map();
+    let settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, state.partParams[key]);
+    state.partParams[key] = {...settings.params};
+    const sync = () => {
+      settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, state.partParams[key]);
+      state.partParams[key] = {...settings.params};
+      for (const [name, control] of controls) {
+        const limit = settings.limits[name];
+        if (limit) for (const input of [control.number, control.slider]) { input.min=limit.min; input.max=limit.max; input.value=settings.params[name]; }
+        else control.number.value = settings.params[name];
+        control.row.hidden = name === 'distance' && settings.params.count !== 2;
+      }
+    };
+    const change = (name, value) => {
+      state.partParams[key][name] = Number(value);
+      sync();
+      if (!partUpdateFrame) partUpdateFrame = requestAnimationFrame(() => {
+        partUpdateFrame = 0;
+        applyCurrentPartVariation();
+      });
+    };
+    const definitions = key === 'handle'
+      ? [['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)']]
+      : key === 'thumb_notch'
+        ? [['count','Número de uñeros'],['radius','Radio del uñero (mm)'],['distance','Distancia entre centros (mm)']]
+        : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
+    for (const [name, label] of definitions) {
+      const row = document.createElement('label'); row.className = 'part-option-field';
+      const title = document.createElement('span'); title.textContent = label;
+      let number, slider;
+      if (name === 'count') {
+        number = document.createElement('select');
+        for (const [value,text] of [[1,'Uno'],[2,'Dos']]) { const option=document.createElement('option');option.value=value;option.textContent=text;number.appendChild(option); }
+        number.addEventListener('change', () => change(name, number.value));
+        row.append(title, number);
+      } else {
+        number = document.createElement('input'); number.type='number';number.step='0.5';number.setAttribute('aria-label',label);
+        slider = document.createElement('input'); slider.type='range';slider.step='0.5';slider.setAttribute('aria-label',label+' · deslizador');
+        number.addEventListener('input', () => {if (number.value !== '') change(name, number.value);});
+        slider.addEventListener('input', () => change(name, slider.value));
+        row.append(title,number,slider);
+      }
+      controls.set(name,{row,number,slider});fields.appendChild(row);
+    }
+    sync();
+    document.getElementById('part-options-status').textContent = state.dieline.partError || 'Cambios en tiempo real en el plano y el 3D.';
+    document.getElementById('part-options-close').onclick = () => dialog.close();
+    document.getElementById('part-options-done').onclick = () => dialog.close();
+    if (!dialog.open) dialog.show();
+  }
+
+  function getDetailGroups(baseModel, currentModel) {
+    const faces = currentModel.faces.filter(f => f.role && f.role.includes('FLAP') && f.bounds.width > 2 && f.bounds.height > 2);
+    const byId = new Map(faces.map(f => [f.id, f]));
+    const visited = new Set();
+    const groups = [];
+    for (const face of faces) {
+      if (visited.has(face.id)) continue;
+      const original = baseModel.faces.find(f => f.id === face.id) || face;
+      const axis = original.bounds.width < original.bounds.height ? 'x' : 'y';
+      const span = f => axis === 'x' ? f.bounds.width : f.bounds.height;
+      const members = [face];
+      visited.add(face.id);
+      for (let i = 0; i < members.length; i++) {
+        const base = baseModel.faces.find(f => f.id === members[i].id) || members[i];
+        for (const mirror of ['x', 'y']) {
+          const partner = DielineEngine.findSymmetricFace(baseModel, base, axis, mirror);
+          const current = partner && byId.get(partner.id);
+          if (!current || visited.has(current.id) || Math.abs(span(current) - span(face)) > 0.35) continue;
+          members.push(current);
+          visited.add(current.id);
+        }
+      }
+      groups.push({axis, members, value: span(face)});
+    }
+    return groups;
   }
 
   function renderDetailsTabUI() {
     const container = document.getElementById('details-params-container');
     if (!container || !state.dieline) return;
     container.innerHTML = '';
-
-    const faces = (state.parametricDieline || state.dieline).faces.filter(face => face.role && face.role.includes('FLAP') && face.bounds.width > 2 && face.bounds.height > 2);
-    if (!faces.length) { container.textContent = 'No se han identificado solapas editables en este plano.'; return; }
+    const groups = getDetailGroups(state.baseDieline, state.parametricDieline || state.dieline);
+    if (!groups.length) { container.textContent = 'No se han identificado solapas editables en este plano.'; return; }
     const help = document.createElement('p'); help.className = 'project-note';
-    help.textContent = 'Ajuste local por bandas: modifica la franja completa del plano y puede afectar a piezas vecinas.'; container.appendChild(help);
+    help.textContent = 'Las piezas simétricas comparten una medida. Los ajustes pueden afectar a piezas vecinas.';
+    container.appendChild(help);
     if (Object.keys(state.openParamsValues).length) {
-      const reset = document.createElement('button'); reset.className = 'btn-outline'; reset.textContent = 'Restablecer bandas';
+      const reset = document.createElement('button'); reset.className = 'btn-outline'; reset.textContent = 'Restablecer medidas';
       reset.addEventListener('click', () => { state.openParamsValues = {}; applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH); renderDetailsTabUI(); });
       container.appendChild(reset);
     }
-    for (const face of faces) {
-      const original = state.baseDieline.faces.find(f => f.id === face.id) || face;
-      const axis = original.bounds.width < original.bounds.height ? 'x' : 'y';
-      const value = axis === 'x' ? face.bounds.width : face.bounds.height;
-      const key = 'band:' + face.id + ':' + axis;
-      const partner = DielineEngine.findSymmetricFace(state.baseDieline, original, axis);
-      const partnerKey = partner ? 'band:' + partner.id + ':' + axis : null;
-      const pairKey = partner ? [String(face.id), String(partner.id)].sort().join(':') : null;
+    for (const {axis, members, value} of groups) {
+      const face = members[0];
       const row = document.createElement('label'); row.className = 'detail-row';
-      const title = document.createElement('span'); title.className = 'detail-name'; title.textContent = face.name + ' · banda ' + axis.toUpperCase();
+      const title = document.createElement('span'); title.className = 'detail-name';
+      if (members.length > 1) {
+        let common = face.name.replace(/\s*\([^)]*\)/g, '').replace(/Izquierda|Derecha|Superior|Inferior|Izq\.?|Der\.?|Sup\.?|Inf\.?/gi, '').trim();
+        if (face.pacdoraName && common.endsWith(face.pacdoraName)) common = common.slice(0, -face.pacdoraName.length).trim();
+        title.textContent = common.replace(/\s+/g, ' ') + ' (' + members.map(f => f.pacdoraName || f.id).join(' / ') + ')';
+      } else title.textContent = face.name;
       const wrap = document.createElement('div'); wrap.className = 'detail-input-wrap';
       const input = document.createElement('input'); input.type = 'number'; input.className = 'detail-num-input';
-      const factor = 1;
-      input.value = +(value / factor).toFixed(3); input.min = +(2 / factor).toFixed(3); input.max = +(2000 / factor).toFixed(3); input.step = 'any';
-      const unit = document.createElement('span'); unit.textContent = state.unit;
+      input.value = +value.toFixed(3); input.min = 2; input.max = 2000; input.step = 'any';
+      const unit = document.createElement('span'); unit.textContent = 'mm';
       input.addEventListener('change', () => {
-        const target = Number(input.value) * factor;
-        if (!Number.isFinite(target) || target < 2 || target > 2000) { input.value = +(value / factor).toFixed(3); return; }
-        state.openParamsValues[key] = target;
-        if (partnerKey && state.symmetryLinks[pairKey]) state.openParamsValues[partnerKey] = target;
+        const target = Number(input.value);
+        if (!Number.isFinite(target) || target < 2 || target > 2000) { input.value = +value.toFixed(3); return; }
+        for (const member of members) state.openParamsValues['band:' + member.id + ':' + axis] = target;
         applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
         renderDetailsTabUI();
       });
       wrap.append(input, unit); row.append(title, wrap); container.appendChild(row);
-      if (partner) {
-        const label = document.createElement('label'); label.className = 'symmetry-option';
-        const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!state.symmetryLinks[pairKey];
-        check.addEventListener('change', () => {
-          state.symmetryLinks[pairKey] = check.checked;
-          if (check.checked) {
-            const current = state.parametricDieline.faces.find(f => f.id === face.id);
-            const span = axis === 'x' ? current.bounds.width : current.bounds.height;
-            state.openParamsValues[key] = span; state.openParamsValues[partnerKey] = span;
-            applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
-          }
-          renderDetailsTabUI();
-        });
-        label.append(check, document.createTextNode('Vincular con ' + partner.name)); container.appendChild(label);
-      }
     }
   }
 
@@ -2392,7 +2516,7 @@
           await loadFefcoModel(entry, true);
         } else if (project.svgText) loadSVGString(project.svgText, project.name, true);
         else return;
-        state.boardId = project.boardId || state.boardId;
+        state.boardId = resolveMaterialFinish(project.boardId || state.boardId).id;
         state.caliper = Number(project.caliper) || state.caliper;
         document.getElementById('select-material').value = state.boardId;
         document.getElementById('input-thickness').value = state.caliper;
@@ -2402,6 +2526,7 @@
         document.getElementById('input-crush-depth').value = Math.round(state.crushDepthRatio * 100);
         state.openParamsValues = project.openParamsValues || {};
         state.activePart = project.activePart || 'standard';
+        state.partParams = project.partParams || {};
         document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === state.activePart));
         state.sizeMode = project.sizeMode || 'dm';
         document.getElementById('select-size-mode').value = state.sizeMode;
@@ -2437,7 +2562,7 @@
         modelNum: state.activeFefcoEntry?.num || null, svgText: state.activeFefcoEntry ? null : state.svgText,
         dimensions: [state.paramL, state.paramW, state.paramH], sizeMode: state.sizeMode, boardId: state.boardId,
         caliper: state.caliper, bleedMm: state.bleedMm, crushDepthRatio: state.crushDepthRatio,
-        activePart: state.activePart, symmetryLinks: {...state.symmetryLinks}, openParamsValues: {...state.openParamsValues} };
+        activePart: state.activePart, partParams: state.partParams, symmetryLinks: {...state.symmetryLinks}, openParamsValues: {...state.openParamsValues} };
       try { const data = readProjects(); data.unshift(project); localStorage.setItem(PROJECTS_KEY, JSON.stringify(data)); renderProjects(); }
       catch (_) { alert('No se pudo guardar el proyecto. Comprueba el espacio disponible del navegador.'); }
     });
@@ -2480,10 +2605,46 @@
     return 'Troquel';
   }
 
+  let catalogPreviewObserver = null;
+  let catalogPreviewQueue = Promise.resolve();
+  const catalogPreviewCache = new Map();
+  let catalogThumbRenderer = null;
+
   function renderDrawerCatalogList() {
     const listEl = document.getElementById('drawer-models-list');
     if (!listEl) return;
     listEl.innerHTML = '';
+    catalogPreviewObserver?.disconnect();
+    const previewJobs = new WeakMap();
+    const enqueue = card => {
+      const item = previewJobs.get(card);
+      catalogPreviewQueue = catalogPreviewQueue.then(async () => {
+        if (!card.isConnected) return;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const flat = card.querySelector('.card-2d-canvas-wrap canvas');
+        const folded = card.querySelector('.card-3d-thumb-wrap canvas');
+        const cached = catalogPreviewCache.get(Number(item.num));
+        if (cached) {
+          for (const [target, source] of [[flat,cached.flat],[folded,cached.folded]]) {
+            target.width=source.width; target.height=source.height;
+            target.getContext('2d').drawImage(source,0,0);
+          }
+          return;
+        }
+        let full = item;
+        if (!full.knifeData && item.shard) full = (await loadPacdoraShard(item.shard)).find(x => Number(x.num) === Number(item.num));
+        if (!card.isConnected || !full?.knifeData) return;
+        const model = DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
+        drawMiniDielinePreview(flat, model);
+        drawCatalog3DPreview(folded, model);
+        const copy = source => {const c=document.createElement('canvas');c.width=source.width;c.height=source.height;c.getContext('2d').drawImage(source,0,0);return c;};
+        catalogPreviewCache.set(Number(item.num), {flat:copy(flat),folded:copy(folded)});
+        if (catalogPreviewCache.size > 80) catalogPreviewCache.delete(catalogPreviewCache.keys().next().value);
+      }).catch(error => console.error('No se pudo generar la miniatura:', item?.num, error));
+    };
+    if (window.IntersectionObserver) catalogPreviewObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) if (entry.isIntersecting) {catalogPreviewObserver.unobserve(entry.target);enqueue(entry.target);}
+    }, {root:listEl, rootMargin:'120px'});
 
     const pacIndex = window.PACDORA_CATALOG_INDEX;
     const allModels = (pacIndex && Array.isArray(pacIndex.models))
@@ -2517,30 +2678,20 @@
             <canvas width="120" height="72"></canvas>
           </div>
           <div class="card-3d-thumb-wrap">
-            <img src="assets/textures/boardbrown.jpg" alt="3D" style="width:100%; height:100%; object-fit:contain;" />
+            <canvas width="240" height="176" aria-label="Vista 3D del modelo"></canvas>
           </div>
         </div>
         <div class="card-model-title">${cleanDesc}</div>
         <div class="card-model-sub">#${item.num} (${item.length}×${item.width}×${item.height}mm)</div>
       `;
 
-      const cvs = card.querySelector('canvas');
-      if (item.knifeData) {
-        drawMiniDielinePreview(cvs, item.knifeData);
-      } else if (item.shard) {
-        loadPacdoraShard(item.shard).then(shardList => {
-          const found = shardList.find(x => Number(x.num) === Number(item.num));
-          if (found && found.knifeData) {
-            drawMiniDielinePreview(cvs, found.knifeData);
-          }
-        });
-      }
-
       card.addEventListener('click', () => {
         loadFefcoModel(item, true);
       });
 
       listEl.appendChild(card);
+      previewJobs.set(card, item);
+      if (catalogPreviewObserver) catalogPreviewObserver.observe(card); else enqueue(card);
     }
     if (filtered.length > catalogLimit) {
       const more = document.createElement('button');
@@ -2551,61 +2702,96 @@
     } else if (!filtered.length) listEl.textContent = 'No se encontraron modelos.';
   }
 
-  function drawMiniDielinePreview(canvas, knifeData) {
-    if (!canvas || !knifeData || !knifeData.faces) return;
+  function drawMiniDielinePreview(canvas, data) {
+    if (!canvas || !data) return;
+    const model = data.cutSegments ? data : DielineEngine.buildDielineModelFromPacdora(data);
     const ctx = canvas.getContext('2d');
-    const w = canvas.width = 210;
-    const h = canvas.height = 112;
-    ctx.clearRect(0, 0, w, h);
-
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const f of knifeData.faces) {
-      for (const c of (f.dlist || [])) {
-        if (typeof c.x === 'number' && typeof c.y === 'number') {
-          if (c.x < minX) minX = c.x;
-          if (c.y < minY) minY = c.y;
-          if (c.x > maxX) maxX = c.x;
-          if (c.y > maxY) maxY = c.y;
-        }
-      }
-    }
-    if (!isFinite(minX)) return;
-    const bw = Math.max(1, maxX - minX);
-    const bh = Math.max(1, maxY - minY);
-    const pad = 10;
-    const scale = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
-    const ox = (w - bw * scale) * 0.5 - minX * scale;
-    const oy = (h - bh * scale) * 0.5 - minY * scale;
-
-    // Caras
-    ctx.fillStyle = 'rgba(198, 156, 109, 0.17)';
-    ctx.strokeStyle = '#009ee3';
-    ctx.lineWidth = 1.1;
-    for (const f of knifeData.faces) {
-      ctx.beginPath();
-      let started = false;
-      for (const c of (f.dlist || [])) {
-        if (typeof c.x === 'number' && typeof c.y === 'number') {
-          const sx = c.x * scale + ox;
-          const sy = c.y * scale + oy;
-          if (!started) { ctx.moveTo(sx, sy); started = true; }
-          else ctx.lineTo(sx, sy);
-        }
-      }
-      ctx.closePath();
-      ctx.fill();
+    const w = canvas.width = 240, h = canvas.height = 176;
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h);
+    const bounds = model.bounds, pad = 18;
+    const scale = Math.min((w-pad*2)/Math.max(1,bounds.width),(h-pad*2)/Math.max(1,bounds.height));
+    const ox = (w-bounds.width*scale)/2-bounds.minX*scale;
+    const oy = (h-bounds.height*scale)/2-bounds.minY*scale;
+    const lines = (segments, color) => {
+      ctx.strokeStyle=color;ctx.lineWidth=1.4;ctx.beginPath();
+      for (const s of segments) {ctx.moveTo(s.x1*scale+ox,s.y1*scale+oy);ctx.lineTo(s.x2*scale+ox,s.y2*scale+oy);}
       ctx.stroke();
-    }
+    };
+    lines(model.cutSegments,'#6b99ad');
+    lines(model.foldSegments,'#b184a0');
+  }
 
-    // Líneas rojas de hendido
-    ctx.strokeStyle = '#e5007d';
-    ctx.lineWidth = 1.25;
-    ctx.beginPath();
-    for (const fl of (knifeData.folds || [])) {
-      ctx.moveTo(fl.x1 * scale + ox, fl.y1 * scale + oy);
-      ctx.lineTo(fl.x2 * scale + ox, fl.y2 * scale + oy);
+  function createCatalogPreviewGroup(model) {
+    const root = new THREE.Group();
+    const byId = new Map(model.faces.map(f=>[f.id,f]));
+    const children = new Map();
+    for (const h of model.hinges) {if(!children.has(h.parentFaceId))children.set(h.parentFaceId,[]);children.get(h.parentFaceId).push(h);}
+    const materials = [new THREE.MeshStandardMaterial({color:0xd6b98b,roughness:0.9}),new THREE.MeshStandardMaterial({color:0xb79b73,roughness:0.95})];
+    for (const material of materials) material.color.convertSRGBToLinear();
+    const thickness = Math.max(0.2,Math.min(3,(model.boxDimensionsMm?.depth || 50)*0.03));
+    const visited = new Set();
+    let baseMesh;
+    const build = (id, parent, origin) => {
+      const face = byId.get(id);
+      if (!face || visited.has(id)) return;
+      visited.add(id);
+      const shape = new THREE.Shape(face.polygon.map(p=>new THREE.Vector2(p.x,-p.y)));
+      for (const hole of face.holes || []) shape.holes.push(new THREE.Path(hole.map(p=>new THREE.Vector2(p.x,-p.y))));
+      const geometry = new THREE.ExtrudeGeometry(shape,{depth:thickness,bevelEnabled:false,steps:1,curveSegments:4});
+      geometry.translate(-origin.x,-origin.y,-thickness/2);
+      const mesh = new THREE.Mesh(geometry,materials);
+      parent.add(mesh);
+      if (id===model.rootFaceId) baseMesh=mesh;
+      for (const h of children.get(id) || []) {
+        const p1 = new THREE.Vector3(h.p1.x,-h.p1.y,0),p2 = new THREE.Vector3(h.p2.x,-h.p2.y,0);
+        const pivot = new THREE.Group();pivot.position.copy(p1).sub(origin);parent.add(pivot);
+        build(h.childFaceId,pivot,p1);
+        // Use each model's own fold sequence, with the closure slightly open.
+        let degrees = (h.defaultAngle || 0)*0.94;
+        if(h.animSteps?.length) degrees=h.animSteps.reduce((sum,step)=>{
+          const t=Math.max(0,Math.min(1,(0.94-step.start)/Math.max(0.00001,step.end-step.start)));
+          return sum+step.deltaDeg*t*t*(3-2*t);
+        },0);
+        pivot.setRotationFromAxisAngle(p2.sub(p1).normalize(),THREE.MathUtils.degToRad(degrees));
+      }
+    };
+    const base=byId.get(model.rootFaceId);
+    build(model.rootFaceId,root,new THREE.Vector3(base.centroid.x,-base.centroid.y,0));
+    root.rotation.x=-Math.PI/2;root.updateMatrixWorld(true);
+    if(baseMesh) root.position.y=-new THREE.Box3().setFromObject(baseMesh).min.y;
+    root.updateMatrixWorld(true);
+    return root;
+  }
+
+  function drawCatalog3DPreview(canvas, model) {
+    if (!catalogThumbRenderer) {
+      catalogThumbRenderer = new THREE.WebGLRenderer({antialias:true,alpha:false,preserveDrawingBuffer:true});
+      catalogThumbRenderer.setSize(240,176);
+      catalogThumbRenderer.setClearColor(0xffffff,1);
+      catalogThumbRenderer.outputEncoding=THREE.sRGBEncoding;
+      catalogThumbRenderer.toneMapping=THREE.ACESFilmicToneMapping;
     }
-    ctx.stroke();
+    const scene = new THREE.Scene();scene.background=new THREE.Color(0xffffff);
+    scene.add(new THREE.AmbientLight(0xffffff,0.65));
+    const light=new THREE.DirectionalLight(0xffffff,0.75);light.position.set(1,2,3);scene.add(light);
+    const group=createCatalogPreviewGroup(model);scene.add(group);
+    try {
+      const box=new THREE.Box3().setFromObject(group);
+      const center=box.getCenter(new THREE.Vector3());
+      const radius=Math.max(1,box.getSize(new THREE.Vector3()).length()/2);
+      const camera=new THREE.PerspectiveCamera(35,240/176,0.1,Math.max(10000,radius*30));
+      const distance=radius/Math.sin(THREE.MathUtils.degToRad(35)/2)*1.05;
+      camera.position.copy(center).addScaledVector(new THREE.Vector3(0.8,0.65,1).normalize(),distance);
+      camera.lookAt(center);
+      catalogThumbRenderer.render(scene,camera);
+      canvas.width=240;canvas.height=176;
+      canvas.getContext('2d').drawImage(catalogThumbRenderer.domElement,0,0);
+    } finally {
+      const materials=new Set();
+      group.traverse(obj=>{if(obj.geometry)obj.geometry.dispose();if(obj.material)for(const mat of Array.isArray(obj.material)?obj.material:[obj.material])materials.add(mat);});
+      for(const mat of materials)mat.dispose();
+      scene.remove(group);
+    }
   }
 
   function initFefcoCatalogUI() {

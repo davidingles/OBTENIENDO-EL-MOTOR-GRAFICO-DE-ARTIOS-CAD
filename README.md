@@ -12,10 +12,14 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 
 ## Funcionamiento
 
+- Al abrir o centrar un modelo, el troquel 2D ocupa como máximo el 75 % del espacio libre del plano; tiene en cuenta el tamaño actual del panel 3D. El zoom manual permite ampliarlo después.
+- La biblioteca muestra planos completos sobre blanco y vistas 3D generadas con la geometría de cada modelo. Las miniaturas se cargan al entrar en la zona visible y comparten un único renderizador 3D.
 - Los modelos y sus geometrías base se cargan de los archivos incluidos en `assets`. También se pueden abrir archivos SVG locales.
 - El redimensionado y los ajustes de solapas usan deformación geométrica local por bandas. La banda modifica todas las líneas y caras que atraviesa, por lo que puede cambiar piezas vecinas. Las fórmulas originales de cada diseño no están incluidas; el resultado no equivale necesariamente a un cálculo estructural exacto.
 - La interfaz usa únicamente milímetros y las exportaciones no incluyen sangrado.
-- En las parejas de piezas compatibles, la casilla de simetría vincula sus medidas.
+- Las piezas simétricas comparten un único campo en Detalles; se comprueban su contorno y sus huecos. Las piezas distintas conservan sus medidas independientes.
+- Material ofrece tres acabados: blanco/blanco, blanco/marrón y marrón/marrón. El espesor se ajusta aparte.
+- Asa, uñero y pestaña de cierre tienen una ventana de medidas con deslizadores en tiempo real. El asa permite ancho, largo y radio; el uñero, uno o dos recortes, radio y distancia entre centros. Los huecos y las muescas modifican la malla 3D. La pestaña añade una cara articulada y sustituye el corte de unión por un hendido.
 - Las dimensiones interiores y exteriores se estiman usando los ajustes del material y su espesor. Son aproximaciones.
 - Los proyectos se guardan en el almacenamiento local de la aplicación; no incluyen el arte cargado. Los guardados de la antigua versión del navegador no se importan automáticamente a Tauri.
 - Las variaciones de piezas son experimentales. Verifica los planos y las medidas antes de fabricar.

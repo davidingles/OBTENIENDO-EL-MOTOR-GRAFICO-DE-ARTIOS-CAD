@@ -220,7 +220,7 @@
         <div class="drawer-group">
           <div class="section-title-wrap">
             <span class="field-label-bold">Material</span>
-            <span class="info-tip-dot" title="Cartones corrugados y calibres oficiales de la base de datos de ArtiosCAD">ⓘ</span>
+            <span class="info-tip-dot" title="Elige el acabado exterior e interior del cartón">ⓘ</span>
           </div>
           <div class="custom-select-wrap">
             <select id="select-material" class="drawer-dropdown"></select>
@@ -632,5 +632,14 @@
   <script src="assets/pacdora-catalog/catalog-index.js"></script>
   <script src="dieline-engine.js"></script>
   <script src="app.js"></script>
+  <dialog id="part-options-dialog" class="part-options-dialog" aria-labelledby="part-options-title">
+    <div class="part-options-head">
+      <strong id="part-options-title">Ajustar pieza</strong>
+      <button id="part-options-close" class="icon-btn" aria-label="Cerrar ajustes de pieza">×</button>
+    </div>
+    <div id="part-options-fields"></div>
+    <p id="part-options-status" class="part-options-status" role="status"></p>
+    <button id="part-options-done" class="btn-primary-blue">Listo</button>
+  </dialog>
 </body>
 </html>

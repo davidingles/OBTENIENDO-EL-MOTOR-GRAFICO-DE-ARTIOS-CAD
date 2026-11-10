@@ -2037,25 +2037,50 @@
   /**
    * Finds the primary lid / closure flap face of a model (used for `Parts` highlight and structural modification).
    */
-  // Solo vincula caras identificadas como izquierda/derecha cuya posición y tamaño concuerdan.
-  function findSymmetricFace(model, face, axis) {
-    if (!model || !face || !face.pacdoraName || !/[LR]$/.test(face.pacdoraName)) return null;
-    const name = face.pacdoraName;
-    const counterpart = name.slice(0, -1) + (name.endsWith('L') ? 'R' : 'L');
-    const other = model.faces.find(f => f.pacdoraName === counterpart);
-    if (!other || !face.bounds || !other.bounds) return null;
-    const a = face.bounds, b = other.bounds;
-    const close = (x, y, tolerance) => Math.abs(x - y) <= tolerance;
-    const center = (model.bounds.minX + model.bounds.maxX) / 2;
-    const toleranceX = Math.max(2, model.bounds.width * 0.015);
-    const toleranceY = Math.max(2, Math.max(a.height, b.height) * 0.03);
-    if (!close((a.minX + a.maxX + b.minX + b.maxX) / 2, center * 2, toleranceX) ||
-        !close(a.minY, b.minY, toleranceY) || !close(a.maxY, b.maxY, toleranceY) ||
-        !close(a.width, b.width, Math.max(2, Math.max(a.width, b.width) * 0.03))) return null;
-    const axisA = a.width < a.height ? 'x' : 'y';
-    const axisB = b.width < b.height ? 'x' : 'y';
-    if (axis !== axisA || axis !== axisB) return null;
-    return other;
+  // Match reflected geometry, including cutouts, on either symmetry axis.
+  function findSymmetricFace(model, face, axis, mirrorAxis = null) {
+    if (!model || !face || !face.bounds || !face.polygon) return null;
+    const tolerance = 0.35;
+    const editableAxis = f => f.bounds.width < f.bounds.height ? 'x' : 'y';
+    if (editableAxis(face) !== axis) return null;
+    const distanceToRing = (p, ring) => {
+      let best = Infinity;
+      for (let i = 0; i < ring.length; i++) {
+        const a = ring[i], b = ring[(i + 1) % ring.length];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const t = Math.max(0, Math.min(1, ((p.x-a.x)*dx + (p.y-a.y)*dy) / (dx*dx + dy*dy || 1)));
+        best = Math.min(best, Math.hypot(p.x-a.x-t*dx, p.y-a.y-t*dy));
+      }
+      return best;
+    };
+    for (const mirror of mirrorAxis ? [mirrorAxis] : ['x', 'y']) {
+      const sum = mirror === 'x' ? model.bounds.minX + model.bounds.maxX : model.bounds.minY + model.bounds.maxY;
+      const reflect = p => ({x: mirror === 'x' ? sum-p.x : p.x, y: mirror === 'y' ? sum-p.y : p.y});
+      const ringsMatch = (a, b) => {
+        const reflected = a.map(reflect);
+        return reflected.every(p => distanceToRing(p, b) <= tolerance) && b.every(p => distanceToRing(p, reflected) <= tolerance);
+      };
+      const a = face.bounds;
+      const other = model.faces.find(candidate => {
+        if (candidate.id === face.id || !candidate.bounds || !candidate.polygon || editableAxis(candidate) !== axis || candidate.role !== face.role) return false;
+        const b = candidate.bounds;
+        const centerA = reflect({x:(a.minX+a.maxX)/2, y:(a.minY+a.maxY)/2});
+        if (Math.abs(centerA.x-(b.minX+b.maxX)/2) > tolerance || Math.abs(centerA.y-(b.minY+b.maxY)/2) > tolerance ||
+            Math.abs(a.width-b.width) > tolerance || Math.abs(a.height-b.height) > tolerance) return false;
+        if (!ringsMatch(face.polygon, candidate.polygon)) return false;
+        const holesA = face.holes || [], holesB = candidate.holes || [];
+        if (holesA.length !== holesB.length) return false;
+        const remaining = holesB.slice();
+        return holesA.every(hole => {
+          const index = remaining.findIndex(otherHole => ringsMatch(hole, otherHole));
+          if (index < 0) return false;
+          remaining.splice(index, 1);
+          return true;
+        });
+      });
+      if (other) return other;
+    }
+    return null;
   }
 
   function findPrimaryLidFlapFace(model) {
@@ -2083,7 +2108,154 @@
    * to a dieline model in 1:1 mm, returning a modified model whose 2D cut/crease segments and 3D faces/holes
    * reflect the selected part!
    */
-  function applyPartVariationToModel(baseModel, partKey) {
+  function getPartEdge(model) {
+    const face = findPrimaryLidFlapFace(model);
+    if (!face) return null;
+    let best = null;
+    for (let i = 0; i < face.polygon.length; i++) {
+      const a = face.polygon[i], b = face.polygon[(i + 1) % face.polygon.length];
+      const length = Math.hypot(b.x-a.x, b.y-a.y);
+      if (length < 8) continue;
+      const tx = (b.x-a.x)/length, ty = (b.y-a.y)/length;
+      const onEdge = p => Math.abs((p.x-a.x)*ty-(p.y-a.y)*tx) < 0.2;
+      const isFold = model.hinges.some(h => (h.parentFaceId === face.id || h.childFaceId === face.id) && onEdge(h.p1) && onEdge(h.p2));
+      if (isFold || (best && best.length >= length)) continue;
+      let nx = -ty, ny = tx;
+      if (nx*(face.centroid.x-a.x)+ny*(face.centroid.y-a.y) < 0) { nx=-nx; ny=-ny; }
+      best = {face, index:i, a, b, tx, ty, nx, ny, length,
+        depth: Math.max(...face.polygon.map(p => (p.x-a.x)*nx+(p.y-a.y)*ny))};
+    }
+    return best;
+  }
+
+  function getPartVariationSettings(model, key, options = {}) {
+    const edge = getPartEdge(model);
+    if (!edge) return {params:{}, limits:{}};
+    const clamp = (value, min, max, fallback) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : fallback));
+    const limits = {}, params = {};
+    const field = (name, min, max, fallback) => {
+      limits[name] = {min, max:Math.max(min, max)};
+      params[name] = +clamp(options[name], min, limits[name].max, Math.round(fallback*2)/2).toFixed(3);
+    };
+    if (key === 'handle') {
+      field('length', 4, edge.length-8, 86);
+      field('width', 3, edge.depth-8, 22);
+      field('radius', 0, Math.min(params.width, params.length)/2, 8);
+    } else if (key === 'thumb_notch') {
+      params.count = Number(options.count) === 2 ? 2 : 1;
+      field('radius', 1, Math.min(edge.depth-3, (edge.length-8)/(params.count === 2 ? 4 : 2)), 10);
+      field('distance', params.radius*2+2, edge.length-params.radius*2-8, edge.length*0.35);
+      // If the edge is too short for a gap, shrink the radius instead of overlapping cuts.
+      if (params.count === 2 && params.distance+2*params.radius > edge.length-4) {
+        params.radius = Math.max(1, (edge.length-10)/4);
+        params.distance = params.radius*2+2;
+      }
+    } else if (key === 'tab_lock') {
+      field('length', 6, edge.length-8, 64);
+      field('depth', 3, Math.max(3, edge.depth*0.8), 18);
+    }
+    return {params, limits};
+  }
+
+  function applyPartVariationToModel(baseModel, partKey, options = {}) {
+    if (!baseModel || !partKey || partKey === 'standard') return baseModel;
+    if (partKey === 'tear_strip') return applyLegacyPartVariation(baseModel, partKey);
+    const edge = getPartEdge(baseModel);
+    if (!edge) return baseModel;
+    const {params} = getPartVariationSettings(baseModel, partKey, options);
+    const model = {...baseModel,
+      faces: baseModel.faces.map(f => ({...f, polygon:f.polygon.map(p=>({...p})), holes:(f.holes||[]).map(h=>h.map(p=>({...p})))})),
+      cutSegments: baseModel.cutSegments.map(s=>({...s})),
+      foldSegments: baseModel.foldSegments.map(s=>({...s})),
+      hinges: baseModel.hinges.map(h=>({...h})),
+      activePartVariation:partKey, partTargetFaceId:edge.face.id, partOptions:params};
+    const flap = model.faces.find(f=>f.id===edge.face.id);
+    const at = (t, d=0) => ({x:edge.a.x+edge.tx*t+edge.nx*d, y:edge.a.y+edge.ty*t+edge.ny*d});
+    const area = ring => ring.reduce((sum,p,i)=>{const q=ring[(i+1)%ring.length];return sum+p.x*q.y-q.x*p.y;},0)/2;
+    const positive = ring => area(ring)<0 ? ring.slice().reverse() : ring;
+    const addCuts = (points, closed=false) => {
+      for(let i=0;i<points.length-(closed?0:1);i++) {
+        const a=points[i],b=points[(i+1)%points.length];
+        if(Math.hypot(b.x-a.x,b.y-a.y)>1e-6) model.cutSegments.push({x1:a.x,y1:a.y,x2:b.x,y2:b.y,type:'CUT',isPartMod:true});
+      }
+    };
+    const removeEdgeCut = (start,end) => {
+      model.cutSegments = model.cutSegments.flatMap(s=>{
+        const distance = (x,y)=>(x-edge.a.x)*edge.ty-(y-edge.a.y)*edge.tx;
+        if(Math.abs(distance(s.x1,s.y1))>0.05 || Math.abs(distance(s.x2,s.y2))>0.05) return [s];
+        const project=(x,y)=>(x-edge.a.x)*edge.tx+(y-edge.a.y)*edge.ty;
+        const t1=project(s.x1,s.y1),t2=project(s.x2,s.y2),lo=Math.min(t1,t2),hi=Math.max(t1,t2);
+        if(hi<=start || lo>=end)return [s];
+        const pieces=[];
+        if(lo<start)pieces.push([lo,start]);
+        if(hi>end)pieces.push([end,hi]);
+        return pieces.map(([a,b])=>{const p=at(a),q=at(b);return {...s,x1:p.x,y1:p.y,x2:q.x,y2:q.y};});
+      });
+    };
+    if(partKey==='handle') {
+      const {length, width, radius:r}=params;
+      const pts=[];
+      const c=edge.length/2, d=edge.depth/2;
+      const corners=[[c+length/2-r,d+width/2-r,0],[c-length/2+r,d+width/2-r,Math.PI/2],[c-length/2+r,d-width/2+r,Math.PI],[c+length/2-r,d-width/2+r,Math.PI*1.5]];
+      for(const [u,v,start] of corners) for(let i=0;i<=8;i++) {
+        const angle=start+i*Math.PI/16;
+        pts.push(at(u+Math.cos(angle)*r,v+Math.sin(angle)*r));
+      }
+      if(!pts.every(p=>pointInPolygon(p,flap.polygon))) return {...baseModel,partError:'El asa no cabe en esta solapa. Reduce su largo o ancho.'};
+      flap.holes.push(positive(pts));
+      addCuts(pts,true);
+    } else if(partKey==='thumb_notch') {
+      const centers=params.count===2 ? [edge.length/2-params.distance/2,edge.length/2+params.distance/2] : [edge.length/2];
+      const path=[{...edge.a}];
+      for(const center of centers) {
+        for(let i=0;i<=32;i++) {
+          const angle=Math.PI*i/32;
+          path.push(at(center-params.radius*Math.cos(angle),params.radius*Math.sin(angle)));
+        }
+      }
+      path.push({...edge.b});
+      removeEdgeCut(0,edge.length);
+      addCuts(path);
+      // Replace the straight perimeter by the notched perimeter for both viewers.
+      flap.polygon = positive([...flap.polygon.slice(0,edge.index),...path,...flap.polygon.slice(edge.index+2)]);
+    } else if(partKey==='tab_lock') {
+      const start=(edge.length-params.length)/2,end=start+params.length;
+      const a=at(start),b=at(end),taper=Math.min(4,params.length*0.15);
+      const outer=[a,at(start+taper,-params.depth),at(end-taper,-params.depth),b];
+      removeEdgeCut(start,end);
+      addCuts(outer);
+      const id=Math.max(...model.faces.map(f=>Number(f.id)||0))+1;
+      const hingeId='part_tab_'+id;
+      const polygon=positive(outer);
+      const centroid={x:polygon.reduce((s,p)=>s+p.x,0)/polygon.length,y:polygon.reduce((s,p)=>s+p.y,0)/polygon.length};
+      const cross=(b.x-a.x)*(-(centroid.y-a.y))-(-(b.y-a.y))*(centroid.x-a.x);
+      const angle=cross>=0?90:-90;
+      model.faces.push({id,name:'Pestaña de cierre',label:'Pestaña de cierre',role:'FLAP_CLOSURE',polygon,holes:[],centroid,parentId:flap.id,hingeId,defaultAngle:angle});
+      const fold={x1:a.x,y1:a.y,x2:b.x,y2:b.y,type:'FOLD',isPartMod:true};
+      model.foldSegments.push(fold);
+      const len=Math.hypot(b.x-a.x,b.y-a.y);
+      model.hinges.push({id:hingeId,parentFaceId:flap.id,childFaceId:id,parentId:flap.id,childId:id,faceA:flap.id,faceB:id,
+        p1:a,p2:b,midpoint:at(edge.length/2),length:len,lengthMm:len,defaultAngle:angle,animSteps:[{start:0.8,end:1,deltaDeg:angle}],isPartMod:true});
+    }
+    for(const face of model.faces) {
+      const xs=face.polygon.map(p=>p.x),ys=face.polygon.map(p=>p.y);
+      const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+      face.bounds={minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY};face.bbox={...face.bounds};face.points=face.polygon;
+      face.areaMm2=Math.abs(area(face.polygon))-(face.holes||[]).reduce((s,h)=>s+Math.abs(area(h)),0);face.area=face.areaMm2;
+    }
+    const minX=Math.min(...model.faces.map(f=>f.bounds.minX)),maxX=Math.max(...model.faces.map(f=>f.bounds.maxX));
+    const minY=Math.min(...model.faces.map(f=>f.bounds.minY)),maxY=Math.max(...model.faces.map(f=>f.bounds.maxY));
+    model.bounds={minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY};
+    model.blankWidthMm=maxX-minX;model.blankHeightMm=maxY-minY;
+    model.cutSegmentsMm=model.cutSegments;model.foldSegmentsMm=model.foldSegments;
+    const segmentLength=s=>Math.hypot(s.x2-s.x1,s.y2-s.y1);
+    model.totalCutLengthMm=model.cutSegments.reduce((s,e)=>s+segmentLength(e),0);
+    model.totalFoldLengthMm=model.foldSegments.reduce((s,e)=>s+segmentLength(e),0);
+    model.totalAreaMm2=model.faces.reduce((s,f)=>s+f.areaMm2,0);
+    return model;
+  }
+
+  function applyLegacyPartVariation(baseModel, partKey) {
     if (!baseModel || !partKey || partKey === 'standard') return baseModel;
 
     const targetFlap = findPrimaryLidFlapFace(baseModel);
@@ -2600,6 +2772,7 @@
     buildDielineModelFromPacdora,
     resizeDielineParametric,
     applyPartVariationToModel,
+    getPartVariationSettings,
     findPrimaryLidFlapFace,
     findSymmetricFace,
     getOrBuildBleedSegments,
