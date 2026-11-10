@@ -671,7 +671,14 @@
     let mmPerUnit = 25.4 / 72;
     let scaleSource = 'Estándar CAD/Illustrator (72 pt = 25.4 mm)';
 
-    if (cotaMmValue && cotaMmValue > 0) {
+    const svgElement=svgText.match(/<svg\b[^>]*>/i);
+    const svgAttrs=svgElement?parseAttributes(svgElement[0]):{};
+    const physicalWidth=/^([\d.e+-]+)mm$/i.exec(svgAttrs.width||'');
+    const viewBox=(svgAttrs.viewBox||svgAttrs.viewbox||'').trim().split(/[\s,]+/).map(Number);
+    if (physicalWidth && Number(physicalWidth[1])>0) {
+      mmPerUnit=viewBox.length===4&&viewBox[2]>0?Number(physicalWidth[1])/viewBox[2]:1;
+      scaleSource='Escala física SVG en milímetros';
+    } else if (cotaMmValue && cotaMmValue > 0) {
       let witnessSpan = null;
       if (dimensionLines.length >= 2) {
         const vLines = dimensionLines.filter(l => Math.abs(l.x2 - l.x1) < 0.01 && Math.abs(l.y2 - l.y1) > 5);
@@ -938,7 +945,7 @@
       }
       const signedArea = area2 * 0.5;
 
-      if (signedArea > 150) {
+      if (signedArea > 0.05) {
         const faceId = rawFaces.length;
         cycle.forEach(h => { h.faceId = faceId; });
         totalAreaMm2 += signedArea;
@@ -972,6 +979,18 @@
           centroid: { x: cx, y: cy }
         });
       }
+    }
+
+    if (!rawFaces.length) throw new Error('No hay paneles cerrados. Comprueba que los cortes forman un contorno cerrado.');
+    for (const face of rawFaces) {
+      const host = rawFaces.filter(other => other.id !== face.id && other.areaMm2 > face.areaMm2 && face.points.every(p => pointInPolygon(p, other.points)))
+        .sort((a,b) => a.areaMm2-b.areaMm2)[0];
+      if (host) {face.isHole=true;face.role='HOLE';host.holes.push(face.points);}
+    }
+    totalAreaMm2=0;
+    for (const face of rawFaces.filter(f=>!f.isHole)) {
+      face.areaMm2-=rawFaces.filter(f=>f.isHole&&face.holes.includes(f.points)).reduce((sum,f)=>sum+f.areaMm2,0);
+      totalAreaMm2+=face.areaMm2;
     }
 
     const hinges = [];
@@ -1020,7 +1039,7 @@
 
     const midY = blankHeightMm * 0.5;
     const bodyFaces = rawFaces
-      .filter(f => f.bbox.minY < midY && f.bbox.maxY > midY)
+      .filter(f => !f.isHole && f.bbox.minY < midY && f.bbox.maxY > midY)
       .sort((a, b) => a.centroid.x - b.centroid.x);
 
     let bodyCounter = 1;
@@ -1070,7 +1089,7 @@
     const mainBodyCandidates = bodyFaces.filter(f => f.role === 'BODY');
     const rootFace = mainBodyCandidates.length >= 2
       ? mainBodyCandidates[1]
-      : (mainBodyCandidates[0] || rawFaces[0]);
+      : (mainBodyCandidates[0] || rawFaces.find(f=>!f.isHole));
     rootFace.isRoot = true;
     rootFace.defaultAngle = 0;
 
@@ -1129,7 +1148,7 @@
         width: boxWidthMm,
         depth: boxDepthMm
       },
-      faces: rawFaces,
+      faces: rawFaces.filter(f=>!f.isHole),
       hinges: treeHinges,
       rootFaceId: rootFace.id
     };
@@ -2083,6 +2102,36 @@
     return null;
   }
 
+  function dimensionsFromBase(model,rootFaceId=model.rootFaceId) {
+    const base=model.faces.find(f=>f.id===rootFaceId);
+    if(!base)return model.boxDimensionsMm;
+    const depths=[];
+    for(const h of model.hinges){
+      const childId=h.parentFaceId===rootFaceId?h.childFaceId:h.childFaceId===rootFaceId?h.parentFaceId:null;
+      const child=model.faces.find(f=>f.id===childId);if(!child)continue;
+      const dx=h.p2.x-h.p1.x,dy=h.p2.y-h.p1.y,length=Math.hypot(dx,dy)||1;
+      const depth=Math.max(...child.polygon.map(p=>Math.abs((p.x-h.p1.x)*dy-(p.y-h.p1.y)*dx)/length));
+      if(depth>1)depths.push(depth);
+    }
+    depths.sort((a,b)=>a-b);
+    return {length:+base.bounds.width.toFixed(3),width:+base.bounds.height.toFixed(3),depth:+(depths.length?depths[Math.floor(depths.length/2)]:(model.boxDimensionsMm?.depth||40)).toFixed(3)};
+  }
+
+  function rerootDielineModel(model, rootFaceId) {
+    if(!model.faces.some(f=>f.id===rootFaceId))throw new Error('Panel base no encontrado.');
+    const faces=model.faces.map(f=>({...f,isRoot:f.id===rootFaceId,parentId:null}));
+    const hinges=[],visited=new Set([rootFaceId]),queue=[rootFaceId];
+    while(queue.length){const parent=queue.shift();for(const h of model.hinges){
+      const reverse=h.childFaceId===parent,child=reverse?h.parentFaceId:h.parentFaceId===parent?h.childFaceId:null;
+      if(child===null||visited.has(child))continue;
+      visited.add(child);queue.push(child);
+      const face=faces.find(f=>f.id===child);face.parentId=parent;
+      hinges.push({...h,parentFaceId:parent,childFaceId:child,parentId:parent,childId:child,defaultAngle:(h.defaultAngle??90)*(reverse?-1:1),animSteps:h.animSteps?.map(s=>({...s,deltaDeg:s.deltaDeg*(reverse?-1:1)}))});
+    }}
+    if(visited.size!==faces.length)throw new Error('Hay paneles sin unión de hendido. Revisa la clasificación de las capas.');
+    return {...model,faces,hinges,rootFaceId,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
+  }
+
   function findPrimaryLidFlapFace(model) {
     if (!model || !model.faces || model.faces.length === 0) return null;
     const byName = ['FT', 'TT', 'HT', 'FB', 'F', 'T'];
@@ -2775,6 +2824,8 @@
     getPartVariationSettings,
     findPrimaryLidFlapFace,
     findSymmetricFace,
+    rerootDielineModel,
+    dimensionsFromBase,
     getOrBuildBleedSegments,
     exportDielineToSVG,
     exportDielineToDXF,

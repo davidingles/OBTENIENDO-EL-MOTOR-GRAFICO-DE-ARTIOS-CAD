@@ -12,6 +12,11 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 
 ## Funcionamiento
 
+- «CREAR .blend» es únicamente un botón sin acción asociada.
+- Se pueden abrir SVG y DXF ASCII. Al abrir DXF se confirma la escala y la clasificación de grupos como corte, hendido o ignorar. Admite LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE con bulges, ELLIPSE, splines con nudos y puntos de control, y bloques INSERT 2D. Los formatos no compatibles se notifican; DWG y DXF binario no se importan de forma nativa. Referencia: [grupos DXF de Autodesk](https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-89CB823D-614D-4D1E-8204-568EC72DF869.htm).
+- Tras importar CAD, selecciona el panel de la base y usa «Usar panel seleccionado como base 3D» en Más si necesitas cambiarlo. El plegado requiere contornos cerrados y uniones de hendido entre paneles.
+- «Arte» carga una imagen exterior, muestra su ajuste sobre el plano y permite posición, escala proporcional, giro y reflexión. Puede aplicarse a todo el troquel o a la cara seleccionada. Se incluye como textura en GLB; el interior conserva su material. El tamaño máximo del atlas de textura es 2048 px por lado.
+- GLB exporta geometría, UV, imágenes y animación. La geometría se convierte de los milímetros del editor a los metros de glTF sin alterar la vista.
 - Al abrir o centrar un modelo, el troquel 2D ocupa como máximo el 75 % del espacio libre del plano; tiene en cuenta el tamaño actual del panel 3D. El zoom manual permite ampliarlo después.
 - La biblioteca muestra planos completos sobre blanco y vistas 3D generadas con la geometría de cada modelo. Las miniaturas se cargan al entrar en la zona visible y comparten un único renderizador 3D.
 - Los modelos y sus geometrías base se cargan de los archivos incluidos en `assets`. También se pueden abrir archivos SVG locales.
@@ -21,7 +26,6 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 - Material ofrece tres acabados: blanco/blanco, blanco/marrón y marrón/marrón. El espesor se ajusta aparte.
 - Asa, uñero y pestaña de cierre tienen una ventana de medidas con deslizadores en tiempo real. El asa permite ancho, largo y radio; el uñero, uno o dos recortes, radio y distancia entre centros. Los huecos y las muescas modifican la malla 3D. La pestaña añade una cara articulada y sustituye el corte de unión por un hendido.
 - Las dimensiones interiores y exteriores se estiman usando los ajustes del material y su espesor. Son aproximaciones.
-- Los proyectos se guardan en el almacenamiento local de la aplicación; no incluyen el arte cargado. Los guardados de la antigua versión del navegador no se importan automáticamente a Tauri.
 - Las variaciones de piezas son experimentales. Verifica los planos y las medidas antes de fabricar.
 - Se pueden exportar SVG, DXF, PDF, GLB y PNG. El formato AI nativo no está implementado; PDF y SVG se pueden abrir en Illustrator.
 

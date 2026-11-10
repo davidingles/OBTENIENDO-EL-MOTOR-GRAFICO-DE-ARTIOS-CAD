@@ -33,11 +33,7 @@
         </svg>
       </button>
 
-      <div class="status-cloud" title="Los proyectos se guardan en este navegador">
-        <svg viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="1.8" fill="none">
-          <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
-        </svg>
-      </div>
+
     </div>
 
     <div class="header-right">
@@ -50,15 +46,16 @@
         </svg>
       </button>
 
-      <label for="svg-file-input" class="btn-outline" title="Abrir cualquier archivo .SVG personalizado">
-        <span>Abrir .SVG</span>
+      <label for="svg-file-input" class="btn-outline" title="Abrir un plano SVG o DXF">
+        <span>Abrir SVG / DXF</span>
       </label>
-      <input type="file" id="svg-file-input" accept=".svg" class="hidden-input" />
+      <input type="file" id="svg-file-input" accept=".svg,.dxf" class="hidden-input" />
 
       <label for="artwork-file-input" class="btn-outline" title="Cargar textura o diseño exterior">
         <span>🎨 Arte</span>
       </label>
       <input type="file" id="artwork-file-input" accept="image/*" class="hidden-input" />
+      <button id="btn-art-settings" class="icon-btn hidden" title="Ajustar imagen exterior" aria-label="Ajustar imagen exterior">⚙</button>
       <button id="btn-clear-artwork" class="icon-btn" title="Restaurar textura de cartón original">↺</button>
 
       <button id="btn-share-project" class="icon-btn" disabled title="Compartir enlace del modelo">
@@ -144,10 +141,7 @@
       <!-- ================= PESTAÑA 1: DIELINES ================= -->
       <div id="drawer-tab-dielines" class="drawer-tab-view hidden">
         <div class="drawer-tab-header">
-          <div class="pill-switch-group">
-            <button id="pill-catalog-library" class="pill-tab-btn active">Biblioteca</button>
-            <button id="pill-catalog-projects" class="pill-tab-btn">Proyectos</button>
-          </div>
+          <span class="drawer-title">Biblioteca</span>
         </div>
 
         <div class="dielines-search-box">
@@ -171,12 +165,7 @@
 
         <!-- Lista scrollable vertical de modelos con doble preview (2D + 3D) -->
         <div id="drawer-models-list" class="drawer-models-scroll"></div>
-        <div id="drawer-projects" class="drawer-models-scroll hidden">
-          <input id="project-name" class="drawer-dropdown" type="text" placeholder="Nombre del proyecto" aria-label="Nombre del proyecto" />
-          <button id="btn-save-project" class="btn-outline">Guardar proyecto actual</button>
-          <p class="project-note">Se guardan en este navegador el modelo, las medidas y sus ajustes. El arte cargado no se guarda.</p>
-          <div id="saved-projects-list"></div>
-        </div>
+
       </div>
 
       <!-- ================= PESTAÑA 2: BASIC (SCREENSHOT 1) ================= -->
@@ -240,20 +229,6 @@
           </div>
         </div>
 
-        <!-- Size mode -->
-        <div class="drawer-group">
-          <div class="section-title-wrap">
-            <span class="field-label-bold">Tipo de medida</span>
-            <span class="info-tip-dot" title="Elige si las medidas corresponden al troquel de fabricación, interior útil o exterior">ⓘ</span>
-          </div>
-          <div class="custom-select-wrap">
-            <select id="select-size-mode" class="drawer-dropdown">
-              <option value="dm" selected>Medidas de fabricación</option>
-              <option value="id">Medidas interiores (estimadas)</option>
-              <option value="ed">Medidas exteriores (estimadas)</option>
-            </select>
-          </div>
-        </div>
       </div>
 
       <!-- ================= PESTAÑA 3: DETAILS (SCREENSHOT 2) ================= -->
@@ -457,6 +432,7 @@
           <div class="section-title-wrap">
             <span class="field-label-bold">Control individual por bisagra roja</span>
           </div>
+          <button id="btn-set-base" class="btn-outline hidden">Usar panel seleccionado como base 3D</button>
           <div id="hinges-slider-list" class="hinges-drawer-scroll"></div>
         </div>
       </div>
@@ -576,6 +552,7 @@
       <!-- TARJETA INFERIOR: FILE FORMATS + YOU WILL GET (IDÉNTICO A LA IMAGEN) -->
       <div class="export-formats-card">
         <div class="export-card-title">Formatos de archivo</div>
+        <button id="btn-create-blend" type="button" class="btn-outline create-blend-button">CREAR .blend</button>
 
         <div class="formats-button-grid">
           <button class="format-btn" data-export-format="ai" disabled title="Exportación AI nativa aún no disponible; usa PDF o SVG en Illustrator">
@@ -631,6 +608,8 @@
   <script src="assets/fefco-catalog.js"></script>
   <script src="assets/pacdora-catalog/catalog-index.js"></script>
   <script src="dieline-engine.js"></script>
+  <script src="cad-io.js"></script>
+  <script src="artwork-layout.js"></script>
   <script src="app.js"></script>
   <dialog id="part-options-dialog" class="part-options-dialog" aria-labelledby="part-options-title">
     <div class="part-options-head">
@@ -640,6 +619,31 @@
     <div id="part-options-fields"></div>
     <p id="part-options-status" class="part-options-status" role="status"></p>
     <button id="part-options-done" class="btn-primary-blue">Listo</button>
+  </dialog>
+  <dialog id="cad-import-dialog" class="cad-import-dialog" aria-labelledby="cad-import-title">
+    <h3 id="cad-import-title">Abrir DXF</h3>
+    <p>Asigna corte, hendido o ignorar a cada grupo del archivo.</p>
+    <label class="cad-scale-row">Milímetros por unidad <input id="cad-unit-scale" type="number" min="0.000001" step="any" value="1" /></label>
+    <p id="cad-import-summary"></p>
+    <div id="cad-layer-roles"></div>
+    <p id="cad-import-status" role="status"></p>
+    <div class="cad-import-actions"><button id="cad-import-cancel" class="btn-outline">Cancelar</button><button id="cad-import-apply" class="btn-primary-blue">Abrir plano</button></div>
+  </dialog>
+  <dialog id="art-options-dialog" class="part-options-dialog" aria-labelledby="art-options-title">
+    <div class="part-options-head"><strong id="art-options-title">Imagen exterior</strong><button id="art-options-close" class="icon-btn" aria-label="Cerrar ajustes de imagen">×</button></div>
+    <label class="art-field">Aplicar a <select id="art-scope"><option value="all">Todo el troquel</option><option value="face">Cara seleccionada</option></select></label>
+    <button id="art-fit" class="btn-outline">Ajustar sin deformar</button>
+    <label class="art-field">Escala (%) <input id="art-scale-num" type="number" min="1" max="1000" step="1" value="100" /></label>
+    <input id="art-scale" aria-label="Escala de imagen" type="range" min="1" max="500" value="100" />
+    <label class="art-field">Desplazar X (mm) <input id="art-x" type="number" step="0.5" value="0" /></label>
+    <label class="art-field">Desplazar Y (mm) <input id="art-y" type="number" step="0.5" value="0" /></label>
+    <label class="art-field">Giro (°) <input id="art-angle-num" type="number" min="-180" max="180" value="0" /></label>
+    <input id="art-angle" aria-label="Giro de imagen" type="range" min="-180" max="180" step="1" value="0" />
+    <label><input id="art-mirror-x" type="checkbox" /> Reflejar horizontalmente</label>
+    <label><input id="art-mirror-y" type="checkbox" /> Reflejar verticalmente</label>
+    <button id="art-drag" class="btn-outline" aria-pressed="false">Mover imagen sobre el plano</button>
+    <p class="part-options-status">Los cambios se ven en 2D y 3D. La imagen solo se aplica al exterior.</p>
+    <button id="art-options-done" class="btn-primary-blue">Listo</button>
   </dialog>
 </body>
 </html>

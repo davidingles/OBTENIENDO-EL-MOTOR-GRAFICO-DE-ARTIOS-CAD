@@ -45,7 +45,6 @@
     unit: 'mm',             // 'mm' | 'in'
     solverAvailable: false,
     solverPending: false,
-    sizeMode: 'dm',         // 'dm' (Mfg) | 'id' (Inner) | 'ed' (Outer)
     activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip'
     partParams: {},
     partHoverFaceId: null,  // Para resaltar la solapa en 2D al pasar el cursor sobre la tarjeta
@@ -82,6 +81,8 @@
     viewMode: 'split',      // 'split' | '3d' | '2d'
     customArtworkTex: null,
     customArtworkFlipY: false,
+    artwork: null,
+    artworkEditing: false,
     hingeAngles: {},
     foldSequenceMode: 'phased',
     view2D: {
@@ -267,6 +268,7 @@
 
     const tex = loader.load(dataUri, () => {
       tex.needsUpdate = true;
+      if (state.artwork && state.dieline) { refreshArtworkAtlas(state.dieline); render2FDieline(); }
     });
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
@@ -281,6 +283,7 @@
   }
 
   function buildBoardMaterials() {
+    if (state.artwork && artworkImage) refreshArtworkAtlas(state.dieline);
     const board = resolveMaterialFinish(state.boardId);
 
     const surfaceTex = getArtiosTexture(board.surfaceTex, 1, 1);
@@ -367,6 +370,7 @@
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
+    clearArtwork();
     state.baseDieline = model;
     state.dieline = model;
     state.openParamsValues = {};
@@ -375,11 +379,9 @@
     state.partParams = {};
     document.getElementById('part-options-dialog')?.close();
     document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
-    state.sizeMode = 'dm';
     state.solverAvailable = true;
-    const modeSelect = document.getElementById('select-size-mode');
-    if (modeSelect) { modeSelect.value = 'dm'; modeSelect.disabled = false; }
     state.selectedFaceId = model.rootFaceId;
+    document.getElementById('btn-set-base')?.classList.toggle('hidden',model.isPacdoraModel);
 
     state.hingeAngles = {};
     for (const h of model.hinges) {
@@ -522,8 +524,7 @@
     const ratio = state.caliper / (board?.caliper || state.caliper);
     const inside = (board?.insideLoss || 0) * ratio;
     const outside = (board?.outsideGain || 0) * ratio;
-    const offset = state.sizeMode === 'id' ? inside : state.sizeMode === 'ed' ? -outside : 0;
-    const mfg = [state.paramL, state.paramW, state.paramH].map(value => Math.max(15, value + offset));
+    const mfg = [state.paramL, state.paramW, state.paramH];
     let resized = DielineEngine.resizeDielineParametric(state.baseDieline, ...mfg);
     if (!resized) return;
     for (const [key, targetSpan] of Object.entries(state.openParamsValues)) {
@@ -543,7 +544,6 @@
     state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart, state.partParams[state.activePart]);
     state.solverAvailable = true;
     state.solverPending = false;
-    document.getElementById('select-size-mode').disabled = false;
     document.getElementById('param-sync-status').textContent = 'Cálculo local · medidas estimadas';
     updateDielineInfoUI(state.dieline);
     rebuild3DMesh();
@@ -964,9 +964,11 @@
     const pinchedThickness = caliper * Math.max(0.15, 1.0 - state.crushDepthRatio);
     const coreRadius = pinchedThickness * 0.48;
 
+    const builtFaces = new Set();
     function buildFaceNode(faceId, parentContainer, originOffset3D) {
       const face = faceById.get(faceId);
-      if (!face) return;
+      if (!face || builtFaces.has(faceId)) return;
+      builtFaces.add(faceId);
 
       const safeFaceName = (face.label || `Panel_${face.id}`).replace(/[^a-zA-Z0-9_]/g, '_');
       const faceHolder = new THREE.Group();
@@ -1099,6 +1101,7 @@
     );
 
     buildFaceNode(model.rootFaceId, dielineRootGroup, rootOrigin3D);
+    for (const face of model.faces) if (!builtFaces.has(face.id)) buildFaceNode(face.id, dielineRootGroup, rootOrigin3D);
 
     applyFoldAngles();
     updateSelectionHighlight();
@@ -1311,27 +1314,23 @@
       return;
     }
 
-    // Ocultar temporalmente las líneas auxiliares CAD 3D para que el .GLB en Blender solo tenga la malla sólida limpia
-    const hiddenHelpers = [];
-    dielineRootGroup.traverse(obj => {
-      if (obj.userData && obj.userData.isCADHelper && obj.visible) {
-        obj.visible = false;
-        hiddenHelpers.push(obj);
-      }
-    });
+    // glTF uses metres. Export an independent hierarchy so the live viewer stays in mm.
+    const exportRoot=dielineRootGroup.clone(true);
+    exportRoot.traverse(obj=>{if(obj.userData?.isCADHelper)obj.visible=false;});
+    exportRoot.scale.multiplyScalar(0.001);
+    exportRoot.position.multiplyScalar(0.001);
+    exportRoot.userData={...exportRoot.userData,units:'meters',dimensionsMm:{length:state.paramL,width:state.paramW,height:state.paramH}};
 
     const clips = buildBlenderAnimationClips();
     const exporter = new THREE.GLTFExporter();
 
     exporter.parse(
-      dielineRootGroup,
+      exportRoot,
       (result) => {
-        // Restaurar visibilidad de líneas auxiliares
-        for (const h of hiddenHelpers) h.visible = true;
 
         if (result instanceof ArrayBuffer) {
           const blob = new Blob([result], { type: 'model/gltf-binary' });
-          const baseName = state.fileName.replace(/\.svg$/i, '');
+          const baseName = state.fileName.replace(/\.[^.]+$/, '');
           saveExport(blob, `${baseName}_${state.boardId}_${state.caliper}mm_Animado_Blender.glb`);
         }
       },
@@ -1384,6 +1383,12 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (state.artwork && state.artworkEditing && e.button === 0 && !e.shiftKey) {
+        const tf = get2DTransform(canvas, state.dieline.bounds), rect = canvas.getBoundingClientRect();
+        const ratio = canvas.width/rect.width;
+        artworkDrag = {x:tf.toWorldX((e.clientX-rect.left)*ratio), y:tf.toWorldY((e.clientY-rect.top)*ratio), centerX:state.artwork.centerX,centerY:state.artwork.centerY};
+        e.preventDefault();return;
+      }
       const hitFace = hitTest2DCanvas(e);
       if (state.toolMode === 'select' && hitFace && e.button === 0 && !e.shiftKey) {
         selectFace(hitFace.id);
@@ -1394,6 +1399,12 @@
     });
 
     window.addEventListener('pointermove', (e) => {
+      if (artworkDrag && state.artwork) {
+        const tf=get2DTransform(canvas,state.dieline.bounds),rect=canvas.getBoundingClientRect(),ratio=canvas.width/rect.width;
+        state.artwork.centerX=artworkDrag.centerX+tf.toWorldX((e.clientX-rect.left)*ratio)-artworkDrag.x;
+        state.artwork.centerY=artworkDrag.centerY+tf.toWorldY((e.clientY-rect.top)*ratio)-artworkDrag.y;
+        scheduleArtworkRefresh();syncArtworkControls();return;
+      }
       if (state.view2D.isDragging) {
         const dx = e.clientX - state.view2D.lastX;
         const dy = e.clientY - state.view2D.lastY;
@@ -1423,6 +1434,7 @@
 
     window.addEventListener('pointerup', () => {
       state.view2D.isDragging = false;
+      artworkDrag = null;
     });
   }
 
@@ -1581,6 +1593,8 @@
         ctx.fill('evenodd');
       }
     }
+
+    drawArtwork2D(ctx, tf, model);
 
     // 3. Dibujar líneas de CORTE (AZUL #009ee3)
     ctx.strokeStyle = '#009ee3';
@@ -2041,21 +2055,6 @@
       }, { passive: false });
     }
 
-    // 6. Selector Size Mode (Manufacture / Inner / Outer)
-    const sizeModeSel = document.getElementById('select-size-mode');
-    if (sizeModeSel) {
-      sizeModeSel.addEventListener('change', (e) => {
-        const dims = state.parametricDieline?.solverDimensions?.[e.target.value === 'id' ? 'inner' : e.target.value === 'ed' ? 'outer' : 'mfg'];
-        if (!dims || !Number.isFinite(Number(dims.L ?? dims.length))) { e.target.value = state.sizeMode; return; }
-        state.sizeMode = e.target.value;
-        state.paramL = Number(dims.L ?? dims.length); state.paramW = Number(dims.W ?? dims.width); state.paramH = Number(dims.H ?? dims.height);
-        for (const [id, value] of [['input-length', state.paramL], ['input-width', state.paramW], ['input-height', state.paramH]]) {
-          document.getElementById(id).value = value;
-        }
-        applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
-      });
-    }
-
     // 7. Parts Tab: variación de partes estructurales (Screenshot 3)
     const partCards = document.querySelectorAll('.part-card');
     partCards.forEach(card => {
@@ -2236,8 +2235,12 @@
         const file = e.target.files[0];
         if (file) {
           const reader = new FileReader();
-          reader.onload = (ev) => loadSVGString(ev.target.result, file.name, true);
+          reader.onload = (ev) => {
+            if (/\.dxf$/i.test(file.name)) openDxfImport(ev.target.result, file.name);
+            else loadSVGString(ev.target.result, file.name, true);
+          };
           reader.readAsText(file);
+          e.target.value = '';
         }
       });
     }
@@ -2247,16 +2250,29 @@
       artInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) applyCustomArtworkFile(file);
+        e.target.value = '';
       });
     }
 
     const clearArtBtn = document.getElementById('btn-clear-artwork');
     if (clearArtBtn) {
       clearArtBtn.addEventListener('click', () => {
-        state.customArtworkTex = null;
+        clearArtwork();
         rebuild3DMesh();
+        render2FDieline();
       });
     }
+
+    document.getElementById('btn-art-settings')?.addEventListener('click', openArtworkOptions);
+    document.getElementById('btn-set-base')?.addEventListener('click',async()=>{
+      try{
+        const artwork=state.artwork?{...state.artwork}:null;
+        const model=DielineEngine.rerootDielineModel(state.baseDieline,state.selectedFaceId);
+        applyNewDielineModel(model,state.fileName,true);
+        if(artwork)await loadArtworkData(artwork.dataUrl,artwork);
+      }catch(error){alert(error.message);}
+    });
+    initArtworkControls();
 
     const bindCheck = (id, prop, callback) => {
       const el = document.getElementById(id);
@@ -2496,76 +2512,7 @@
     }
   }
 
-  const PROJECTS_KEY = 'dieline-studio-projects-v1';
-  function readProjects() {
-    try { const data = JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]'); return Array.isArray(data) ? data : []; }
-    catch (_) { return []; }
-  }
-  function renderProjects() {
-    const list = document.getElementById('saved-projects-list'); list.replaceChildren();
-    const projects = readProjects();
-    if (!projects.length) { list.textContent = 'Todavía no hay proyectos guardados.'; return; }
-    projects.forEach(project => {
-      const row = document.createElement('div'); row.className = 'project-row';
-      const open = document.createElement('button'); open.className = 'btn-outline project-open';
-      open.textContent = project.name; open.title = 'Abrir proyecto';
-      open.addEventListener('click', async () => {
-        if (project.modelNum) {
-          const entry = (window.PACDORA_CATALOG_INDEX?.models || []).find(m => Number(m.num) === Number(project.modelNum));
-          if (!entry) { alert('No se encuentra el modelo de este proyecto.'); return; }
-          await loadFefcoModel(entry, true);
-        } else if (project.svgText) loadSVGString(project.svgText, project.name, true);
-        else return;
-        state.boardId = resolveMaterialFinish(project.boardId || state.boardId).id;
-        state.caliper = Number(project.caliper) || state.caliper;
-        document.getElementById('select-material').value = state.boardId;
-        document.getElementById('input-thickness').value = state.caliper;
-        state.bleedMm = 0;
-        state.symmetryLinks = project.symmetryLinks || {};
-        state.crushDepthRatio = Number.isFinite(project.crushDepthRatio) ? project.crushDepthRatio : .72;
-        document.getElementById('input-crush-depth').value = Math.round(state.crushDepthRatio * 100);
-        state.openParamsValues = project.openParamsValues || {};
-        state.activePart = project.activePart || 'standard';
-        state.partParams = project.partParams || {};
-        document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === state.activePart));
-        state.sizeMode = project.sizeMode || 'dm';
-        document.getElementById('select-size-mode').value = state.sizeMode;
-        state.paramL = project.dimensions[0]; state.paramW = project.dimensions[1]; state.paramH = project.dimensions[2];
-        for (const [id, value] of [['input-length', state.paramL], ['input-width', state.paramW], ['input-height', state.paramH]]) document.getElementById(id).value = value;
-        applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
-        document.querySelector('[data-drawer-tab="basic"]').click();
-      });
-      const remove = document.createElement('button'); remove.className = 'icon-btn'; remove.textContent = '×'; remove.title = 'Eliminar proyecto';
-      remove.addEventListener('click', () => { if (!confirm('¿Eliminar el proyecto guardado?')) return; localStorage.setItem(PROJECTS_KEY, JSON.stringify(readProjects().filter(p => p.id !== project.id))); renderProjects(); });
-      row.append(open, remove); list.appendChild(row);
-    });
-  }
   function initDrawerCatalogUI() {
-    const library = document.getElementById('pill-catalog-library');
-    const projects = document.getElementById('pill-catalog-projects');
-    const switchCatalog = showProjects => {
-      library.classList.toggle('active', !showProjects); projects.classList.toggle('active', showProjects);
-      document.querySelector('.dielines-search-box').classList.toggle('hidden', showProjects);
-      document.getElementById('dielines-categories-bar').classList.toggle('hidden', showProjects);
-      document.getElementById('drawer-models-list').classList.toggle('hidden', showProjects);
-      document.getElementById('drawer-projects').classList.toggle('hidden', !showProjects);
-      if (showProjects) renderProjects(); else renderDrawerCatalogList();
-    };
-    library.addEventListener('click', () => switchCatalog(false));
-    projects.addEventListener('click', () => switchCatalog(true));
-    document.getElementById('btn-save-project').addEventListener('click', () => {
-      if (!state.dieline) return;
-      const nameInput = document.getElementById('project-name');
-      const name = nameInput.value.trim() || state.fileName;
-      nameInput.value = '';
-      const project = { id: Date.now().toString(36) + Math.random().toString(36).slice(2), name: name.trim(),
-        modelNum: state.activeFefcoEntry?.num || null, svgText: state.activeFefcoEntry ? null : state.svgText,
-        dimensions: [state.paramL, state.paramW, state.paramH], sizeMode: state.sizeMode, boardId: state.boardId,
-        caliper: state.caliper, bleedMm: state.bleedMm, crushDepthRatio: state.crushDepthRatio,
-        activePart: state.activePart, partParams: state.partParams, symmetryLinks: {...state.symmetryLinks}, openParamsValues: {...state.openParamsValues} };
-      try { const data = readProjects(); data.unshift(project); localStorage.setItem(PROJECTS_KEY, JSON.stringify(data)); renderProjects(); }
-      catch (_) { alert('No se pudo guardar el proyecto. Comprueba el espacio disponible del navegador.'); }
-    });
     const searchInput = document.getElementById('drawer-dielines-search');
     if (searchInput) {
       searchInput.addEventListener('input', (e) => {
@@ -3079,18 +3026,145 @@
     }
   }
 
-  function applyCustomArtworkFile(file) {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const loader = new THREE.TextureLoader();
-      const tex = loader.load(ev.target.result, () => {
-        tex.encoding = THREE.sRGBEncoding;
-        tex.needsUpdate = true;
-        state.customArtworkTex = tex;
-        rebuild3DMesh();
-      });
-    };
-    reader.readAsDataURL(file);
+  function openDxfImport(text, filename) {
+    try {
+      const cad=CadIO.parse(text),dialog=document.getElementById('cad-import-dialog');
+      const list=document.getElementById('cad-layer-roles'),status=document.getElementById('cad-import-status');
+      list.replaceChildren();status.textContent='';
+      document.getElementById('cad-unit-scale').value=cad.mmPerUnit||1;
+      document.getElementById('cad-import-summary').textContent=(cad.mmPerUnit?'Unidades detectadas.':'El archivo no declara unidades: confirma la escala (1 = mm; 10 = cm; 25,4 = pulgadas).')+' '+cad.warnings.join(' ');
+      const roles={};
+      for(const group of cad.groups){
+        const row=document.createElement('label');row.className='cad-layer-row';
+        const title=document.createElement('span');title.textContent=group.layer+' · color '+group.color+' · '+group.polylines.length+' trazados';
+        const select=document.createElement('select');select.setAttribute('aria-label','Tipo de línea de '+group.layer);
+        for(const [value,label]of [['cut','Corte'],['fold','Hendido'],['ignore','Ignorar']]){const option=document.createElement('option');option.value=value;option.textContent=label;select.appendChild(option);}
+        select.value=group.role;roles[group.id]=group.role;select.onchange=()=>{roles[group.id]=select.value;};row.append(title,select);list.appendChild(row);
+      }
+      document.getElementById('cad-import-cancel').onclick=()=>dialog.close();
+      document.getElementById('cad-import-apply').onclick=()=>{
+        try{
+          const svg=CadIO.toSvg(cad,roles,Number(document.getElementById('cad-unit-scale').value));
+          const model=DielineEngine.buildDielineModel(svg);
+          if(!model.faces.length)throw new Error('No se encontraron paneles cerrados. Revisa los cortes y los hendidos.');
+          model.boxDimensionsMm=DielineEngine.dimensionsFromBase(model);
+          state.svgText=svg;state.activeFefcoEntry=null;
+          applyNewDielineModel(model,filename,true);dialog.close();
+          if(model.hinges.length<model.faces.length-1)document.getElementById('param-sync-status').textContent='DXF abierto · hay paneles sin unión: revisa los hendidos';
+        }catch(error){status.textContent=error.message;}
+      };
+      dialog.showModal();
+    }catch(error){alert('No se pudo abrir el DXF: '+error.message);}
+  }
+
+  let artworkImage=null,artworkCanvas=null,artworkTextureCanvas=null,artworkDrag=null,artworkFrame=0;
+  function clearArtwork(){
+    state.artwork=null;state.artworkEditing=false;artworkImage=null;artworkCanvas=null;artworkTextureCanvas=null;
+    state.customArtworkTex?.dispose();state.customArtworkTex=null;
+    document.getElementById('btn-art-settings')?.classList.add('hidden');
+    document.getElementById('art-options-dialog')?.close();
+  }
+  function artworkTargetBounds(){
+    if(state.artwork?.scope==='face')return state.dieline.faces.find(f=>f.id===state.artwork.faceId)?.bounds||state.dieline.bounds;
+    return state.dieline.bounds;
+  }
+  function fitArtwork(){
+    if(!state.artwork||!artworkImage)return;
+    Object.assign(state.artwork,ArtworkLayout.fit(artworkTargetBounds(),artworkImage.naturalWidth,artworkImage.naturalHeight));
+    state.artwork.baseWidth=state.artwork.width;state.artwork.baseHeight=state.artwork.height;
+    syncArtworkControls();scheduleArtworkRefresh();
+  }
+  function refreshArtworkAtlas(model){
+    if(!model||!state.artwork||!artworkImage)return;
+    const bounds=model.bounds,ratio=Math.min(2048/Math.max(bounds.width,bounds.height),8);
+    const width=Math.max(1,Math.round(bounds.width*ratio)),height=Math.max(1,Math.round(bounds.height*ratio));
+    artworkCanvas=artworkCanvas||document.createElement('canvas');artworkTextureCanvas=artworkTextureCanvas||document.createElement('canvas');
+    for(const canvas of [artworkCanvas,artworkTextureCanvas]){canvas.width=width;canvas.height=height;}
+    const ctx=artworkCanvas.getContext('2d');ctx.setTransform(width/bounds.width,0,0,height/bounds.height,-bounds.minX*width/bounds.width,-bounds.minY*height/bounds.height);
+    ctx.save();
+    if(state.artwork.scope==='face'){
+      const face=model.faces.find(f=>f.id===state.artwork.faceId);
+      ctx.beginPath();
+      if(face)for(const ring of [face.polygon,...(face.holes||[])]){ring.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();}
+      ctx.clip('evenodd');
+    }
+    const layout=state.artwork;
+    ctx.translate(layout.centerX,layout.centerY);ctx.rotate(layout.rotation*Math.PI/180);ctx.scale(layout.mirrorX?-1:1,layout.mirrorY?-1:1);
+    ctx.globalAlpha=layout.opacity??1;ctx.drawImage(artworkImage,-layout.width/2,-layout.height/2,layout.width,layout.height);ctx.restore();
+    const textureCtx=artworkTextureCanvas.getContext('2d'),board=resolveMaterialFinish(state.boardId);
+    textureCtx.fillStyle='#'+board.colorHex.toString(16).padStart(6,'0');textureCtx.fillRect(0,0,width,height);
+    const boardImage=getArtiosTexture(board.surfaceTex).image;
+    if(boardImage?.width&&boardImage?.height){
+      const tileX=130*width/bounds.width,tileY=130*height/bounds.height;
+      for(let y=0;y<height;y+=tileY)for(let x=0;x<width;x+=tileX)textureCtx.drawImage(boardImage,x,y,tileX,tileY);
+    }
+    textureCtx.drawImage(artworkCanvas,0,0);
+    if(!state.customArtworkTex){
+      state.customArtworkTex=new THREE.CanvasTexture(artworkTextureCanvas);
+      state.customArtworkTex.encoding=THREE.sRGBEncoding;
+      state.customArtworkTex.wrapS=state.customArtworkTex.wrapT=THREE.ClampToEdgeWrapping;
+      if(renderer)state.customArtworkTex.anisotropy=renderer.capabilities.getMaxAnisotropy();
+    }
+    state.customArtworkTex.image=artworkTextureCanvas;state.customArtworkTex.needsUpdate=true;
+  }
+  function drawArtwork2D(ctx,tf,model){
+    if(!artworkCanvas||!state.artwork)return;
+    for(const face of model.faces){
+      ctx.save();ctx.beginPath();
+      for(const ring of [face.polygon,...(face.holes||[])]){ring.forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y)));ctx.closePath();}
+      ctx.clip('evenodd');ctx.drawImage(artworkCanvas,tf.toScreenX(model.bounds.minX),tf.toScreenY(model.bounds.minY),model.bounds.width*tf.scale,model.bounds.height*tf.scale);ctx.restore();
+    }
+    if(state.artworkEditing){
+      ctx.save();ctx.setLineDash([5,4]);ctx.lineWidth=1.5;ctx.strokeStyle='#0788c6';ctx.beginPath();
+      ArtworkLayout.corners(state.artwork).forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y)));ctx.closePath();ctx.stroke();ctx.restore();
+    }
+  }
+  function scheduleArtworkRefresh(){
+    if(!artworkFrame)artworkFrame=requestAnimationFrame(()=>{artworkFrame=0;refreshArtworkAtlas(state.dieline);render2FDieline();});
+  }
+  async function loadArtworkData(dataUrl,saved=null){
+    const image=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('No se pudo leer la imagen.'));img.src=dataUrl;});
+    if(!state.dieline)throw new Error('Abre primero un troquel.');
+    artworkImage=image;
+    const fit=ArtworkLayout.fit(state.dieline.bounds,image.naturalWidth,image.naturalHeight);
+    state.artwork=saved?{...saved,dataUrl}:{...fit,dataUrl,scope:'all',faceId:state.selectedFaceId,baseWidth:fit.width,baseHeight:fit.height};
+    refreshArtworkAtlas(state.dieline);rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();
+    document.getElementById('btn-art-settings').classList.remove('hidden');
+  }
+  async function applyCustomArtworkFile(file){
+    try{
+      const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
+      await loadArtworkData(dataUrl);openArtworkOptions();
+    }catch(error){alert('No se pudo cargar el arte: '+(error.message||error));}
+  }
+  function syncArtworkControls(){
+    if(!state.artwork||!state.dieline)return;
+    const layout=state.artwork,bounds=artworkTargetBounds(),centerX=bounds.minX+bounds.width/2,centerY=bounds.minY+bounds.height/2;
+    const set=(id,value)=>{const el=document.getElementById(id);if(el&&el!==document.activeElement)el.value=Number(value.toFixed(3));};
+    set('art-scale',layout.width/(layout.baseWidth||layout.width)*100);set('art-scale-num',layout.width/(layout.baseWidth||layout.width)*100);
+    set('art-x',layout.centerX-centerX);set('art-y',layout.centerY-centerY);set('art-angle',layout.rotation);set('art-angle-num',layout.rotation);
+    document.getElementById('art-scope').value=layout.scope;
+    document.getElementById('art-mirror-x').checked=layout.mirrorX;document.getElementById('art-mirror-y').checked=layout.mirrorY;
+    document.getElementById('art-drag').setAttribute('aria-pressed',String(state.artworkEditing));
+  }
+  function openArtworkOptions(){if(!state.artwork)return;syncArtworkControls();const dialog=document.getElementById('art-options-dialog');if(!dialog.open)dialog.show();}
+  function initArtworkControls(){
+    const close=()=>{state.artworkEditing=false;artworkDrag=null;document.getElementById('art-options-dialog').close();render2FDieline();};
+    document.getElementById('art-options-close').onclick=close;document.getElementById('art-options-done').onclick=close;
+    document.getElementById('art-fit').onclick=fitArtwork;
+    document.getElementById('art-scope').onchange=e=>{if(!state.artwork)return;state.artwork.scope=e.target.value;state.artwork.faceId=state.selectedFaceId;fitArtwork();};
+    for(const id of ['art-scale','art-scale-num','art-x','art-y','art-angle','art-angle-num'])document.getElementById(id).addEventListener('input',e=>{
+      if(!state.artwork||e.target.value==='')return;
+      const value=Number(e.target.value);if(!Number.isFinite(value))return;
+      const layout=state.artwork,bounds=artworkTargetBounds();
+      if(id.startsWith('art-scale')){const scale=Math.max(1,Math.min(1000,value))/100;layout.width=layout.baseWidth*scale;layout.height=layout.baseHeight*scale;}
+      else if(id==='art-x')layout.centerX=bounds.minX+bounds.width/2+value;
+      else if(id==='art-y')layout.centerY=bounds.minY+bounds.height/2+value;
+      else layout.rotation=Math.max(-180,Math.min(180,value));
+      syncArtworkControls();scheduleArtworkRefresh();
+    });
+    for(const [id,key] of [['art-mirror-x','mirrorX'],['art-mirror-y','mirrorY']])document.getElementById(id).onchange=e=>{if(state.artwork){state.artwork[key]=e.target.checked;scheduleArtworkRefresh();}};
+    document.getElementById('art-drag').onclick=()=>{state.artworkEditing=!state.artworkEditing;syncArtworkControls();render2FDieline();};
   }
 
   function updatePlayButtonUI() {
@@ -3204,7 +3278,7 @@
     if (!renderer || !scene || !camera) return;
     renderer.render(scene, camera);
     renderer.domElement.toBlob(blob => {
-      if (blob) saveExport(blob, `${state.fileName.replace(/\.svg$/i, '')}_3D_${state.caliper}mm.png`);
+      if (blob) saveExport(blob, `${state.fileName.replace(/\.[^.]+$/, '')}_3D_${state.caliper}mm.png`);
     }, 'image/png');
   }
 
@@ -3241,7 +3315,7 @@
     }
 
     const blob = new Blob([obj], { type: 'text/plain;charset=utf-8' });
-    saveExport(blob, `${state.fileName.replace(/\.svg$/i, '')}_${state.caliper}mm.obj`);
+    saveExport(blob, `${state.fileName.replace(/\.[^.]+$/, '')}_${state.caliper}mm.obj`);
   }
 
   // ============================================================================

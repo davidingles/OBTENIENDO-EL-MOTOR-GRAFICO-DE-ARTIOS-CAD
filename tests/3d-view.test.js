@@ -21,6 +21,7 @@ function app() {
       state, createCrushedPanelGeometry, setMasterFold, updateSelectionHighlight, fitCameraToModel,
       MATERIAL_FINISHES, resolveMaterialFinish, getDetailGroups, realBuildBoardMaterials,
       get2DTransform, drawMiniDielinePreview, createCatalogPreviewGroup,
+      exportGLBForBlender,
       setOverlay(rect) { document.querySelector = () => rect ? {getBoundingClientRect:()=>rect} : null; },
       setup(model) {
         state.dieline = model;
@@ -56,6 +57,28 @@ test('la base marcada en 2D permanece horizontal, inmóvil y apoyada en el suelo
     if (!reference) reference = matrix.slice();
     matrix.forEach((value, i) => assert.ok(Math.abs(value - reference[i]) < 1e-6));
   }
+});
+
+
+
+test('GLB convierte milímetros a metros sin modificar el visor y conserva la animación', () => {
+  const ui=app(),original=THREE.GLTFExporter;
+  let exported,options;
+  THREE.GLTFExporter=class {parse(root,callback,opts){exported=root;options=opts;}};
+  try{
+    ui.setup(engine.buildDielineModelFromPacdora(entry.knifeData,entry));
+    ui.setMasterFold(0.75);
+    const before=ui.root.position.clone();
+    ui.exportGLBForBlender();
+    assert.notEqual(exported,ui.root);
+    assert.equal(exported.scale.x,0.001);
+    assert.ok(exported.position.distanceTo(before.clone().multiplyScalar(0.001))<1e-9);
+    assert.equal(ui.root.scale.x,1);
+    assert.ok(ui.root.position.equals(before));
+    assert.equal(exported.userData.units,'meters');
+    assert.ok(options.animations.length>=1);
+    assert.equal(options.embedImages,true);
+  }finally{THREE.GLTFExporter=original;}
 });
 
 test('el encuadre inicial 2D respeta el 75 % del espacio libre con distintas pantallas y escalas', () => {
