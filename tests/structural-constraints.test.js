@@ -37,3 +37,30 @@ test('constraint corrections preserve every shared polygon vertex and keep the b
  const twice=engine.enforceFlapLengthLimit(r);
  for(const h of r.hinges){const q=twice.hinges.find(q=>q.id===h.id);close(q.p1.x,h.p1.x);close(q.p2.y,h.p2.y);}
 });
+
+test('the screenshot dimensions keep every visible automatic-bottom crease at 45 degrees',()=>{
+ const r=engine.resizeDielineParametric(model(),120.6,30,161.6);
+ const diagonal=r.foldSegments.filter(s=>Math.abs(s.x2-s.x1)>1&&Math.abs(s.y2-s.y1)>1);
+ assert.equal(diagonal.length,2);
+ for(const s of diagonal)close(Math.abs(s.x2-s.x1),Math.abs(s.y2-s.y1));
+});
+test('legacy geometry without slope metadata recovers automatic-bottom angles on load',()=>{
+ const m=model();
+ // Reproduce a legacy anisotropic warp in every geometry representation.
+ const point=p=>({...p,y:p.y*.5});
+ for(const f of m.faces){f.polygon=f.polygon.map(point);f.points=f.polygon;f.bounds.minY*=.5;f.bounds.maxY*=.5;f.bounds.height*=.5;f.bbox={...f.bounds};}
+ for(const h of m.hinges){h.p1=point(h.p1);h.p2=point(h.p2);delete h.planarSlope;}
+ for(const s of [...m.cutSegments,...m.foldSegments]){s.y1*=.5;s.y2*=.5;}
+ const fixed=engine.enforceFlapLengthLimit(JSON.parse(JSON.stringify(m)));
+ const diagonal=fixed.foldSegments.filter(s=>Math.abs(s.x2-s.x1)>1&&Math.abs(s.y2-s.y1)>1);
+ assert.equal(diagonal.length,2);
+ for(const s of diagonal)close(Math.abs(s.x2-s.x1),Math.abs(s.y2-s.y1));
+});
+test('the glue-flap terminal corner is square in both polygon and visible cuts',()=>{
+ const r=engine.resizeDielineParametric(model(),120.6,30,161.6);
+ const f=r.faces.find(f=>f.role==='GLUE_FLAP'),b=f.bounds;
+ assert.ok(f.polygon.some(p=>Math.abs(p.x-b.minX)<1e-6&&Math.abs(p.y-b.maxY)<1e-6));
+ const bottom=r.cutSegments.filter(s=>Math.abs(s.y1-b.maxY)<1e-6&&Math.abs(s.y2-b.maxY)<1e-6);
+ assert.ok(bottom.some(s=>Math.abs(s.x1-s.x2)>=b.width-1e-6));
+ assert.ok(f.polygon.every(p=>Math.abs(p.x-b.minX)<1e-6||Math.abs(p.x-b.maxX)<1e-6));
+});

@@ -15,3 +15,10 @@ Las solapas superiores de cierre parcial se reconocen como hojas del grafo unida
 El redimensionado conserva la pendiente original de los hendidos oblicuos. Para los fondos con dos caras unidas por una diagonal y una unión horizontal al cuerpo, una transformación compartida restaura esa pendiente manteniendo fija la unión al cuerpo. Por tanto, un hendido original de 45 grados conserva 45 grados; no se convierten otras inclinaciones en 45 grados. Primero se limitan solapas y después se resuelven ángulos. Caras, cortes, hendidos, articulaciones y cotas reciben la misma transformación. Los fondos con otra topología todavía pueden necesitar un método adicional.
 
 Las pruebas incluyen el fondo automático 10501002 sin nombres de caras ni de hendidos, cuatro redimensionados consecutivos, coincidencia de vértices compartidos y de los hendidos exportados. Una geometría ya deformada que perdió su pendiente original debe recuperarse del catálogo para inferirla correctamente.
+
+
+## Recuperación de fondos y esquina de pegado
+
+Los hendidos diagonales de encolado casi planos (ángulo espacial inferior a 10 grados) se reconocen como enlaces del fondo automático y recuperan su pendiente plana de ±1, incluso si una geometría guardada no contiene planarSlope. No se toma una diagonal ya deformada como nueva referencia de 45 grados. Esta recuperación se aplica a la disposición inferior con unión horizontal al cuerpo descrita arriba.
+
+Al importar el catálogo se rectifica la esquina terminal curva de una pestaña estrecha con una sola unión vertical al cuerpo. Se modifica tanto el perímetro de la cara como la trayectoria de corte; los radios de tapas y asas se mantienen. Esta rectificación del contorno de origen requiere volver a abrir el original del catálogo si el modelo guardado conserva el arco antiguo.

@@ -1306,7 +1306,44 @@
    * Builds a complete `dieline` model directly from a Pacdora/FEFCO `knifeData` object
    * (`faces`, `holes`, `cuts`, `folds`, `sizeArrowData`, `animations`) and metadata (`length`, `width`, `height`).
    */
+  // Square the terminal glue corner in both the face and the exported knife path.
+  // Only arcs joining the attachment edge to the outer edge of a narrow glue
+  // flap qualify; radii on lids, handles and locking tabs remain authored curves.
+  function squareGlueCorners(data) {
+    const replacements=[];
+    for(const f of data.faces || []) {
+      if(!(f.w<50 && f.h>f.w*3))continue;
+      const attachments=(data.folds || []).filter(h=>(h.name || '').split('_').includes(f.name));
+      if(attachments.length!==1 || Math.abs(attachments[0].x1-attachments[0].x2)>0.05 ||
+        Math.abs(attachments[0].x1-(f.x+f.w))>0.05)continue;
+      let previous=null;
+      for(const c of f.dlist || []) {
+        if(c.mtd==='A' && previous && Math.abs(previous.x-(f.x+f.w))<0.05 && Math.abs(c.x-f.x)<0.05 &&
+          Math.abs(previous.y-(f.y+f.h))<0.05) {
+          replacements.push({from:previous,to:c,corner:{mtd:'L',x:c.x,y:previous.y}});
+        }
+        if(c.x!=null && c.y!=null)previous=c;
+      }
+    }
+    if(!replacements.length)return data;
+    const rewrite=list=>{
+      let previous=null; const result=[];
+      for(const c of list || []) {
+        const match=c.mtd==='A' && previous && replacements.find(r=>
+          Math.hypot(previous.x-r.from.x,previous.y-r.from.y)<0.05 && Math.hypot(c.x-r.to.x,c.y-r.to.y)<0.05);
+        const reverse=c.mtd==='A' && previous && replacements.find(r=>
+          Math.hypot(previous.x-r.to.x,previous.y-r.to.y)<0.05 && Math.hypot(c.x-r.from.x,c.y-r.from.y)<0.05);
+        if(match || reverse) result.push({...((match || reverse).corner)},{mtd:'L',x:c.x,y:c.y});
+        else result.push(c);
+        if(c.x!=null && c.y!=null)previous=c;
+      }
+      return result;
+    };
+    return {...data,faces:data.faces.map(f=>({...f,dlist:rewrite(f.dlist)})),cuts:rewrite(data.cuts)};
+  }
+
   function buildDielineModelFromPacdora(knifeData, meta = {}) {
+    knifeData = squareGlueCorners(knifeData || {});
     if (!knifeData || !knifeData.faces || knifeData.faces.length === 0) {
       throw new Error('Datos paramétricos FEFCO (knifeData) vacíos o inválidos.');
     }
@@ -1937,6 +1974,15 @@
     return bands;
   }
 
+  function preservedPlanarSlope(h) {
+    const dx=h.p2.x-h.p1.x,dy=h.p2.y-h.p1.y;
+    if(Math.abs(dx)<1 || Math.abs(dy)<1)return h.planarSlope;
+    // Near-flat diagonal glue hinges identify the automatic-bottom linkage.
+    // Recover its canonical angle even in saved models predating slope metadata.
+    if(Number.isFinite(h.defaultAngle) && Math.abs(h.defaultAngle)<10) return Math.sign(dx/dy);
+    return h.planarSlope ?? dx/dy;
+  }
+
   function resizeDielineParametric(baseModel, newL, newW, newH, bandEdit = null) {
     if (!baseModel) return null;
     const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
@@ -2147,8 +2193,7 @@
       const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       return {
         ...h,
-        planarSlope: h.planarSlope ?? (Math.abs(h.p2.x-h.p1.x)>1 && Math.abs(h.p2.y-h.p1.y)>1
-          ? (h.p2.x-h.p1.x)/(h.p2.y-h.p1.y) : undefined),
+        planarSlope: preservedPlanarSlope(h),
         p1,
         p2,
         midpoint: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
@@ -2282,7 +2327,7 @@
     // This preserves a 45-degree lock fold without forcing other slopes to 45.
     const angleEdits=[];
     for(const h of sourceHinges) {
-      const slope=h.planarSlope;
+      const slope=preservedPlanarSlope(h);
       if(!Number.isFinite(slope) || Math.abs(slope)<0.05 || Math.abs(slope)>20)continue;
       const dy=h.p2.y-h.p1.y,dx=h.p2.x-h.p1.x;
       if(Math.abs(dy)<1 || Math.abs(dx-slope*dy)<1e-7)continue;
@@ -2359,7 +2404,7 @@
     const cutSegments=segments(model.cutSegments),foldSegments=segments(model.foldSegments);
     const hinges=(model.hinges || []).map(h => {
       const p1=mapPoint(h.p1),p2=mapPoint(h.p2),length=Math.hypot(p2.x-p1.x,p2.y-p1.y);
-      return {...h,p1,p2,midpoint:{x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2},length,lengthMm:length};
+      return {...h,planarSlope:preservedPlanarSlope(h),p1,p2,midpoint:{x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2},length,lengthMm:length};
     });
     const arrows = list => (list || []).map(a => {
       const p1=a.p1 ? mapPoint(a.p1) : a.p1,p2=a.p2 ? mapPoint(a.p2) : a.p2;
