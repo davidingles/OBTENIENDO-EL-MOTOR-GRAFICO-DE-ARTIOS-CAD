@@ -536,6 +536,7 @@
    */
   function applyParametricResizeRealTime(newL, newW, newH) {
     if (!state.baseDieline) return;
+    if(state.dieline?.vector3DStale){document.getElementById('param-sync-status').textContent='Cierra el contorno antes de cambiar las medidas.';return;}
     state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
     state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
     state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
@@ -1401,8 +1402,8 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (vectorEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) { vectorCanvasClick(e); return; }
-      if (state.artwork && state.artworkEditing && e.button === 0 && !e.shiftKey) {
+      if (vectorEditing && !state.artworkEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) { vectorCanvasClick(e); return; }
+      if (state.artwork && state.artworkEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) {
         const tf = get2DTransform(canvas, state.dieline.bounds), rect = canvas.getBoundingClientRect();
         const ratio = canvas.width/rect.width;
         artworkDrag = {x:tf.toWorldX((e.clientX-rect.left)*ratio), y:tf.toWorldY((e.clientY-rect.top)*ratio), centerX:state.artwork.centerX,centerY:state.artwork.centerY};
@@ -2613,6 +2614,7 @@
   }
   function setVectorTool(tool) {
     vectorTool=tool;vectorDraft=null;vectorPointer=null;state.toolMode='select';
+    state.artworkEditing=false;artworkDrag=null;
     const help={select:'Selecciona un trazo o el interior de un agujero.',erase:'Pulsa un trazo para borrarlo. Los círculos nuevos se borran completos.',line:'Pulsa el inicio y después el final de la línea. Se ajusta a los extremos cercanos.',circle:'Pulsa el centro y después un punto del perímetro. El radio se muestra en mm.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
     for(const key of Object.keys(help))document.getElementById('vector-tool-'+key).classList.toggle('active',tool===key);
     document.getElementById('vector-help').textContent=help[tool]+' Mayús: desplazar · Esc: cancelar.';
@@ -2659,6 +2661,10 @@
     state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};
     state.selectedFaceId=model.rootFaceId;state.hoveredFaceId=null;
     state.hingeAngles=Object.fromEntries(model.hinges.map(h=>[h.id,0]));
+    if(state.artwork){
+      if(state.artwork.scope==='face'&&!model.faces.some(f=>f.id===state.artwork.faceId))state.artwork.scope='all';
+      refreshArtworkAtlas(model);
+    }
     rebuild3DMesh();setMasterFold(state.masterFold);buildHingeSlidersUI(model);vectorRefreshControls();
   }
   function commitVectorEdit(model) {
@@ -2669,6 +2675,13 @@
   }
   function initVectorEditor() {
     const controls=document.getElementById('vector-controls');
+    document.getElementById('vector-upload-image').onclick=()=>document.getElementById('artwork-file-input').click();
+    document.getElementById('vector-move-image').onclick=()=>{
+      if(!state.artwork){vectorMessage('Sube primero una imagen.');return;}
+      vectorDraft=null;vectorSelection=null;state.toolMode='select';state.artworkEditing=true;
+      syncArtworkControls();render2FDieline();vectorMessage('Arrastra la imagen en el plano. Usa Tamaño, giro y posición para ajustar sus medidas.');
+    };
+    document.getElementById('vector-adjust-image').onclick=()=>{if(state.artwork)openArtworkOptions();else vectorMessage('Sube primero una imagen.');};
     const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
     document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
     document.getElementById('vector-close').onclick=()=>toggle(false);
@@ -3381,7 +3394,9 @@
   async function applyCustomArtworkFile(file){
     try{
       const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
-      await loadArtworkData(dataUrl);openArtworkOptions();
+      await loadArtworkData(dataUrl);
+      state.artworkEditing=true;state.toolMode='select';vectorDraft=null;vectorSelection=null;
+      openArtworkOptions();render2FDieline();
     }catch(error){alert('No se pudo cargar el arte: '+(error.message||error));}
   }
   function syncArtworkControls(){

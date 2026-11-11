@@ -1278,3 +1278,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .vector-editor button:disabled { opacity:.45; cursor:default; }
 .vector-save { width:100%; background:#0788c6 !important; color:white !important; }
 #vector-status { font-size:11px; }
+
+.vector-artwork { border-top:1px solid #e3eaf0; margin-top:12px; padding-top:12px; }
+.vector-artwork button { width:100%; margin-top:6px; }
+.vector-artwork p { color:#64798d; font-size:11px; }
