@@ -166,12 +166,25 @@
     return m;
   }
 
-  function deleteSegments(model, selectedItems) {
+  function deleteSegments(model, selectedItems, box = null) {
     const m = normalize(model);
     const cutIndices = new Set(selectedItems.filter(i => i.kind === 'cut').map(i => i.index));
     const foldIndices = new Set(selectedItems.filter(i => i.kind === 'fold').map(i => i.index));
     m.cutSegments = m.cutSegments.filter((_, idx) => !cutIndices.has(idx));
     m.foldSegments = m.foldSegments.filter((_, idx) => !foldIndices.has(idx));
+    if (Array.isArray(m.faces)) {
+      m.faces = m.faces.map(f => {
+        if (!Array.isArray(f.holes) || !f.holes.length) return f;
+        const remainingHoles = f.holes.filter(hole => {
+          if (box) {
+            const inBox = hole.every(p => p.x >= box.minX - 2 && p.x <= box.maxX + 2 && p.y >= box.minY - 2 && p.y <= box.maxY + 2);
+            if (inBox) return false;
+          }
+          return true;
+        });
+        return { ...f, holes: remainingHoles };
+      });
+    }
     return m;
   }
 

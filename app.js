@@ -1592,7 +1592,9 @@
         const rawP = vectorWorldPoint(e, canvas);
         if (state.dieline?.hinges?.length) {
           let closestH = null;
-          let minDist = 25; // Tolerancia de 25 mm en coordenadas del plano
+          const tf = get2DTransform(canvas, state.dieline.bounds);
+          const screenTolMm = 20 / (tf.scale || 1);
+          let minDist = Math.max(25, screenTolMm);
           for (const h of state.dieline.hinges) {
             const d = distPointToSegment(rawP, h.p1, h.p2);
             if (d < minDist) {
@@ -1968,6 +1970,23 @@
       ctx.lineWidth = isSelectedHinge ? 2 * dpr : dpr;
       ctx.strokeStyle = isSelectedHinge ? '#d97706' : (vectorEditing&&vectorSelection?.type==='line'&&vectorSelection.kind==='fold'&&vectorSelection.index===index?'#99002e':'#e5007d');
       ctx.beginPath();ctx.moveTo(tf.toScreenX(seg.x1),tf.toScreenY(seg.y1));ctx.lineTo(tf.toScreenX(seg.x2),tf.toScreenY(seg.y2));ctx.stroke();
+    }
+
+    if (state.selectedHinges?.size && model.hinges) {
+      for (const h of model.hinges) {
+        if (!state.selectedHinges.has(h.id)) continue;
+        ctx.save();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 6 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(tf.toScreenX(h.p1.x), tf.toScreenY(h.p1.y));
+        ctx.lineTo(tf.toScreenX(h.p2.x), tf.toScreenY(h.p2.y));
+        ctx.stroke();
+        ctx.strokeStyle = '#fef08a';
+        ctx.lineWidth = 2.5 * dpr;
+        ctx.stroke();
+        ctx.restore();
+      }
     }
     drawVectorDraft(ctx,tf,dpr);
 
@@ -3623,10 +3642,58 @@
       if (m) m.hidden = true;
     };
 
+    function deleteCurrentVectorSelection() {
+      if (!vectorSelection) return;
+      if (vectorSelection.type === 'multi' && vectorSelection.items?.length) {
+        try {
+          const count = vectorSelection.items.length;
+          const box = vectorSelection.box || null;
+          const model = VectorCAD.deleteSegments(state.dieline, vectorSelection.items, box);
+          vectorSelection = null;
+          commitVectorEdit(model);
+          vectorMessage(`${count} trazos eliminados.`);
+        } catch (err) {
+          vectorMessage(err.message || String(err));
+        }
+      } else if (vectorSelection.type === 'hole') {
+        const face = state.dieline?.faces?.[vectorSelection.face];
+        const hole = face?.holes?.[vectorSelection.index];
+        if (hole) {
+          try {
+            const model = VectorCAD.deleteHole(state.dieline, hole);
+            vectorSelection = null;
+            commitVectorEdit(model);
+            vectorMessage('Agujero eliminado.');
+          } catch (err) {
+            vectorMessage(err.message || String(err));
+          }
+        }
+      } else if (vectorSelection.type === 'line' || vectorSelection.kind) {
+        try {
+          const model = VectorCAD.erase(state.dieline, vectorSelection);
+          vectorSelection = null;
+          commitVectorEdit(model);
+          vectorMessage('Trazo eliminado.');
+        } catch (err) {
+          vectorMessage(err.message || String(err));
+        }
+      }
+      const m = document.getElementById('vector-tool-modal');
+      if (m) m.hidden = true;
+      render2FDieline();
+    }
+
+    const btnDeleteBox = document.getElementById('vector-btn-delete-box');
+    if (btnDeleteBox) btnDeleteBox.onclick = deleteCurrentVectorSelection;
+
     const xyInput = document.getElementById('vector-box-xy');
     if (xyInput) {
       xyInput.onkeydown = e => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Delete' || e.code === 'Delete' || e.key === 'Supr' || e.key === 'Del') {
+          e.preventDefault();
+          e.stopPropagation();
+          deleteCurrentVectorSelection();
+        } else if (e.key === 'Enter') {
           e.preventDefault();
           applyBoxMoveOrCopy();
         }
@@ -3643,47 +3710,15 @@
         e.preventDefault();
         applyBoxMoveOrCopy();
       }
-      if (vectorEditing && (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'Supr')) {
+      const isDeleteKey = e.key === 'Delete' || e.key === 'Del' || e.code === 'Delete' || e.key === 'Supr' || e.code === 'NumpadDecimal';
+      if (vectorEditing && (isDeleteKey || e.key === 'Backspace')) {
         const activeTag = document.activeElement ? document.activeElement.tagName : '';
-        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+        const isEditingOtherInput = (activeTag === 'INPUT' || activeTag === 'TEXTAREA') && document.activeElement !== xyInput && e.key === 'Backspace';
+        if (isEditingOtherInput) return;
         if (vectorSelection) {
           e.preventDefault();
-          if (vectorSelection.type === 'multi' && vectorSelection.items?.length) {
-            try {
-              const count = vectorSelection.items.length;
-              const model = VectorCAD.deleteSegments(state.dieline, vectorSelection.items);
-              vectorSelection = null;
-              commitVectorEdit(model);
-              vectorMessage(`${count} trazos eliminados.`);
-            } catch (err) {
-              vectorMessage(err.message || String(err));
-            }
-          } else if (vectorSelection.type === 'hole') {
-            const face = state.dieline?.faces?.[vectorSelection.face];
-            const hole = face?.holes?.[vectorSelection.index];
-            if (hole) {
-              try {
-                const model = VectorCAD.deleteHole(state.dieline, hole);
-                vectorSelection = null;
-                commitVectorEdit(model);
-                vectorMessage('Agujero eliminado.');
-              } catch (err) {
-                vectorMessage(err.message || String(err));
-              }
-            }
-          } else if (vectorSelection.type === 'line' || vectorSelection.kind) {
-            try {
-              const model = VectorCAD.erase(state.dieline, vectorSelection);
-              vectorSelection = null;
-              commitVectorEdit(model);
-              vectorMessage('Trazo eliminado.');
-            } catch (err) {
-              vectorMessage(err.message || String(err));
-            }
-          }
-          const m = document.getElementById('vector-tool-modal');
-          if (m) m.hidden = true;
-          render2FDieline();
+          e.stopPropagation();
+          deleteCurrentVectorSelection();
         }
       }
     });
@@ -3777,7 +3812,7 @@
       const mm=UserLibrary.boardThicknessMm[profile.value];
       status.textContent='Espesor: '+String(mm).replace('.',',')+' mm. Se conservan los retranqueos y tolerancias del archivo.';
     };
-    document.getElementById('btn-add-library').onclick=()=>{
+    const openAddLibraryModal=()=>{
       if(!state.dieline) {
         alert('No hay ningún troquel cargado para añadir a la biblioteca.');
         return;
@@ -3785,6 +3820,10 @@
       document.getElementById('library-model-name').value=(state.fileName||'Mi troquel').replace(/\.[^.]+$/,'').slice(0,100);
       profile.value=state.boardCode||'C1';showProfile();dialog.showModal();
     };
+    const btnAddLib = document.getElementById('btn-add-library');
+    if (btnAddLib) btnAddLib.onclick = openAddLibraryModal;
+    const btnHeaderAdd = document.getElementById('btn-header-add-die');
+    if (btnHeaderAdd) btnHeaderAdd.onclick = openAddLibraryModal;
     profile.onchange=showProfile;
     document.getElementById('library-model-cancel').onclick=()=>dialog.close();
     document.getElementById('library-model-save').onclick=async()=>{

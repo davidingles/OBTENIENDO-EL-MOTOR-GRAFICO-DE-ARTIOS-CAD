@@ -49,3 +49,34 @@ test('las solapas válidas y los modelos sin esos paneles no cambian',()=>{
  const unknown={...base,faces:base.faces.map(f=>({...f,pacdoraName:'OTHER',shortName:'OTHER'}))};
  assert.equal(engine.enforceFlapLengthLimit(unknown),unknown);
 });
+
+test('caja de 4 cuerpos: solapas superior e inferior nunca superan la mitad de la cara menor menos 1 mm', () => {
+  // L = 1200, W = 400. La cara más pequeña mide 400 mm. La solapa máxima debe ser 400 / 2 - 1 = 199 mm.
+  const poly = (x, y, w, h) => [{x, y}, {x: x+w, y}, {x: x+w, y: y+h}, {x, y: y+h}];
+  const bounds = (x, y, w, h) => ({minX: x, maxX: x+w, minY: y, maxY: y+h, width: w, height: h});
+  const model4 = {
+    faces: [
+      { id: 1, role: 'BODY', name: 'Cara Cuerpo 1', bounds: bounds(0, 300, 1200, 500), polygon: poly(0, 300, 1200, 500) },
+      { id: 2, role: 'BODY', name: 'Cara Cuerpo 2', bounds: bounds(1200, 300, 400, 500), polygon: poly(1200, 300, 400, 500) },
+      { id: 3, role: 'BODY', name: 'Cara Cuerpo 3', bounds: bounds(1600, 300, 1200, 500), polygon: poly(1600, 300, 1200, 500) },
+      { id: 4, role: 'BODY', name: 'Cara Cuerpo 4', bounds: bounds(2800, 300, 400, 500), polygon: poly(2800, 300, 400, 500) },
+      // Solapa superior con altura excesiva (260 mm > 199 mm)
+      { id: 5, role: 'TOP_FLAP_OUTER', name: 'Solapa Sup. 1 (Ext.)', bounds: bounds(0, 40, 1200, 260), polygon: poly(0, 40, 1200, 260) },
+      // Solapa inferior con altura excesiva (250 mm > 199 mm)
+      { id: 6, role: 'BOTTOM_FLAP_OUTER', name: 'Solapa Inf. 1 (Ext.)', bounds: bounds(0, 800, 1200, 250), polygon: poly(0, 800, 1200, 250) }
+    ],
+    cutSegments: [],
+    foldSegments: [],
+    hinges: []
+  };
+
+  const clamped = engine.enforceFlapLengthLimit(model4);
+  const topFlap = clamped.faces.find(f => f.id === 5);
+  const btmFlap = clamped.faces.find(f => f.id === 6);
+
+  // Límite esperado: 400 / 2 - 1 = 199 mm
+  assert.ok(Math.abs(topFlap.bounds.height - 199) < 1e-4, `Solapa sup altura: ${topFlap.bounds.height}`);
+  assert.ok(Math.abs(btmFlap.bounds.height - 199) < 1e-4, `Solapa inf altura: ${btmFlap.bounds.height}`);
+  assert.equal(topFlap.bounds.maxY, 300, 'El borde de unión con el cuerpo se mantiene fijo');
+  assert.equal(btmFlap.bounds.minY, 800, 'El borde de unión inferior con el cuerpo se mantiene fijo');
+});

@@ -1863,9 +1863,11 @@
       if (f.role === 'BODY' && Math.abs(fh - origH) <= tol) {
         yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetH - origH) });
       } else if (f.role && f.role.includes('FLAP') && Math.abs(fh - origW * 0.5) <= Math.max(12, origW * 0.12)) {
-        // Standard RSC top/bottom flaps have height = W / 2
+        // Las solapas nunca deben superar la mitad de la cara más pequeña menos 1 mm
+        const maxFlap = Math.max(5, (Math.min(targetL, targetW) / 2) - 1);
         const flapScale = targetW / origW;
-        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh * flapScale });
+        const targetFlapH = Math.min(fh * flapScale, maxFlap);
+        yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: targetFlapH });
       } else if (Math.abs(fh - origL) <= tol) {
         yIntervals.push({ min: f.bounds.minY, max: f.bounds.maxY, targetSpan: fh + (targetL - origL) });
       } else if (Math.abs(fh - origW) <= tol) {
@@ -2061,15 +2063,37 @@
     const code = f => f.pacdoraName || f.shortName;
     const base = model.faces.find(f => code(f) === 'H');
     const limit = base?.bounds?.height / 2;
-    if (!(limit > 0)) return model;
     const names = new Set(['FBL', 'FBR', 'HBL', 'HBR']);
-    const edits = model.faces.filter(f => names.has(code(f)) && f.bounds.width > limit + 1e-8).map(face => {
+    const xEdits = (limit > 0) ? model.faces.filter(f => names.has(code(f)) && f.bounds.width > limit + 1e-8).map(face => {
       const b = face.bounds;
       const anchor = code(face).endsWith('L') ? b.maxX : b.minX;
-      return {face, anchor, scale: limit / b.width};
-    });
+      return {face, axis: 'x', anchor, scale: limit / b.width};
+    }) : [];
+
+    // Regla de solapas superiores e inferiores en cajas plegables / RSC (cajas de 4 caras):
+    // Nunca deben superar la mitad de la cara más pequeña menos 1 mm.
+    const fourPanelBody = model.faces.filter(f => f.role === 'BODY' && f.name && f.name.includes('Cara Cuerpo'));
+    let yEdits = [];
+    if (fourPanelBody.length >= 4) {
+      const minBodyWidth = Math.min(...fourPanelBody.map(f => f.bounds.width));
+      const flapLimitY = Math.max(5, (minBodyWidth / 2) - 1);
+      const isTopFlap = f => f.role === 'TOP_FLAP_INNER' || f.role === 'TOP_FLAP_OUTER' || (f.name && f.name.startsWith('Solapa Sup.'));
+      const isBottomFlap = f => f.role === 'BOTTOM_FLAP_INNER' || f.role === 'BOTTOM_FLAP_OUTER' || (f.name && f.name.startsWith('Solapa Inf.'));
+
+      for (const face of model.faces) {
+        if (isTopFlap(face) && face.bounds.height > flapLimitY + 1e-4) {
+          yEdits.push({ face, axis: 'y', anchor: face.bounds.maxY, scale: flapLimitY / face.bounds.height });
+        } else if (isBottomFlap(face) && face.bounds.height > flapLimitY + 1e-4) {
+          yEdits.push({ face, axis: 'y', anchor: face.bounds.minY, scale: flapLimitY / face.bounds.height });
+        }
+      }
+    }
+
+    const edits = [...xEdits, ...yEdits];
     if (!edits.length) return model;
-    const mapInFace = (p, edit) => ({...p, x: edit.anchor + (p.x - edit.anchor) * edit.scale});
+    const mapInFace = (p, edit) => edit.axis === 'y'
+      ? ({...p, y: edit.anchor + (p.y - edit.anchor) * edit.scale})
+      : ({...p, x: edit.anchor + (p.x - edit.anchor) * edit.scale});
     const belongs = (p, face) => {
       const b = face.bounds, eps = 1e-6;
       if (p.x < b.minX-eps || p.x > b.maxX+eps || p.y < b.minY-eps || p.y > b.maxY+eps) return false;
@@ -2108,7 +2132,7 @@
     });
     const arrows = list => (list || []).map(a => {
       const p1=a.p1 ? mapPoint(a.p1) : a.p1,p2=a.p2 ? mapPoint(a.p2) : a.p2;
-      const moved=p1 && p2 && (p1.x!==a.p1.x || p2.x!==a.p2.x);
+      const moved=p1 && p2 && (p1.x!==a.p1.x || p2.x!==a.p2.x || p1.y!==a.p1.y || p2.y!==a.p2.y);
       return {...a,p1,p2,tpointer:a.tpointer ? mapPoint(a.tpointer) : a.tpointer,
         lineLength:moved ? Math.hypot(p2.x-p1.x,p2.y-p1.y) : a.lineLength};
     });

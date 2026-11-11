@@ -81,9 +81,18 @@
         </div>
       </div>
 
+      <!-- Botón Añadir troquel directo -->
+      <button id="btn-header-add-die" class="btn-primary-blue" type="button" title="Añadir troquel actual a la biblioteca">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>Añadir troquel</span>
+      </button>
+
       <!-- Botón Guardar con Dropdown -->
       <div class="header-dropdown-container">
-        <button id="btn-header-save" class="btn-primary-blue" type="button" aria-haspopup="true" aria-expanded="false" title="Opciones para guardar y exportar">
+        <button id="btn-header-save" class="btn-primary-blue" type="button" aria-haspopup="true" aria-expanded="false" title="Opciones para exportar">
           <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
@@ -93,21 +102,6 @@
           <span class="dropdown-caret">▾</span>
         </button>
         <div id="header-save-menu" class="header-dropdown-menu hidden" role="menu">
-          <button type="button" class="dropdown-item" id="menu-save-project">
-            <span class="dropdown-icon">💾</span>
-            <div>
-              <div class="item-title">Guardar proyecto</div>
-              <div class="item-sub">Guarda el estado con geometría y arte</div>
-            </div>
-          </button>
-          <button type="button" class="dropdown-item" id="menu-save-library">
-            <span class="dropdown-icon">📚</span>
-            <div>
-              <div class="item-title">Añadir a biblioteca</div>
-              <div class="item-sub">Guardar como troquel reutilizable</div>
-            </div>
-          </button>
-          <div class="dropdown-divider"></div>
           <div class="dropdown-section-header">Exportar archivo</div>
           <button type="button" class="dropdown-item" id="menu-export-svg">
             <span class="dropdown-icon">📐</span>
@@ -243,8 +237,8 @@
           <span class="drawer-title" style="margin:0;">Biblioteca</span>
           <div id="library-board-pills" class="library-board-pills" role="radiogroup" aria-label="Filtrar por cartón">
             <button type="button" class="board-pill active" data-board="C1" title="Biblioteca estándar C1">C1</button>
-            <button type="button" class="board-pill" data-board="C2" title="Biblioteca C2">C2</button>
             <button type="button" class="board-pill" data-board="C3" title="Biblioteca C3">C3</button>
+            <button type="button" class="board-pill" data-board="C5" title="Biblioteca C5">C5</button>
             <button type="button" class="board-pill" data-board="C8" title="Biblioteca C8">C8</button>
           </div>
         </div>
@@ -560,13 +554,7 @@
             </div>
             <input type="range" id="selected-hinges-slider" min="-180" max="180" step="1" value="0" class="cad-slider" style="width:100%;" />
           </div>
-
-          <!-- Lista detallada interactiva de líneas de hendido -->
-          <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;">Líneas de hendido (rojas)</span>
-          </div>
-          <button id="btn-set-base" class="btn-outline hidden">Usar panel seleccionado como base 3D</button>
-          <div id="hinges-slider-list" class="hinges-drawer-scroll" style="max-height:240px;overflow-y:auto;margin-top:8px;"></div>
+          <button id="btn-set-base" class="btn-outline hidden" style="margin-top:10px;">Usar panel seleccionado como base 3D</button>
         </div>
       </div>
 
@@ -690,6 +678,7 @@
               <button id="vector-btn-apply-box" type="button" class="btn-primary-blue">Mover / Copiar (Shift + M)</button>
               <button id="vector-btn-cancel-box" type="button" class="btn-outline">Cerrar</button>
             </div>
+            <button id="vector-btn-delete-box" type="button" class="btn-danger-outline" style="width:100%;margin-top:8px;">🗑️ Borrar selección (Supr)</button>
             <p class="vector-modal-hint">Introduce dos medidas separadas por espacio: <strong>x y</strong> (ej: <code>-20 0</code>). X negativo: izquierda. Y negativo: abajo. <strong>Supr</strong>: borrar selección.</p>
           </div>
         </div>
@@ -863,7 +852,6 @@
     <label class="cad-scale-row">Nombre <input id="library-model-name" type="text" maxlength="100" autocomplete="off" /></label>
     <label class="cad-scale-row">Cartón <select id="library-model-board">
       <option value="C1">C1 · 1,5 mm</option>
-      <option value="C2">C2 · 2,0 mm</option>
       <option value="C3">C3 · 3,0 mm</option>
       <option value="C5">C5 · 4,5 mm</option>
       <option value="C8">C8 · 7,0 mm</option>
