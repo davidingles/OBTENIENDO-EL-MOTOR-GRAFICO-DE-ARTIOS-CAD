@@ -1518,7 +1518,17 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
-      if (vectorEditing && !state.artworkEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) { vectorCanvasClick(e); return; }
+      if (vectorEditing && !state.artworkEditing && state.toolMode !== 'pan' && e.button === 0) {
+        const rawP = vectorWorldPoint(e, canvas);
+        const face = state.dieline?.faces?.[vectorSelection?.face];
+        const hole = face?.holes?.[vectorSelection?.index];
+        if (vectorSelection?.type === 'hole' && hole && vectorInside(rawP, hole)) {
+          holeDrag = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, hole };
+          return;
+        }
+        vectorCanvasClick(e);
+        return;
+      }
       if (state.artwork && state.artworkEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) {
         const tf = get2DTransform(canvas, state.dieline.bounds), rect = canvas.getBoundingClientRect();
         const ratio = canvas.width/rect.width;
@@ -1529,12 +1539,27 @@
       if (state.toolMode === 'select' && hitFace && e.button === 0 && !e.shiftKey) {
         selectFace(hitFace.id);
       }
-      state.view2D.isDragging = state.toolMode === 'pan' || e.shiftKey || e.button === 1;
+      state.view2D.isDragging = state.toolMode === 'pan' || (!vectorEditing && e.shiftKey) || e.button === 1;
       state.view2D.lastX = e.clientX;
       state.view2D.lastY = e.clientY;
     });
 
     window.addEventListener('pointermove', (e) => {
+      if (holeDrag) {
+        const p = vectorWorldPoint(e, canvas);
+        let dx = p.x - holeDrag.startX, dy = p.y - holeDrag.startY;
+        if (e.shiftKey) {
+          if (Math.abs(dx) >= Math.abs(dy)) dy = 0; else dx = 0;
+        }
+        holeDrag.curX = holeDrag.startX + dx;
+        holeDrag.curY = holeDrag.startY + dy;
+        const dxInput = document.getElementById('vector-hole-dx');
+        const dyInput = document.getElementById('vector-hole-dy');
+        if (dxInput) dxInput.value = dx.toFixed(1);
+        if (dyInput) dyInput.value = dy.toFixed(1);
+        render2FDieline();
+        return;
+      }
       if (artworkDrag && state.artwork) {
         const tf=get2DTransform(canvas,state.dieline.bounds),rect=canvas.getBoundingClientRect(),ratio=canvas.width/rect.width;
         state.artwork.centerX=artworkDrag.centerX+tf.toWorldX((e.clientX-rect.left)*ratio)-artworkDrag.x;
@@ -1554,7 +1579,16 @@
 
       if (vectorEditing && state.toolMode !== 'pan') {
         const rect=canvas.getBoundingClientRect();
-        if(e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom) { vectorPointer=vectorWorldPoint(e,canvas,true); canvas.style.cursor=vectorTool==='select'?'default':'crosshair'; render2FDieline(); }
+        if(e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom) {
+          vectorPointer=vectorWorldPoint(e,canvas,true);
+          if (vectorDraft?.point && e.shiftKey) {
+            const dx = vectorPointer.x - vectorDraft.point.x, dy = vectorPointer.y - vectorDraft.point.y;
+            if (Math.abs(dx) >= Math.abs(dy)) vectorPointer = { ...vectorPointer, y: vectorDraft.point.y };
+            else vectorPointer = { ...vectorPointer, x: vectorDraft.point.x };
+          }
+          canvas.style.cursor=vectorTool==='select'?'default':'crosshair';
+          render2FDieline();
+        }
         return;
       }
       const rect = canvas.getBoundingClientRect();
@@ -1576,6 +1610,23 @@
     window.addEventListener('pointerup', () => {
       state.view2D.isDragging = false;
       artworkDrag = null;
+      if (holeDrag) {
+        const dx = holeDrag.curX - holeDrag.startX;
+        const dy = holeDrag.curY - holeDrag.startY;
+        const h = holeDrag.hole;
+        holeDrag = null;
+        if (Math.hypot(dx, dy) > 1.5) {
+          try {
+            const model = VectorCAD.moveHole(state.dieline, h, dx, dy);
+            vectorSelection = null;
+            commitVectorEdit(model);
+            vectorMessage(`Agujero desplazado X: ${dx.toFixed(1)} mm, Y: ${dy.toFixed(1)} mm.`);
+          } catch (err) {
+            vectorMessage(err.message || String(err));
+          }
+        }
+        render2FDieline();
+      }
     });
   }
 
@@ -2707,7 +2758,7 @@
 
   // Edits are applied to a private model snapshot until explicitly saved.
   let vectorEditing=false, vectorSelection=null, vectorHistory=[], vectorRedo=[];
-  let vectorTool='select', vectorDraft=null, vectorPointer=null;
+  let vectorTool='select', vectorDraft=null, vectorPointer=null, holeDrag=null;
   const vectorClone = value => JSON.parse(JSON.stringify(value));
   function vectorInside(p, poly) {
     let inside=false;
@@ -2741,6 +2792,40 @@
     if(line&&vectorTool==='select')document.getElementById('vector-kind').value=sel.kind||'cut';
     document.getElementById('vector-undo').disabled=!vectorHistory.length;
     document.getElementById('vector-redo').disabled=!vectorRedo.length;
+
+    const modal = document.getElementById('vector-tool-modal');
+    const lineFields = document.getElementById('vector-modal-line-fields');
+    const circleFields = document.getElementById('vector-modal-circle-fields');
+    const handleFields = document.getElementById('vector-modal-handle-fields');
+    const holeFields = document.getElementById('vector-modal-hole-fields');
+    const modalTitle = document.getElementById('vector-modal-title');
+
+    if (modal && lineFields && circleFields && handleFields && holeFields) {
+      if (vectorTool === 'line') {
+        modal.hidden = false;
+        modalTitle.textContent = 'Línea · Medidas';
+        lineFields.hidden = false; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true;
+      } else if (vectorTool === 'circle') {
+        modal.hidden = false;
+        modalTitle.textContent = 'Círculo · Medidas';
+        lineFields.hidden = true; circleFields.hidden = false; handleFields.hidden = true; holeFields.hidden = true;
+      } else if (vectorTool === 'handle') {
+        modal.hidden = false;
+        modalTitle.textContent = 'Asa · Medidas';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = false; holeFields.hidden = true;
+      } else if (vectorTool === 'select' && sel?.type === 'hole' && hole) {
+        modal.hidden = false;
+        modalTitle.textContent = 'Asa / Agujero seleccionado';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = false;
+        const b = vectorBounds(hole);
+        document.getElementById('vector-modal-hole-w').value = (b.maxX - b.minX).toFixed(1);
+        document.getElementById('vector-modal-hole-h').value = (b.maxY - b.minY).toFixed(1);
+        document.getElementById('vector-hole-dx').value = 0;
+        document.getElementById('vector-hole-dy').value = 0;
+      } else {
+        modal.hidden = true;
+      }
+    }
     render2FDieline();
   }
   function vectorWorldPoint(e,canvas,snapping=false) {
@@ -2767,47 +2852,269 @@
   function setVectorTool(tool) {
     vectorTool=tool;vectorDraft=null;vectorPointer=null;state.toolMode='select';
     state.artworkEditing=false;artworkDrag=null;
-    const help={select:'Selecciona un trazo o el interior de un agujero.',erase:'Pulsa un trazo para borrarlo. Los círculos nuevos se borran completos.',line:'Pulsa el inicio y después el final de la línea. Se ajusta a los extremos cercanos.',circle:'Pulsa el centro y después un punto del perímetro. El radio se muestra en mm.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
-    for(const key of Object.keys(help))document.getElementById('vector-tool-'+key).classList.toggle('active',tool===key);
-    document.getElementById('vector-help').textContent=help[tool]+' Mayús: desplazar · Esc: cancelar.';
+    const help={select:'Selecciona un trazo o el interior de un agujero.',erase:'Pulsa un trazo para borrarlo. Los círculos nuevos se borran completos.',line:'Pulsa el inicio y después el final de la línea. Mayús: ortogonal. Se imanta al troquel.',circle:'Pulsa para colocar el círculo con el radio exacto. Se imanta al troquel.',handle:'Pulsa para colocar el asa centrada en el cursor con medidas exactas.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
+    for(const key of Object.keys(help)) {
+      const btn = document.getElementById('vector-tool-'+key);
+      if (btn) btn.classList.toggle('active', tool===key);
+    }
+    document.getElementById('vector-help').textContent=help[tool]+' Mayús: ortogonal / desplazar · Esc: cancelar.';
     document.getElementById('vector-value-label').hidden=!['chamfer','fillet'].includes(tool);
     vectorRefreshControls();
   }
   function vectorCanvasClick(e) {
     if(!state.dieline)return;
-    const canvas=e.currentTarget,p=vectorWorldPoint(e,canvas,true),raw=vectorWorldPoint(e,canvas);
-    const rect=canvas.getBoundingClientRect(),tf=get2DTransform(canvas,state.dieline.bounds),hit=VectorCAD.hit(state.dieline,raw,8*canvas.width/rect.width/tf.scale);
+    const canvas=e.currentTarget;
+    let p=vectorWorldPoint(e,canvas,true),raw=vectorWorldPoint(e,canvas);
+    const rect=canvas.getBoundingClientRect(),tf=get2DTransform(canvas,state.dieline.bounds),hit=VectorCAD.hit(state.dieline,raw,10*canvas.width/rect.width/tf.scale);
     const kind=document.getElementById('vector-kind').value==='fold'?'fold':'cut';
+
+    // Shift key orthogonal constraint for line
+    if (vectorDraft?.point && (e.shiftKey || vectorPointer?._orthogonal)) {
+      const dx = p.x - vectorDraft.point.x, dy = p.y - vectorDraft.point.y;
+      if (Math.abs(dx) >= Math.abs(dy)) p = { ...p, y: vectorDraft.point.y };
+      else p = { ...p, x: vectorDraft.point.x };
+    }
+
     try {
-      if(vectorTool==='line'||vectorTool==='circle') {
-        if(!vectorDraft){vectorDraft={point:p};vectorPointer=p;vectorMessage(vectorTool==='line'?'Pulsa el final de la línea.':'Pulsa el perímetro del círculo.');render2FDieline();return;}
-        const model=vectorTool==='line'?VectorCAD.addLine(state.dieline,vectorDraft.point,p,kind):VectorCAD.circle(state.dieline,vectorDraft.point,Math.hypot(p.x-vectorDraft.point.x,p.y-vectorDraft.point.y),kind);
-        vectorDraft=null;vectorSelection=null;commitVectorEdit(model);return;
+      if (vectorTool === 'handle') {
+        const w = Number(document.getElementById('vector-handle-width')?.value) || 80;
+        const h = Number(document.getElementById('vector-handle-height')?.value) || 25;
+        const r = Number(document.getElementById('vector-handle-radius')?.value) || 8;
+        const model = VectorCAD.handle(state.dieline, p, w, h, r, kind);
+        vectorDraft = null; vectorSelection = null;
+        commitVectorEdit(model);
+        vectorMessage(`Asa ${w}×${h} mm colocada en (${p.x.toFixed(1)}, ${p.y.toFixed(1)}).`);
+        return;
       }
-      if(vectorTool==='select') {
-        vectorSelection=hit;
-        if(!hit)for(let f=0;f<state.dieline.faces.length;f++)for(let i=0;i<(state.dieline.faces[f].holes||[]).length;i++)if(vectorInside(raw,state.dieline.faces[f].holes[i]))vectorSelection={type:'hole',face:f,index:i};
-        vectorRefreshControls();return;
+      if (vectorTool === 'circle') {
+        const presetRadius = Number(document.getElementById('vector-circle-radius')?.value) || 12;
+        if (!vectorDraft) {
+          // If modal has radius configured, directly place circle on click!
+          const model = VectorCAD.circle(state.dieline, p, presetRadius, kind);
+          vectorDraft = null; vectorSelection = null;
+          commitVectorEdit(model);
+          vectorMessage(`Círculo R ${presetRadius} mm colocado en (${p.x.toFixed(1)}, ${p.y.toFixed(1)}).`);
+          return;
+        }
+        const model = VectorCAD.circle(state.dieline, vectorDraft.point, Math.hypot(p.x - vectorDraft.point.x, p.y - vectorDraft.point.y), kind);
+        vectorDraft = null; vectorSelection = null;
+        commitVectorEdit(model);
+        return;
       }
-      if(!hit){vectorMessage('Pulsa sobre una línea de corte o de hendido.');return;}
-      vectorSelection=hit;
-      if(vectorTool==='erase'){vectorSelection=null;commitVectorEdit(VectorCAD.erase(state.dieline,hit));}
-      else if(vectorTool==='extend'||vectorTool==='trim'){vectorSelection=null;commitVectorEdit(VectorCAD.collide(state.dieline,hit,raw,vectorTool==='extend'));}
+      if (vectorTool === 'line') {
+        const fixedLen = Number(document.getElementById('vector-line-len')?.value);
+        if (!vectorDraft) {
+          vectorDraft = { point: p };
+          vectorPointer = p;
+          vectorMessage('Pulsa el final de la línea. Mantén Mayús para ortogonal.');
+          render2FDieline();
+          return;
+        }
+        let endP = p;
+        if (fixedLen > 0) {
+          const ang = Math.atan2(p.y - vectorDraft.point.y, p.x - vectorDraft.point.x);
+          endP = { x: vectorDraft.point.x + Math.cos(ang) * fixedLen, y: vectorDraft.point.y + Math.sin(ang) * fixedLen };
+        }
+        const model = VectorCAD.addLine(state.dieline, vectorDraft.point, endP, kind);
+        vectorDraft = null; vectorSelection = null;
+        commitVectorEdit(model);
+        return;
+      }
+      if (vectorTool === 'select') {
+        // 1. Check if clicked inside a hole
+        let foundHole = null;
+        for (let f = 0; f < state.dieline.faces.length; f++) {
+          const face = state.dieline.faces[f];
+          for (let i = 0; i < (face.holes || []).length; i++) {
+            if (vectorInside(raw, face.holes[i])) {
+              foundHole = { type: 'hole', face: f, index: i };
+              break;
+            }
+          }
+          if (foundHole) break;
+        }
+
+        // 2. Check if clicked on any line of a hole
+        if (!foundHole && hit) {
+          const s = VectorCAD.get(state.dieline, hit);
+          if (s) {
+            const sameP = (p1, p2) => Math.hypot(p1.x - p2.x, p1.y - p2.y) < 0.1;
+            for (let f = 0; f < state.dieline.faces.length; f++) {
+              const face = state.dieline.faces[f];
+              for (let i = 0; i < (face.holes || []).length; i++) {
+                const hPoly = face.holes[i];
+                if (hPoly.some(pt => sameP(pt, { x: s.x1, y: s.y1 })) && hPoly.some(pt => sameP(pt, { x: s.x2, y: s.y2 }))) {
+                  foundHole = { type: 'hole', face: f, index: i };
+                  break;
+                }
+              }
+              if (foundHole) break;
+            }
+          }
+        }
+
+        vectorSelection = foundHole || hit;
+        vectorRefreshControls();
+        return;
+      }
+      if (!hit) { vectorMessage('Pulsa sobre una línea de corte o de hendido.'); return; }
+      vectorSelection = hit;
+      if (vectorTool === 'erase') { vectorSelection = null; commitVectorEdit(VectorCAD.erase(state.dieline, hit)); }
+      else if (vectorTool === 'extend' || vectorTool === 'trim') { vectorSelection = null; commitVectorEdit(VectorCAD.collide(state.dieline, hit, raw, vectorTool === 'extend')); }
       else {
-        if(!vectorDraft){vectorDraft={ref:hit};vectorMessage('Primera línea seleccionada. Pulsa la segunda línea de la esquina.');vectorRefreshControls();return;}
-        const model=VectorCAD.corner(state.dieline,vectorDraft.ref,hit,Number(document.getElementById('vector-value').value),vectorTool==='fillet');
-        vectorDraft=null;vectorSelection=null;commitVectorEdit(model);
+        if (!vectorDraft) { vectorDraft = { ref: hit }; vectorMessage('Primera línea seleccionada. Pulsa la segunda línea de la esquina.'); vectorRefreshControls(); return; }
+        const model = VectorCAD.corner(state.dieline, vectorDraft.ref, hit, Number(document.getElementById('vector-value').value), vectorTool === 'fillet');
+        vectorDraft = null; vectorSelection = null; commitVectorEdit(model);
       }
-    }catch(error){vectorMessage(error.message||String(error));}
+    } catch (error) { vectorMessage(error.message || String(error)); }
   }
   function drawVectorDraft(ctx,tf,dpr) {
-    if(!vectorEditing||!vectorDraft?.point||!vectorPointer)return;
-    const p=vectorDraft.point,q=vectorPointer;
-    ctx.save();ctx.strokeStyle=document.getElementById('vector-kind').value==='fold'?'#e5007d':'#009ee3';ctx.lineWidth=1.5*dpr;ctx.setLineDash([5*dpr,4*dpr]);ctx.beginPath();
-    if(vectorTool==='circle')ctx.arc(tf.toScreenX(p.x),tf.toScreenY(p.y),Math.hypot(q.x-p.x,q.y-p.y)*tf.scale,0,2*Math.PI);
-    else {ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y));ctx.lineTo(tf.toScreenX(q.x),tf.toScreenY(q.y));}
-    ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=ctx.strokeStyle;ctx.font=12*dpr+'px sans-serif';
-    ctx.fillText((vectorTool==='circle'?'R ':'')+Math.hypot(q.x-p.x,q.y-p.y).toFixed(2)+' mm',tf.toScreenX(q.x)+8*dpr,tf.toScreenY(q.y)-8*dpr);ctx.restore();
+    if (!vectorEditing) return;
+
+    // 0. Render dragging hole ghost
+    if (holeDrag) {
+      const dx = holeDrag.curX - holeDrag.startX, dy = holeDrag.curY - holeDrag.startY;
+      ctx.save();
+      ctx.strokeStyle = '#00c087';
+      ctx.lineWidth = 2 * dpr;
+      ctx.setLineDash([4 * dpr, 3 * dpr]);
+      ctx.beginPath();
+      for (let i = 0; i < holeDrag.hole.length; i++) {
+        const sx = tf.toScreenX(holeDrag.hole[i].x + dx), sy = tf.toScreenY(holeDrag.hole[i].y + dy);
+        if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#00c087';
+      ctx.font = 11 * dpr + 'px sans-serif';
+      ctx.fillText(`ΔX: ${dx.toFixed(1)} mm, ΔY: ${dy.toFixed(1)} mm`, tf.toScreenX(holeDrag.curX), tf.toScreenY(holeDrag.curY) - 10 * dpr);
+      ctx.restore();
+    }
+
+    // 1. Highlight selected hole with glowing halo
+    if (vectorSelection?.type === 'hole') {
+      const face = state.dieline.faces[vectorSelection.face];
+      const hole = face?.holes?.[vectorSelection.index];
+      if (hole && hole.length) {
+        ctx.save();
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 3 * dpr;
+        ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
+        ctx.shadowBlur = 8 * dpr;
+        ctx.beginPath();
+        for (let i = 0; i < hole.length; i++) {
+          const sx = tf.toScreenX(hole[i].x), sy = tf.toScreenY(hole[i].y);
+          if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#00e5ff';
+        for (const pt of hole) {
+          ctx.beginPath();
+          ctx.arc(tf.toScreenX(pt.x), tf.toScreenY(pt.y), 2.5 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    if (!vectorPointer) return;
+
+    // 2. Magnetic Snap Marker
+    if (vectorPointer.snapped) {
+      const sx = tf.toScreenX(vectorPointer.x), sy = tf.toScreenY(vectorPointer.y);
+      ctx.save();
+      ctx.strokeStyle = '#00c087';
+      ctx.fillStyle = 'rgba(0, 192, 135, 0.25)';
+      ctx.lineWidth = 2 * dpr;
+      if (vectorPointer.snapType === 'endpoint') {
+        ctx.strokeRect(sx - 5 * dpr, sy - 5 * dpr, 10 * dpr, 10 * dpr);
+        ctx.fillRect(sx - 5 * dpr, sy - 5 * dpr, 10 * dpr, 10 * dpr);
+      } else if (vectorPointer.snapType === 'midpoint') {
+        ctx.beginPath();
+        ctx.moveTo(sx, sy - 6 * dpr);
+        ctx.lineTo(sx + 6 * dpr, sy + 5 * dpr);
+        ctx.lineTo(sx - 6 * dpr, sy + 5 * dpr);
+        ctx.closePath();
+        ctx.stroke(); ctx.fill();
+      } else {
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5 * dpr, 0, Math.PI * 2);
+        ctx.stroke(); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 3. Handle Tool preview ghost
+    if (vectorTool === 'handle') {
+      const w = Number(document.getElementById('vector-handle-width')?.value) || 80;
+      const h = Number(document.getElementById('vector-handle-height')?.value) || 25;
+      const r = Number(document.getElementById('vector-handle-radius')?.value) || 8;
+      const q = vectorPointer;
+      ctx.save();
+      ctx.strokeStyle = '#009ee3';
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.setLineDash([4 * dpr, 3 * dpr]);
+      ctx.beginPath();
+      const rC = Math.max(0, Math.min(r, w/2, h/2));
+      const x1 = tf.toScreenX(q.x - w/2), y1 = tf.toScreenY(q.y - h/2);
+      const sw = w * tf.scale, sh = h * tf.scale, sr = rC * tf.scale;
+      if (ctx.roundRect) ctx.roundRect(x1, y1, sw, sh, sr);
+      else ctx.rect(x1, y1, sw, sh);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#009ee3';
+      ctx.font = 11 * dpr + 'px sans-serif';
+      ctx.fillText(`Asa ${w}×${h} mm`, x1, y1 - 6 * dpr);
+      ctx.restore();
+      return;
+    }
+
+    // 4. Circle Tool preview without draft
+    if (vectorTool === 'circle' && !vectorDraft?.point) {
+      const r = Number(document.getElementById('vector-circle-radius')?.value) || 12;
+      const q = vectorPointer;
+      ctx.save();
+      ctx.strokeStyle = '#009ee3';
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.setLineDash([4 * dpr, 3 * dpr]);
+      ctx.beginPath();
+      ctx.arc(tf.toScreenX(q.x), tf.toScreenY(q.y), r * tf.scale, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#009ee3';
+      ctx.font = 11 * dpr + 'px sans-serif';
+      ctx.fillText(`R ${r} mm`, tf.toScreenX(q.x) + r * tf.scale + 6 * dpr, tf.toScreenY(q.y));
+      ctx.restore();
+      return;
+    }
+
+    // 5. Line draft or Circle drag
+    if (!vectorDraft?.point) return;
+    const p = vectorDraft.point;
+    let q = vectorPointer;
+    if (vectorTool === 'line') {
+      const fixedLen = Number(document.getElementById('vector-line-len')?.value);
+      if (fixedLen > 0) {
+        const ang = Math.atan2(q.y - p.y, q.x - p.x);
+        q = { x: p.x + Math.cos(ang) * fixedLen, y: p.y + Math.sin(ang) * fixedLen };
+      }
+    }
+    ctx.save();
+    ctx.strokeStyle = document.getElementById('vector-kind').value === 'fold' ? '#e5007d' : '#009ee3';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.setLineDash([5 * dpr, 4 * dpr]);
+    ctx.beginPath();
+    if (vectorTool === 'circle') ctx.arc(tf.toScreenX(p.x), tf.toScreenY(p.y), Math.hypot(q.x - p.x, q.y - p.y) * tf.scale, 0, 2 * Math.PI);
+    else { ctx.moveTo(tf.toScreenX(p.x), tf.toScreenY(p.y)); ctx.lineTo(tf.toScreenX(q.x), tf.toScreenY(q.y)); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.font = 12 * dpr + 'px sans-serif';
+    ctx.fillText((vectorTool === 'circle' ? 'R ' : '') + Math.hypot(q.x - p.x, q.y - p.y).toFixed(2) + ' mm', tf.toScreenX(q.x) + 8 * dpr, tf.toScreenY(q.y) - 8 * dpr);
+    ctx.restore();
   }
   function displayVectorModel(model) {
     state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};
@@ -2827,17 +3134,97 @@
   }
   function initVectorEditor() {
     const controls=document.getElementById('vector-controls');
-    document.getElementById('vector-upload-image').onclick=()=>document.getElementById('artwork-file-input').click();
-    document.getElementById('vector-move-image').onclick=()=>{
-      if(!state.artwork){vectorMessage('Sube primero una imagen.');return;}
-      vectorDraft=null;vectorSelection=null;state.toolMode='select';state.artworkEditing=true;
-      syncArtworkControls();render2FDieline();vectorMessage('Arrastra la imagen en el plano. Usa Tamaño, giro y posición para ajustar sus medidas.');
+    const upImg = document.getElementById('vector-upload-image');
+    if (upImg) upImg.onclick = () => document.getElementById('artwork-file-input')?.click();
+    const mvImg = document.getElementById('vector-move-image');
+    if (mvImg) mvImg.onclick = () => {
+      if (!state.artwork) { vectorMessage('Sube primero una imagen.'); return; }
+      vectorDraft = null; vectorSelection = null; state.toolMode = 'select'; state.artworkEditing = true;
+      syncArtworkControls(); render2FDieline(); vectorMessage('Arrastra la imagen en el plano.');
     };
-    document.getElementById('vector-adjust-image').onclick=()=>{if(state.artwork)openArtworkOptions();else vectorMessage('Sube primero una imagen.');};
+    const adjImg = document.getElementById('vector-adjust-image');
+    if (adjImg) adjImg.onclick = () => { if (state.artwork) openArtworkOptions(); else vectorMessage('Sube primero una imagen.'); };
     const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
     document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
     document.getElementById('vector-close').onclick=()=>toggle(false);
-    for(const tool of ['select','erase','line','circle','extend','trim','chamfer','fillet'])document.getElementById('vector-tool-'+tool).onclick=()=>setVectorTool(tool);
+    for(const tool of ['select','erase','line','circle','handle','extend','trim','chamfer','fillet']) {
+      const btn = document.getElementById('vector-tool-'+tool);
+      if (btn) btn.onclick = () => setVectorTool(tool);
+    }
+
+    // Modal discreto de herramientas y manipulación de agujero/asa
+    const modalClose = document.getElementById('vector-modal-close');
+    if (modalClose) modalClose.onclick = () => {
+      const m = document.getElementById('vector-tool-modal');
+      if (m) m.hidden = true;
+    };
+
+    const circRad = document.getElementById('vector-circle-radius');
+    if (circRad) circRad.oninput = e => {
+      const r = Number(e.target.value) || 0;
+      const diam = document.getElementById('vector-circle-diam');
+      if (diam) diam.value = (r * 2).toFixed(1);
+      render2FDieline();
+    };
+
+    const circDiam = document.getElementById('vector-circle-diam');
+    if (circDiam) circDiam.oninput = e => {
+      const d = Number(e.target.value) || 0;
+      const rad = document.getElementById('vector-circle-radius');
+      if (rad) rad.value = (d / 2).toFixed(1);
+      render2FDieline();
+    };
+
+    // Mover asa o agujero con desplazamiento exacto
+    const btnMoveHole = document.getElementById('vector-btn-move-hole');
+    if (btnMoveHole) btnMoveHole.onclick = () => {
+      if (vectorSelection?.type !== 'hole') return;
+      const face = state.dieline.faces[vectorSelection.face];
+      const hole = face?.holes?.[vectorSelection.index];
+      if (!hole) return;
+      const dx = Number(document.getElementById('vector-hole-dx')?.value) || 0;
+      const dy = Number(document.getElementById('vector-hole-dy')?.value) || 0;
+      if (dx === 0 && dy === 0) { vectorMessage('Indica un desplazamiento ΔX o ΔY.'); return; }
+      try {
+        const model = VectorCAD.moveHole(state.dieline, hole, dx, dy);
+        vectorSelection = null;
+        commitVectorEdit(model);
+        vectorMessage(`Agujero desplazado: ${dx} mm horizontal, ${dy} mm vertical.`);
+      } catch (err) { vectorMessage(err.message || String(err)); }
+    };
+
+    // Copiar asa o agujero con desplazamiento exacto
+    const btnCopyHole = document.getElementById('vector-btn-copy-hole');
+    if (btnCopyHole) btnCopyHole.onclick = () => {
+      if (vectorSelection?.type !== 'hole') return;
+      const face = state.dieline.faces[vectorSelection.face];
+      const hole = face?.holes?.[vectorSelection.index];
+      if (!hole) return;
+      let dx = Number(document.getElementById('vector-hole-dx')?.value) || 0;
+      let dy = Number(document.getElementById('vector-hole-dy')?.value) || 0;
+      if (dx === 0 && dy === 0) dx = 35;
+      try {
+        const model = VectorCAD.copyHole(state.dieline, hole, dx, dy);
+        vectorSelection = null;
+        commitVectorEdit(model);
+        vectorMessage(`Agujero copiado con éxito (+ ${dx} mm, + ${dy} mm).`);
+      } catch (err) { vectorMessage(err.message || String(err)); }
+    };
+
+    // Eliminar asa o agujero completo
+    const btnDelHole = document.getElementById('vector-btn-delete-hole');
+    if (btnDelHole) btnDelHole.onclick = () => {
+      if (vectorSelection?.type !== 'hole') return;
+      const face = state.dieline.faces[vectorSelection.face];
+      const hole = face?.holes?.[vectorSelection.index];
+      if (!hole) return;
+      try {
+        const model = VectorCAD.deleteHole(state.dieline, hole);
+        vectorSelection = null;
+        commitVectorEdit(model);
+        vectorMessage('Agujero eliminado.');
+      } catch (err) { vectorMessage(err.message || String(err)); }
+    };
     window.addEventListener('keydown',e=>{if(e.key==='Escape'&&vectorEditing){vectorDraft=null;vectorSelection=null;vectorMessage('Operación cancelada.');vectorRefreshControls();}});
     document.getElementById('vector-apply-kind').onclick=()=>{if(!vectorLine())return;try {const model=VectorCAD.classify(state.dieline,vectorSelection,document.getElementById('vector-kind').value==='fold'?'fold':'cut');vectorSelection=null;commitVectorEdit(model);}catch(error){vectorMessage(error.message);}};
     document.getElementById('vector-apply-hole').onclick=()=>{

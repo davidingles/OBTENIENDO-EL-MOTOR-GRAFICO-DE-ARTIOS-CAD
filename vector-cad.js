@@ -19,10 +19,105 @@
       if(d<best){best=d;ref={type:'line',kind,index};}
     });return ref;
   }
+  const samePt=(p,q)=>Math.hypot(p.x-q.x,p.y-q.y)<0.1;
+  const sameSeg=(s,t)=>(samePt(a(s),a(t))&&samePt(b(s),b(t)))||(samePt(a(s),b(t))&&samePt(b(s),a(t)));
+
   function snap(model,p,tolerance){
-    let result=p,best=tolerance;
-    for(const s of [...model.cutSegments,...model.foldSegments])for(const q of [a(s),b(s)]){const d=distance(p,q);if(d<best){best=d;result=q;}}
-    return result;
+    let result=p,best=tolerance,snapType=null;
+    const all=[...model.cutSegments,...model.foldSegments];
+    // 1. Endpoints (highest priority)
+    for(const s of all){
+      for(const q of [a(s),b(s)]){
+        const d=distance(p,q);
+        if(d<best){best=d;result=q;snapType='endpoint';}
+      }
+    }
+    // 2. Midpoints (second priority)
+    let midBest=Math.min(best,tolerance*0.85);
+    for(const s of all){
+      const mid={x:(s.x1+s.x2)/2,y:(s.y1+s.y2)/2};
+      const d=distance(p,mid);
+      if(d<midBest){midBest=d;best=d;result=mid;snapType='midpoint';}
+    }
+    // 3. Edge perpendicular projection
+    if(!snapType){
+      for(const s of all){
+        const dx=s.x2-s.x1,dy=s.y2-s.y1,lenSq=dx*dx+dy*dy;
+        if(lenSq<1e-6)continue;
+        const t=((p.x-s.x1)*dx+(p.y-s.y1)*dy)/lenSq;
+        if(t>=0.02&&t<=0.98){
+          const proj={x:s.x1+t*dx,y:s.y1+t*dy},d=distance(p,proj);
+          if(d<best){best=d;result=proj;snapType='edge';}
+        }
+      }
+    }
+    return snapType ? {...result,snapped:true,snapType} : {...p,snapped:false};
+  }
+
+  function handle(model,center,width,height,radius,kind='cut'){
+    if(!(width>2&&height>2))throw Error('El ancho y alto del asa deben ser mayores a 2 mm.');
+    const m=normalize(model);
+    const r=Math.max(0,Math.min(Number(radius)||0,width/2,height/2));
+    const steps=8,pts=[];
+    if(r<0.1){
+      pts.push({x:center.x-width/2,y:center.y-height/2});
+      pts.push({x:center.x+width/2,y:center.y-height/2});
+      pts.push({x:center.x+width/2,y:center.y+height/2});
+      pts.push({x:center.x-width/2,y:center.y+height/2});
+    }else{
+      const corners=[
+        {cx:center.x+width/2-r,cy:center.y+height/2-r,a1:0,a2:Math.PI/2},
+        {cx:center.x-width/2+r,cy:center.y+height/2-r,a1:Math.PI/2,a2:Math.PI},
+        {cx:center.x-width/2+r,cy:center.y-height/2+r,a1:Math.PI,a2:Math.PI*1.5},
+        {cx:center.x+width/2-r,cy:center.y-height/2+r,a1:Math.PI*1.5,a2:Math.PI*2}
+      ];
+      for(const c of corners){
+        for(let i=0;i<steps;i++){
+          const ang=c.a1+(c.a2-c.a1)*(i/steps);
+          pts.push({x:c.cx+Math.cos(ang)*r,y:c.cy+Math.sin(ang)*r});
+        }
+      }
+    }
+    const group='handle-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+    const listSegments=kind==='fold'?m.foldSegments:m.cutSegments;
+    for(let i=0;i<pts.length;i++){
+      const p1=pts[i],p2=pts[(i+1)%pts.length];
+      listSegments.push({x1:p1.x,y1:p1.y,x2:p2.x,y2:p2.y,type:kind==='fold'?'FOLD':'CUT',vectorGroup:group,vectorCreated:true});
+    }
+    return m;
+  }
+
+  function findHoleSegments(model,holePoly){
+    return model.cutSegments.filter(s=>holePoly.some(p=>samePt(p,a(s)))&&holePoly.some(p=>samePt(p,b(s))));
+  }
+
+  function moveHole(model,holePoly,dx,dy){
+    const m=normalize(model);
+    const segs=findHoleSegments(m,holePoly);
+    if(!segs.length)throw Error('No se encontraron trazos editables para este agujero.');
+    for(const s of segs){
+      s.x1+=dx;s.y1+=dy;s.x2+=dx;s.y2+=dy;
+    }
+    return m;
+  }
+
+  function copyHole(model,holePoly,dx,dy){
+    const m=normalize(model);
+    const segs=findHoleSegments(m,holePoly);
+    if(!segs.length)throw Error('No se encontraron trazos editables para copiar.');
+    const group='copy-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+    for(const s of segs){
+      m.cutSegments.push({x1:s.x1+dx,y1:s.y1+dy,x2:s.x2+dx,y2:s.y2+dy,type:s.type||'CUT',vectorGroup:group,vectorCreated:true});
+    }
+    return m;
+  }
+
+  function deleteHole(model,holePoly){
+    const m=normalize(model);
+    const segs=findHoleSegments(m,holePoly);
+    if(!segs.length)throw Error('No se encontraron trazos editables para eliminar.');
+    m.cutSegments=m.cutSegments.filter(s=>!segs.some(t=>sameSeg(s,t)));
+    return m;
   }
   function classify(model,ref,kind){
     const m=normalize(model),s=get(m,ref);if(!s)throw Error('Selecciona una línea.');
@@ -160,5 +255,5 @@
     }
     return engine.enforceFlapLengthLimit(m);
   }
-  return {normalize,hit,snap,classify,erase,addLine,circle,collide,corner,rebuild,get};
+  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole};
 });

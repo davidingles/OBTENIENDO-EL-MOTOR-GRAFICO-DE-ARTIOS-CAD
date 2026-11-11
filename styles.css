@@ -1279,9 +1279,99 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .vector-save { width:100%; background:#0788c6 !important; color:white !important; }
 #vector-status { font-size:11px; }
 
-.vector-artwork { border-top:1px solid #e3eaf0; margin-top:12px; padding-top:12px; }
-.vector-artwork button { width:100%; margin-top:6px; }
-.vector-artwork p { color:#64798d; font-size:11px; }
+.vector-tool-modal {
+  position: absolute;
+  top: 47px;
+  left: 122px;
+  width: 250px;
+  padding: 12px 14px;
+  border: 1px solid #c9d6e4;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(18, 38, 63, 0.18);
+  z-index: 9;
+  font-size: 12px;
+  color: #31465b;
+}
+.vector-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eef2f6;
+}
+.vector-modal-title {
+  font-weight: 700;
+  color: #1e293b;
+  font-size: 13px;
+}
+.vector-modal-close {
+  background: none !important;
+  border: none !important;
+  font-size: 16px !important;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0 4px !important;
+}
+.vector-modal-close:hover {
+  color: #0f172a;
+}
+.vector-modal-fields label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 6px 0;
+  gap: 8px;
+}
+.vector-modal-fields input[type=number] {
+  width: 72px;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.vector-modal-row {
+  display: flex;
+  gap: 8px;
+}
+.vector-modal-row label {
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.vector-modal-row input {
+  width: 100% !important;
+  box-sizing: border-box;
+}
+.vector-modal-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.vector-modal-actions button {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-danger-outline {
+  background: #fff;
+  border: 1px solid #f87171 !important;
+  color: #dc2626 !important;
+}
+.btn-danger-outline:hover {
+  background: #fef2f2 !important;
+}
+.vector-modal-hint {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 8px;
+  line-height: 1.4;
+}
 /* Publicación del modelo en el visor de clientes. */
 .publish-client-button { width: 100%; margin: 10px 0; }
 .publish-client-input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }

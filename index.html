@@ -484,6 +484,7 @@
             <button id="vector-tool-erase" type="button">⌫ Borrador</button>
             <button id="vector-tool-line" type="button">╱ Línea</button>
             <button id="vector-tool-circle" type="button">◯ Círculo</button>
+            <button id="vector-tool-handle" type="button">▭ Asa</button>
             <button id="vector-tool-extend" type="button">↗ Extender</button>
             <button id="vector-tool-trim" type="button">↙ Contraer</button>
             <button id="vector-tool-chamfer" type="button">⌁ Chaflán</button>
@@ -499,16 +500,69 @@
             <label>Alto (mm) <input id="vector-hole-height" type="number" min="0.1" step="0.1"></label>
             <button id="vector-apply-hole" type="button">Cambiar tamaño del agujero</button>
           </div>
-          <div class="vector-artwork">
-            <strong>Imagen sobre el troquel</strong>
-            <button id="vector-upload-image" type="button">Subir imagen…</button>
-            <button id="vector-move-image" type="button">Colocar imagen en 2D</button>
-            <button id="vector-adjust-image" type="button">Tamaño, giro y posición</button>
-            <p>Arrastra la imagen sobre el plano. El resultado se muestra en el exterior del modelo 3D.</p>
-          </div>
+
           <div class="vector-history"><button id="vector-undo" type="button">↶ Deshacer</button><button id="vector-redo" type="button">↷ Rehacer</button></div>
           <button id="vector-save" class="vector-save" type="button">Guardar en proyectos</button>
           <p id="vector-status" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
+        </div>
+
+        <!-- Modal discreto de medidas de herramienta (Línea / Círculo / Asa / Mover y Copiar) -->
+        <div id="vector-tool-modal" class="vector-tool-modal" hidden>
+          <div class="vector-modal-header">
+            <span id="vector-modal-title" class="vector-modal-title">Medidas</span>
+            <button id="vector-modal-close" type="button" class="vector-modal-close" aria-label="Cerrar modal">✕</button>
+          </div>
+
+          <!-- Campos de Línea -->
+          <div id="vector-modal-line-fields" class="vector-modal-fields" hidden>
+            <label>Longitud fija (mm)
+              <input id="vector-line-len" type="number" min="0.1" step="0.5" placeholder="Libre">
+            </label>
+            <p class="vector-modal-hint">💡 <strong>Shift (Mayús)</strong>: fuerza trazo ortogonal en los ejes. Se pega a los vectores como un imán.</p>
+          </div>
+
+          <!-- Campos de Círculo -->
+          <div id="vector-modal-circle-fields" class="vector-modal-fields" hidden>
+            <label>Radio (mm)
+              <input id="vector-circle-radius" type="number" min="0.5" step="0.5" value="12">
+            </label>
+            <label>Diámetro (mm)
+              <input id="vector-circle-diam" type="number" min="1" step="1" value="24">
+            </label>
+            <p class="vector-modal-hint">Haz clic en el lienzo para colocar el círculo con medidas exactas. El imán se pega a extremos y puntos medios.</p>
+          </div>
+
+          <!-- Campos de Asa -->
+          <div id="vector-modal-handle-fields" class="vector-modal-fields" hidden>
+            <label>Ancho del asa (mm)
+              <input id="vector-handle-width" type="number" min="5" step="1" value="80">
+            </label>
+            <label>Alto del asa (mm)
+              <input id="vector-handle-height" type="number" min="4" step="1" value="25">
+            </label>
+            <label>Radio esquinas (mm)
+              <input id="vector-handle-radius" type="number" min="0" step="0.5" value="8">
+            </label>
+            <p class="vector-modal-hint">Haz clic en el lienzo para colocar el asa centrada en el cursor. Se imanta al troquel.</p>
+          </div>
+
+          <!-- Campos de Agujero / Asa seleccionada (Mover, Copiar, Medidas) -->
+          <div id="vector-modal-hole-fields" class="vector-modal-fields" hidden>
+            <div class="vector-modal-row">
+              <label>Ancho (mm) <input id="vector-modal-hole-w" type="number" min="0.1" step="0.5"></label>
+              <label>Alto (mm) <input id="vector-modal-hole-h" type="number" min="0.1" step="0.5"></label>
+            </div>
+            <div class="vector-modal-row">
+              <label>Desplazamiento ΔX (mm) <input id="vector-hole-dx" type="number" step="1" value="0"></label>
+              <label>Desplazamiento ΔY (mm) <input id="vector-hole-dy" type="number" step="1" value="0"></label>
+            </div>
+            <div class="vector-modal-actions">
+              <button id="vector-btn-move-hole" type="button" class="btn-primary-blue">Mover</button>
+              <button id="vector-btn-copy-hole" type="button" class="btn-outline">Copiar</button>
+              <button id="vector-btn-delete-hole" type="button" class="btn-danger-outline">Eliminar</button>
+            </div>
+            <p class="vector-modal-hint">También puedes arrastrar el asa por el troquel con el ratón. Mantén Mayús para mover ortogonal.</p>
+          </div>
         </div>
       </div>
       <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
