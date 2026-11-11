@@ -2147,6 +2147,8 @@
       const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       return {
         ...h,
+        planarSlope: h.planarSlope ?? (Math.abs(h.p2.x-h.p1.x)>1 && Math.abs(h.p2.y-h.p1.y)>1
+          ? (h.p2.x-h.p1.x)/(h.p2.y-h.p1.y) : undefined),
         p1,
         p2,
         midpoint: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
@@ -2214,7 +2216,7 @@
   // These four end flaps must fit across half the width of the main H panel.
   // Work on the finished geometry, including Details edits, and keep each
   // attachment edge fixed. No change to the caller's parametric source model.
-  function enforceFlapLengthLimit(model) {
+  function enforceFlapLengthLimit(model, anglePass = false) {
     if (!model) return model;
     const code = f => f.pacdoraName || f.shortName;
     const base = model.faces.find(f => code(f) === 'H');
@@ -2245,9 +2247,60 @@
       }
     }
 
-    const edits = [...xEdits, ...yEdits];
-    if (!edits.length) return model;
-    const mapInFace = (p, edit) => edit.axis === 'y'
+    // A dust flap closes across the receiving wall, not across its own wall.
+    // Recognize a four-wall strip through folds, independent of labels/catalog IDs.
+    const sourceHinges = model.hinges || [];
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+    const incident = f => sourceHinges.filter(h => ends(h).includes(f.id));
+    const neighbor = (h,f) => model.faces.find(g => g.id === ends(h).find(id => id !== f.id));
+    const horizontal = h => Math.abs(h.p1.y-h.p2.y)<0.05;
+    const vertical = h => Math.abs(h.p1.x-h.p2.x)<0.05;
+    const structuralEdits = [];
+    for (const flap of model.faces) {
+      const links=incident(flap);
+      if (links.length!==1 || !horizontal(links[0])) continue;
+      const wall=neighbor(links[0],flap);
+      if (!wall || flap.bounds.minY>=wall.bounds.minY-1) continue;
+      const strip=new Set([wall.id]), queue=[wall];
+      for(let i=0;i<queue.length;i++) for(const h of incident(queue[i]).filter(vertical)) {
+        const other=neighbor(h,queue[i]);
+        if(!other || strip.has(other.id) || other.role==='GLUE_FLAP')continue;
+        const allowance=Math.max(3,wall.bounds.height*0.03);
+        if(Math.abs(other.bounds.minY-wall.bounds.minY)>allowance || Math.abs(other.bounds.maxY-wall.bounds.maxY)>allowance)continue;
+        strip.add(other.id);queue.push(other);
+      }
+      if(strip.size!==4)continue;
+      const receivers=incident(wall).filter(vertical).map(h=>neighbor(h,wall)).filter(f=>f&&strip.has(f.id));
+      if(!receivers.length)continue;
+      const cap=Math.min(...receivers.map(f=>f.bounds.width))/2;
+      if(cap>0 && flap.bounds.height>cap+1e-8 && !yEdits.some(e=>e.face.id===flap.id)) {
+        structuralEdits.push({face:flap,axis:'y',anchor:links[0].p1.y,scale:cap/flap.bounds.height});
+      }
+    }
+    // Preserve the source direction of oblique bottom folds. Use the same affine
+    // shear for both faces sharing the fold and hold their body attachment fixed.
+    // This preserves a 45-degree lock fold without forcing other slopes to 45.
+    const angleEdits=[];
+    for(const h of sourceHinges) {
+      const slope=h.planarSlope;
+      if(!Number.isFinite(slope) || Math.abs(slope)<0.05 || Math.abs(slope)>20)continue;
+      const dy=h.p2.y-h.p1.y,dx=h.p2.x-h.p1.x;
+      if(Math.abs(dy)<1 || Math.abs(dx-slope*dy)<1e-7)continue;
+      const pair=ends(h).map(id=>model.faces.find(f=>f.id===id));
+      if(pair.some(f=>!f))continue;
+      const attachment=pair.flatMap(f=>incident(f).filter(g=>g!==h && horizontal(g)).map(g=>({g,f})))[0];
+      if(!attachment)continue;
+      const anchor=attachment.g.p1.y;
+      const other=neighbor(attachment.g,attachment.f);
+      if(!other || pair.some(f=>f.bounds.minY<anchor-0.1) || other.bounds.maxY>anchor+0.1)continue;
+      const shear=(slope*dy-dx)/dy;
+      for(const face of pair)angleEdits.push({face,axis:'shear',anchor,shear});
+    }
+    const edits = anglePass ? angleEdits : [...xEdits, ...yEdits, ...structuralEdits];
+
+    if (!edits.length) return anglePass ? model : enforceFlapLengthLimit(model, true);
+    const mapInFace = (p, edit) => edit.axis === 'shear'
+      ? ({...p, x:p.x+edit.shear*(p.y-edit.anchor)}) : edit.axis === 'y'
       ? ({...p, y: edit.anchor + (p.y - edit.anchor) * edit.scale})
       : ({...p, x: edit.anchor + (p.x - edit.anchor) * edit.scale});
     const belongs = (p, face) => {
@@ -2317,11 +2370,12 @@
     const minX=Math.min(...faces.map(f=>f.bounds.minX)),maxX=Math.max(...faces.map(f=>f.bounds.maxX));
     const minY=Math.min(...faces.map(f=>f.bounds.minY)),maxY=Math.max(...faces.map(f=>f.bounds.maxY));
     const length=s=>Math.hypot(s.x2-s.x1,s.y2-s.y1);
-    return {...model,faces,hinges,cutSegments,foldSegments,cutSegmentsMm:cutSegments,foldSegmentsMm:foldSegments,
+    const constrained = {...model,faces,hinges,cutSegments,foldSegments,cutSegmentsMm:cutSegments,foldSegmentsMm:foldSegments,
       bleedSegments:[],bleedSegmentsMm:[],sizeArrowData:arrows(model.sizeArrowData),outsideArrowData:arrows(model.outsideArrowData),
       bounds:{minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY},blankWidthMm:maxX-minX,blankHeightMm:maxY-minY,
       totalAreaMm2:faces.reduce((s,f)=>s+area(f.polygon)-(f.holes||[]).reduce((n,h)=>n+area(h),0),0),
       totalCutLengthMm:cutSegments.reduce((s,e)=>s+length(e),0),totalFoldLengthMm:foldSegments.reduce((s,e)=>s+length(e),0)};
+    return anglePass ? constrained : enforceFlapLengthLimit(constrained, true);
   }
 
   /**
