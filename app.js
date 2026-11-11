@@ -1440,7 +1440,17 @@
         }
         share.value = `Visor: ${result.url}\nClave: ${result.key}`;
         resultPanel.hidden = false;
-        status.textContent = 'Caja subida. GitHub Pages puede tardar unos minutos en mostrarla. Puedes copiar los datos para el cliente.';
+        status.textContent = 'Caja subida. Abriendo el visor web... (GitHub Pages puede tardar unos minutos en desplegar el nuevo modelo).';
+        const openUrl = () => {
+          if (window.__TAURI__?.core?.invoke) {
+            window.__TAURI__.core.invoke('open_browser_url', { url: result.url }).catch(() => {});
+          } else {
+            try { window.open(result.url, '_blank'); } catch (_) {}
+          }
+        };
+        const openBtn = document.getElementById('publish-client-open');
+        if (openBtn) openBtn.onclick = openUrl;
+        openUrl();
       } catch (error) {
         status.dataset.error = 'true';
         status.textContent = String(error.message || error);

@@ -146,6 +146,10 @@ canvas.addEventListener('webglcontextlost', event => {
 });
 // Prevent a dropped file from replacing the customer page.
 for (const type of ['dragover', 'drop']) window.addEventListener(type, event => event.preventDefault());
+try {
+  const initial = new URLSearchParams(window.location.search).get('caja') || new URLSearchParams(window.location.search).get('clave') || new URLSearchParams(window.location.search).get('key');
+  if (initial) input.value = initial;
+} catch (_) {}
 
 ` + flaps;
 fs.writeFileSync(file('js/main.js'), main);

@@ -655,7 +655,10 @@
       <div id="publish-client-result" hidden>
         <label class="art-field" for="publish-client-share">Datos para el cliente</label>
         <textarea id="publish-client-share" readonly rows="3" class="publish-client-input"></textarea>
-        <button id="publish-client-copy" type="button" class="btn-outline">Copiar enlace y clave</button>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button id="publish-client-copy" type="button" class="btn-outline" style="flex:1;">Copiar enlace</button>
+          <button id="publish-client-open" type="button" class="btn-primary-blue" style="flex:1;">Abrir visor web</button>
+        </div>
       </div>
       <button id="publish-client-submit" type="submit" class="btn-primary-blue">Subir caja a GitHub</button>
     </form>

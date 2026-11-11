@@ -285,11 +285,27 @@ async fn load_projects(app: tauri::AppHandle) -> Result<Vec<Value>, String> {
     Ok(projects)
 }
 
+#[tauri::command]
+fn open_browser_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("URL no válida".into());
+    }
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new("rundll32");
+        cmd.args(["url.dll,FileProtocolHandler", &url]);
+        cmd.creation_flags(0x08000000);
+        let _ = cmd.spawn();
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             client_publishing::publish_client_model,
+            open_browser_url,
             save_export,
             create_blend,
             save_project,
