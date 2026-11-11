@@ -46,33 +46,114 @@
         </svg>
       </button>
 
-      <label for="svg-file-input" class="btn-outline" title="Abrir un plano SVG o DXF">
-        <span>Abrir SVG / DXF</span>
-      </label>
+      <!-- Botón Abrir con Dropdown -->
+      <div class="header-dropdown-container">
+        <button id="btn-header-open" class="btn-outline" type="button" aria-haspopup="true" aria-expanded="false" title="Opciones para abrir">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span>Abrir</span>
+          <span class="dropdown-caret">▾</span>
+        </button>
+        <div id="header-open-menu" class="header-dropdown-menu hidden" role="menu">
+          <button type="button" class="dropdown-item" id="menu-open-file">
+            <span class="dropdown-icon">📂</span>
+            <div>
+              <div class="item-title">Abrir troquel (SVG / DXF)</div>
+              <div class="item-sub">Importa un plano vectorial 1:1</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-open-projects">
+            <span class="dropdown-icon">📁</span>
+            <div>
+              <div class="item-title">Abrir proyecto guardado</div>
+              <div class="item-sub">Ver biblioteca de proyectos</div>
+            </div>
+          </button>
+          <div class="dropdown-divider"></div>
+          <button type="button" class="dropdown-item" id="menu-open-artwork">
+            <span class="dropdown-icon">🎨</span>
+            <div>
+              <div class="item-title">Cargar diseño / Arte</div>
+              <div class="item-sub">Imagen sobre troquel o textura exterior</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Botón Guardar con Dropdown -->
+      <div class="header-dropdown-container">
+        <button id="btn-header-save" class="btn-primary-blue" type="button" aria-haspopup="true" aria-expanded="false" title="Opciones para guardar y exportar">
+          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17 21 17 13 7 13 7 21"></polyline>
+            <polyline points="7 3 7 8 15 8"></polyline>
+          </svg>
+          <span>Guardar</span>
+          <span class="dropdown-caret">▾</span>
+        </button>
+        <div id="header-save-menu" class="header-dropdown-menu hidden" role="menu">
+          <button type="button" class="dropdown-item" id="menu-save-project">
+            <span class="dropdown-icon">💾</span>
+            <div>
+              <div class="item-title">Guardar proyecto</div>
+              <div class="item-sub">Guarda el estado con geometría y arte</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-save-library">
+            <span class="dropdown-icon">📚</span>
+            <div>
+              <div class="item-title">Añadir a biblioteca</div>
+              <div class="item-sub">Guardar como troquel reutilizable</div>
+            </div>
+          </button>
+          <div class="dropdown-divider"></div>
+          <div class="dropdown-section-header">Exportar archivo</div>
+          <button type="button" class="dropdown-item" id="menu-export-svg">
+            <span class="dropdown-icon">📐</span>
+            <div>
+              <div class="item-title">Exportar plano SVG (1:1 mm)</div>
+              <div class="item-sub">Para corte láser y plotter</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-export-dxf">
+            <span class="dropdown-icon">📐</span>
+            <div>
+              <div class="item-title">Exportar plano DXF (AutoCAD / Artios)</div>
+              <div class="item-sub">Capas de corte y hendido estándar</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-export-glb">
+            <span class="dropdown-icon">🧊</span>
+            <div>
+              <div class="item-title">Exportar 3D (.GLB animado)</div>
+              <div class="item-sub">Para Blender o visor web 3D</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-export-pdf">
+            <span class="dropdown-icon">📄</span>
+            <div>
+              <div class="item-title">Exportar PDF vectorial</div>
+              <div class="item-sub">Listo para imprenta 1:1 mm</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-export-png">
+            <span class="dropdown-icon">📸</span>
+            <div>
+              <div class="item-title">Captura imagen PNG 3D</div>
+              <div class="item-sub">Renderizado de alta resolución</div>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Inputs y botones ocultos para compatibilidad con eventos nativos y tests -->
       <input type="file" id="svg-file-input" accept=".svg,.dxf" class="hidden-input" />
       <button id="btn-add-library" type="button" class="btn-outline hidden">Añadir a biblioteca</button>
-
-      <label for="artwork-file-input" class="btn-outline" title="Cargar textura o diseño exterior">
-        <span>🎨 Arte</span>
-      </label>
       <input type="file" id="artwork-file-input" accept="image/*" class="hidden-input" />
       <button id="btn-art-settings" class="icon-btn hidden" title="Ajustar imagen exterior" aria-label="Ajustar imagen exterior">⚙</button>
       <button id="btn-clear-artwork" class="icon-btn" title="Restaurar textura de cartón original">↺</button>
-
-      <button id="btn-share-project" class="icon-btn" disabled title="Compartir enlace del modelo">
-        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-          <circle cx="18" cy="5" r="3"></circle>
-          <circle cx="6" cy="12" r="3"></circle>
-          <circle cx="18" cy="19" r="3"></circle>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-        </svg>
-      </button>
-
-      <button id="btn-download-dieline-main" class="btn-primary-blue" title="Descargar el archivo de troquel en el formato seleccionado (1:1 mm)">
-        <span class="btn-star">✨</span>
-        <span id="label-download-btn">Descargar SVG</span>
-      </button>
+      <button id="btn-download-dieline-main" class="hidden" title="Descargar"><span id="label-download-btn"></span></button>
     </div>
   </header>
 
@@ -412,47 +493,59 @@
         </div>
       </div>
 
-      <!-- ================= PESTAÑA 6: MORE ================= -->
+      <!-- ================= PESTAÑA 6: MORE (CONTROL DE HENDIDOS Y ROTACIÓN) ================= -->
       <div id="drawer-tab-more" class="drawer-tab-view hidden">
         <div class="drawer-section-head">
-          <span class="drawer-title">Opciones CAD y 3D</span>
+          <span class="drawer-title">Control de Hendidos</span>
         </div>
 
-        <div class="more-options-list">
-          <label class="more-check-item">
-            <input type="checkbox" id="chk-wireframe" />
-            <span>Ver malla de subdivisión y hendidos </span>
-          </label>
-          <label class="more-check-item">
-            <input type="checkbox" id="chk-crease-3d" />
-            <span>Resaltar surco 3D de hendido en rojo</span>
-          </label>
-          <label class="more-check-item">
-            <input type="checkbox" id="chk-cut-3d" />
-            <span>Mostrar contornos azules de corte en 3D</span>
-          </label>
-          <label class="more-check-item">
-            <input type="checkbox" id="chk-grid-3d" checked />
-            <span>Mostrar rejilla milimétrica y suelo</span>
-          </label>
-        </div>
-
-        <div class="drawer-group" style="margin-top:14px;">
-          <div class="section-title-wrap">
-            <span class="field-label-bold">Secuencia de plegado</span>
+        <!-- Opción 1: Todos los hendidos a la vez -->
+        <div class="drawer-group" style="margin-top:12px;background:var(--bg-card);padding:14px;border-radius:8px;border:1px solid var(--border-subtle);">
+          <button id="btn-select-all-hinges" type="button" class="btn-outline" style="width:100%;justify-content:center;font-weight:600;padding:8px;">
+            Seleccionar todos los hendidos
+          </button>
+          <div style="margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:12px;font-weight:500;color:var(--text-secondary);">Rotación global (todos)</span>
+              <div class="num-input-wrap">
+                <input type="number" id="all-hinges-num" min="-180" max="180" step="1" value="0" class="cad-num-input" style="width:64px;" />
+                <span class="num-unit">°</span>
+              </div>
+            </div>
+            <input type="range" id="all-hinges-slider" min="-180" max="180" step="1" value="0" class="cad-slider" style="width:100%;" />
           </div>
-          <select id="fold-sequence-mode" class="drawer-dropdown">
-            <option value="phased" selected>Secuencia Realista por Fases (Cuerpo → Base → Tapa)</option>
-            <option value="simultaneous">Plegado Simultáneo</option>
-          </select>
         </div>
 
-        <div class="drawer-group" style="margin-top:14px;">
-          <div class="section-title-wrap">
-            <span class="field-label-bold">Control individual por bisagra roja</span>
+        <!-- Opción 2: Selección de hendidos (solo líneas rojas) -->
+        <div class="drawer-group" style="margin-top:14px;background:var(--bg-card);padding:14px;border-radius:8px;border:1px solid var(--border-subtle);">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+            <button id="btn-select-hinges-tool" type="button" class="btn-outline" style="flex:1;justify-content:center;font-weight:600;padding:8px;">
+              🔍 Seleccionar
+            </button>
+            <button id="btn-clear-selected-hinges" type="button" class="btn-outline" style="font-size:11px;padding:8px 10px;" title="Desmarcar selección">Limpiar</button>
+          </div>
+          <div id="selected-hinges-status" style="font-size:11.5px;color:var(--text-secondary);margin:8px 0;line-height:1.4;">
+            Pulsa «Seleccionar» y toca las líneas de hendido (rojas) en el plano 2D para seleccionarlas.
+          </div>
+
+          <!-- Controles de rotación para los hendidos seleccionados -->
+          <div id="selected-hinges-controls" style="margin-top:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span id="selected-hinges-label" style="font-size:12px;font-weight:500;color:var(--text-secondary);">Rotación seleccionados</span>
+              <div class="num-input-wrap">
+                <input type="number" id="selected-hinges-num" min="-180" max="180" step="1" value="0" class="cad-num-input" style="width:64px;" />
+                <span class="num-unit">°</span>
+              </div>
+            </div>
+            <input type="range" id="selected-hinges-slider" min="-180" max="180" step="1" value="0" class="cad-slider" style="width:100%;" />
+          </div>
+
+          <!-- Lista detallada interactiva de líneas de hendido -->
+          <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;">Líneas de hendido (rojas)</span>
           </div>
           <button id="btn-set-base" class="btn-outline hidden">Usar panel seleccionado como base 3D</button>
-          <div id="hinges-slider-list" class="hinges-drawer-scroll"></div>
+          <div id="hinges-slider-list" class="hinges-drawer-scroll" style="max-height:240px;overflow-y:auto;margin-top:8px;"></div>
         </div>
       </div>
 

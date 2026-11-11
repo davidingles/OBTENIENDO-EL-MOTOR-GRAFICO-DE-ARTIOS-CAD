@@ -86,6 +86,8 @@
     artwork: null,
     artworkEditing: false,
     hingeAngles: {},
+    selectedHinges: new Set(),
+    hingeSelectionMode: false,
     foldSequenceMode: 'phased',
     view2D: {
       zoom: 1,
@@ -120,6 +122,72 @@
   let matInnerFace = null;
   let matCutEdge = null;
   let matCreaseCore = null;
+
+  // Historial global de acciones (Ctrl + Z y Ctrl + Alt + Z)
+  let vectorHistory = [];
+  let vectorRedo = [];
+  const vectorClone = value => JSON.parse(JSON.stringify(value));
+
+  function recordUndoState() {
+    if (!state.dieline) return;
+    vectorHistory.push(vectorClone(state.dieline));
+    if (vectorHistory.length > 50) vectorHistory.shift();
+    vectorRedo = [];
+    if (typeof vectorRefreshControls === 'function') vectorRefreshControls();
+  }
+
+  function handleUndo() {
+    if (!vectorHistory.length) {
+      if (typeof vectorMessage === 'function') vectorMessage('No hay más cambios para deshacer.');
+      return;
+    }
+    vectorRedo.push(vectorClone(state.dieline));
+    vectorDraft = null;
+    vectorSelection = null;
+    const prev = vectorHistory.pop();
+    displayVectorModel(prev);
+    if (typeof vectorMessage === 'function') vectorMessage('Cambio deshecho (Ctrl + Z).');
+  }
+
+  function handleRedo() {
+    if (!vectorRedo.length) {
+      if (typeof vectorMessage === 'function') vectorMessage('No hay más cambios para rehacer.');
+      return;
+    }
+    vectorHistory.push(vectorClone(state.dieline));
+    vectorDraft = null;
+    vectorSelection = null;
+    const next = vectorRedo.pop();
+    displayVectorModel(next);
+    if (typeof vectorMessage === 'function') vectorMessage('Cambio rehecho (Ctrl + Alt + Z).');
+  }
+
+  function distPointToSegment(p, a, b) {
+    if (!p || !a || !b) return Infinity;
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  window.addEventListener('keydown', (e) => {
+    const isInput = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT');
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      if (isInput) return;
+      e.preventDefault();
+      if (e.altKey || e.shiftKey) {
+        handleRedo();
+      } else {
+        handleUndo();
+      }
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+      if (isInput) return;
+      e.preventDefault();
+      handleRedo();
+    }
+  });
 
   // ============================================================================
   // INICIALIZACIÓN
@@ -1518,6 +1586,30 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (state.hingeSelectionMode && state.toolMode !== 'pan' && e.button === 0) {
+        const rawP = vectorWorldPoint(e, canvas);
+        if (state.dieline?.hinges?.length) {
+          let closestH = null;
+          let minDist = 25; // Tolerancia de 25 mm en coordenadas del plano
+          for (const h of state.dieline.hinges) {
+            const d = distPointToSegment(rawP, h.p1, h.p2);
+            if (d < minDist) {
+              minDist = d;
+              closestH = h;
+            }
+          }
+          if (closestH) {
+            if (state.selectedHinges.has(closestH.id)) {
+              state.selectedHinges.delete(closestH.id);
+            } else {
+              state.selectedHinges.add(closestH.id);
+            }
+            updateHingeSelectionUI();
+            render2FDieline();
+            return;
+          }
+        }
+      }
       if (vectorEditing && !state.artworkEditing && state.toolMode !== 'pan' && e.button === 0) {
         const rawP = vectorWorldPoint(e, canvas);
         const face = state.dieline?.faces?.[vectorSelection?.face];
@@ -1855,9 +1947,24 @@
     }
 
     // Fold segments are the editable source of truth, including loose crease strokes.
-    ctx.lineWidth=dpr;
     for(const [index,seg] of model.foldSegments.entries()) {
-      ctx.strokeStyle=vectorEditing&&vectorSelection?.type==='line'&&vectorSelection.kind==='fold'&&vectorSelection.index===index?'#99002e':'#e5007d';
+      const mid = { x: (seg.x1 + seg.x2) / 2, y: (seg.y1 + seg.y2) / 2 };
+      const isSelectedHinge = (model.hinges || []).some(h => state.selectedHinges?.has(h.id) &&
+        distPointToSegment(mid, h.p1, h.p2) < 2.5);
+
+      if (isSelectedHinge) {
+        ctx.save();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 4 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(tf.toScreenX(seg.x1), tf.toScreenY(seg.y1));
+        ctx.lineTo(tf.toScreenX(seg.x2), tf.toScreenY(seg.y2));
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.lineWidth = isSelectedHinge ? 2 * dpr : dpr;
+      ctx.strokeStyle = isSelectedHinge ? '#d97706' : (vectorEditing&&vectorSelection?.type==='line'&&vectorSelection.kind==='fold'&&vectorSelection.index===index?'#99002e':'#e5007d');
       ctx.beginPath();ctx.moveTo(tf.toScreenX(seg.x1),tf.toScreenY(seg.y1));ctx.lineTo(tf.toScreenX(seg.x2),tf.toScreenY(seg.y2));ctx.stroke();
     }
     drawVectorDraft(ctx,tf,dpr);
@@ -2542,12 +2649,112 @@
     });
     if (window.ResizeObserver) new ResizeObserver(() => onWindowResize()).observe(document.querySelector('.canvas-2d-viewport'));
 
+    // Dropdowns de Cabecera (Abrir / Guardar) y Control de Hendidos en pestaña Más
+    initHeaderDropdowns();
+    initHingeMoreControls();
+
     // 13. Inicializar catálogo de dielines dentro de la pestaña Dielines
     initDrawerCatalogUI();
   }
 
+  function initHeaderDropdowns() {
+    const openBtn = document.getElementById('btn-header-open');
+    const openMenu = document.getElementById('header-open-menu');
+    const saveBtn = document.getElementById('btn-header-save');
+    const saveMenu = document.getElementById('header-save-menu');
+
+    function closeAllDropdowns() {
+      if (openMenu) openMenu.classList.add('hidden');
+      if (saveMenu) saveMenu.classList.add('hidden');
+      if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
+      if (saveBtn) saveBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    if (openBtn && openMenu) {
+      openBtn.onclick = (e) => {
+        e.stopPropagation();
+        const willOpen = openMenu.classList.contains('hidden');
+        closeAllDropdowns();
+        if (willOpen) {
+          openMenu.classList.remove('hidden');
+          openBtn.setAttribute('aria-expanded', 'true');
+        }
+      };
+    }
+
+    if (saveBtn && saveMenu) {
+      saveBtn.onclick = (e) => {
+        e.stopPropagation();
+        const willOpen = saveMenu.classList.contains('hidden');
+        closeAllDropdowns();
+        if (willOpen) {
+          saveMenu.classList.remove('hidden');
+          saveBtn.setAttribute('aria-expanded', 'true');
+        }
+      };
+    }
+
+    window.addEventListener('click', (e) => {
+      if (!e.target.closest('.header-dropdown-container')) {
+        closeAllDropdowns();
+      }
+    });
+
+    document.getElementById('menu-open-file')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      document.getElementById('svg-file-input')?.click();
+    });
+
+    document.getElementById('menu-open-projects')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      const projRail = document.querySelector('.rail-tab-btn[data-drawer-tab="projects"]');
+      if (projRail) projRail.click();
+    });
+
+    document.getElementById('menu-open-artwork')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      document.getElementById('artwork-file-input')?.click();
+    });
+
+    document.getElementById('menu-save-project')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      saveCurrentProject();
+    });
+
+    document.getElementById('menu-save-library')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      document.getElementById('btn-add-library')?.click();
+    });
+
+    document.getElementById('menu-export-svg')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      downloadSelectedDielineFormat('svg');
+    });
+
+    document.getElementById('menu-export-dxf')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      downloadSelectedDielineFormat('dxf');
+    });
+
+    document.getElementById('menu-export-glb')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      downloadSelectedDielineFormat('glb');
+    });
+
+    document.getElementById('menu-export-pdf')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      downloadSelectedDielineFormat('pdf');
+    });
+
+    document.getElementById('menu-export-png')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      downloadSelectedDielineFormat('png');
+    });
+  }
+
   function applyCurrentPartVariation() {
     if (!state.parametricDieline || !DielineEngine.applyPartVariationToModel) return;
+    recordUndoState();
     const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart, state.partParams[state.activePart]);
     if (modified) {
       state.dieline = modified;
@@ -2811,9 +3018,8 @@
   }
 
   // Edits are applied to a private model snapshot until explicitly saved.
-  let vectorEditing=false, vectorSelection=null, vectorHistory=[], vectorRedo=[];
+  let vectorEditing=false, vectorSelection=null;
   let vectorTool='select', vectorDraft=null, vectorPointer=null, holeDrag=null, boxSelect=null, boxSelectCandidate=null;
-  const vectorClone = value => JSON.parse(JSON.stringify(value));
   function vectorInside(p, poly) {
     let inside=false;
     for(let i=0,j=poly.length-1;i<poly.length;j=i++) { const a=poly[i],b=poly[j]; if ((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) inside=!inside; }
@@ -3475,8 +3681,8 @@
       matches.forEach((k,i)=>{const j=(i+1)%old.length,s=model.cutSegments[k]; if(same({x:s.x1,y:s.y1},old[i])) Object.assign(s,{x1:next[i].x,y1:next[i].y,x2:next[j].x,y2:next[j].y}); else Object.assign(s,{x1:next[j].x,y1:next[j].y,x2:next[i].x,y2:next[i].y});});
       face.holes[vectorSelection.index]=next;commitVectorEdit(model);
     };
-    document.getElementById('vector-undo').onclick=()=>{if(!vectorHistory.length)return;vectorRedo.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorHistory.pop());vectorMessage('Cambio deshecho.');};
-    document.getElementById('vector-redo').onclick=()=>{if(!vectorRedo.length)return;vectorHistory.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorRedo.pop());vectorMessage('Cambio rehecho.');};
+    document.getElementById('vector-undo').onclick = handleUndo;
+    document.getElementById('vector-redo').onclick = handleRedo;
     const btnVecSave = document.getElementById('vector-save');
     if (btnVecSave) btnVecSave.onclick = saveCurrentProject;
   }
@@ -4295,23 +4501,43 @@
     for (const h of model.hinges) {
       const child = faceById.get(h.childFaceId);
       const label = child ? child.label : `Bisagra #${h.id}`;
+      const isSelected = state.selectedHinges?.has(h.id);
 
       const row = document.createElement('div');
-      row.className = 'hinge-control-row';
+      row.className = 'hinge-control-row' + (isSelected ? ' selected-hinge-row' : '');
+      row.setAttribute('data-hinge-id', h.id);
       row.innerHTML = `
-        <div class="hinge-row-header">
-          <span class="hinge-label" title="${label}">${label}</span>
+        <div class="hinge-row-header" style="cursor:pointer;" title="Haz clic para seleccionar/deseleccionar esta bisagra">
+          <input type="checkbox" class="hinge-select-chk" ${isSelected ? 'checked' : ''} style="cursor:pointer;margin-right:6px;" />
+          <span class="hinge-label" title="${label}" style="flex:1;">${label}</span>
           <span class="hinge-len">${h.length.toFixed(1)} mm</span>
-          <div class="num-input-wrap" title="Escribe el ángulo con el teclado numérico o gira la ruleta del ratón">
-            <input type="number" id="hinge-num-${h.id}" min="-180" max="180" step="1" value="0" class="cad-num-input hinge-num" />
+          <div class="num-input-wrap" title="Escribe el ángulo (-180° a 180°)">
+            <input type="number" id="hinge-num-${h.id}" min="-180" max="180" step="1" value="${Math.round(state.hingeAngles[h.id] || 0)}" class="cad-num-input hinge-num" />
             <span class="num-unit">°</span>
           </div>
         </div>
-        <input type="range" id="hinge-slider-${h.id}" min="-180" max="180" step="1" value="0" class="cad-slider hinge-slider" />
+        <input type="range" id="hinge-slider-${h.id}" min="-180" max="180" step="1" value="${Math.round(state.hingeAngles[h.id] || 0)}" class="cad-slider hinge-slider" />
       `;
 
       const slider = row.querySelector(`#hinge-slider-${h.id}`);
       const numInput = row.querySelector(`#hinge-num-${h.id}`);
+      const chk = row.querySelector('.hinge-select-chk');
+
+      chk.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (chk.checked) state.selectedHinges.add(h.id);
+        else state.selectedHinges.delete(h.id);
+        updateHingeSelectionUI();
+        render2FDieline();
+      });
+
+      row.querySelector('.hinge-row-header').addEventListener('click', (e) => {
+        if (e.target === chk || e.target === numInput) return;
+        if (state.selectedHinges.has(h.id)) state.selectedHinges.delete(h.id);
+        else state.selectedHinges.add(h.id);
+        updateHingeSelectionUI();
+        render2FDieline();
+      });
 
       bindSliderAndNumeric(slider, numInput, -180, 180, 1, 0, (val) => {
         state.isPlaying = false;
@@ -4329,6 +4555,126 @@
       });
 
       list.appendChild(row);
+    }
+    updateHingeSelectionUI();
+  }
+
+  function syncHingeSlidersFromAngles() {
+    if (!state.dieline?.hinges) return;
+    for (const h of state.dieline.hinges) {
+      const angle = Math.round(state.hingeAngles[h.id] || 0);
+      const s = document.getElementById(`hinge-slider-${h.id}`);
+      const n = document.getElementById(`hinge-num-${h.id}`);
+      if (s) s.value = angle;
+      if (n && document.activeElement !== n) n.value = angle;
+    }
+  }
+
+  function updateHingeSelectionUI() {
+    const count = state.selectedHinges ? state.selectedHinges.size : 0;
+    const total = state.dieline?.hinges?.length || 0;
+    const status = document.getElementById('selected-hinges-status');
+    const label = document.getElementById('selected-hinges-label');
+    const btnTool = document.getElementById('btn-select-hinges-tool');
+    if (btnTool) btnTool.classList.toggle('active', !!state.hingeSelectionMode);
+
+    if (status) {
+      if (state.hingeSelectionMode) {
+        status.innerHTML = `<span style="color:#0284c7;font-weight:600;">Modo selección activo:</span> Toca líneas rojas en el plano 2D para seleccionarlas (${count} de ${total}).`;
+      } else if (count > 0) {
+        status.innerHTML = `<strong>${count}</strong> hendido(s) seleccionado(s) de ${total}.`;
+      } else {
+        status.textContent = 'Pulsa «Seleccionar» y toca las líneas de hendido (rojas) en el plano 2D para elegirlas.';
+      }
+    }
+    if (label) {
+      label.textContent = count > 0 ? `Rotar seleccionados (${count})` : 'Rotar seleccionados';
+    }
+
+    const list = document.getElementById('hinges-slider-list');
+    if (list && state.dieline?.hinges) {
+      for (const h of state.dieline.hinges) {
+        const isSel = state.selectedHinges.has(h.id);
+        const row = list.querySelector(`.hinge-control-row[data-hinge-id="${h.id}"]`);
+        if (row) {
+          row.classList.toggle('selected-hinge-row', isSel);
+          const chk = row.querySelector('.hinge-select-chk');
+          if (chk) chk.checked = isSel;
+        }
+      }
+    }
+
+    if (count > 0) {
+      const firstId = state.selectedHinges.values().next().value;
+      const angle = Math.round(state.hingeAngles[firstId] || 0);
+      const selSlider = document.getElementById('selected-hinges-slider');
+      const selNum = document.getElementById('selected-hinges-num');
+      if (selSlider) selSlider.value = angle;
+      if (selNum && document.activeElement !== selNum) selNum.value = angle;
+    }
+  }
+
+  function initHingeMoreControls() {
+    const btnSelectAll = document.getElementById('btn-select-all-hinges');
+    if (btnSelectAll) {
+      btnSelectAll.onclick = () => {
+        if (!state.dieline?.hinges) return;
+        state.selectedHinges = new Set(state.dieline.hinges.map(h => h.id));
+        updateHingeSelectionUI();
+        render2FDieline();
+      };
+    }
+
+    const allSlider = document.getElementById('all-hinges-slider');
+    const allNum = document.getElementById('all-hinges-num');
+    if (allSlider && allNum) {
+      bindSliderAndNumeric(allSlider, allNum, -180, 180, 1, 0, (val) => {
+        if (!state.dieline?.hinges) return;
+        state.isPlaying = false;
+        updatePlayButtonUI();
+        for (const h of state.dieline.hinges) {
+          state.hingeAngles[h.id] = val;
+        }
+        applyFoldAngles();
+        syncHingeSlidersFromAngles();
+        const selSlider = document.getElementById('selected-hinges-slider');
+        const selNum = document.getElementById('selected-hinges-num');
+        if (selSlider) selSlider.value = val;
+        if (selNum && document.activeElement !== selNum) selNum.value = val;
+      });
+    }
+
+    const btnSelectTool = document.getElementById('btn-select-hinges-tool');
+    if (btnSelectTool) {
+      btnSelectTool.onclick = () => {
+        state.hingeSelectionMode = !state.hingeSelectionMode;
+        btnSelectTool.classList.toggle('active', state.hingeSelectionMode);
+        updateHingeSelectionUI();
+      };
+    }
+
+    const btnClear = document.getElementById('btn-clear-selected-hinges');
+    if (btnClear) {
+      btnClear.onclick = () => {
+        state.selectedHinges.clear();
+        updateHingeSelectionUI();
+        render2FDieline();
+      };
+    }
+
+    const selSlider = document.getElementById('selected-hinges-slider');
+    const selNum = document.getElementById('selected-hinges-num');
+    if (selSlider && selNum) {
+      bindSliderAndNumeric(selSlider, selNum, -180, 180, 1, 0, (val) => {
+        if (!state.dieline?.hinges || !state.selectedHinges.size) return;
+        state.isPlaying = false;
+        updatePlayButtonUI();
+        for (const hId of state.selectedHinges) {
+          state.hingeAngles[hId] = val;
+        }
+        applyFoldAngles();
+        syncHingeSlidersFromAngles();
+      });
     }
   }
 
