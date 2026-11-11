@@ -144,6 +144,21 @@
               <div class="item-sub">Renderizado de alta resolución</div>
             </div>
           </button>
+          <div class="dropdown-divider"></div>
+          <button type="button" class="dropdown-item" id="menu-publish-client">
+            <span class="dropdown-icon">🌐</span>
+            <div>
+              <div class="item-title">Publicar para cliente</div>
+              <div class="item-sub">Genera enlace 3D interactivo con clave</div>
+            </div>
+          </button>
+          <button type="button" class="dropdown-item" id="menu-create-blend">
+            <span class="dropdown-icon">🎬</span>
+            <div>
+              <div class="item-title">Crear escena Blender (.blend)</div>
+              <div class="item-sub">Genera archivo nativo 3D con texturas</div>
+            </div>
+          </button>
         </div>
       </div>
 
@@ -224,8 +239,14 @@
       <!-- ================= PESTAÑA 1: DIELINES ================= -->
       <div id="drawer-tab-projects" class="drawer-tab-view hidden"><div class="drawer-title">Proyectos</div><p>Guarda aquí tus troqueles con sus cambios e imágenes.</p><button id="project-save" class="btn-primary-blue">Guardar proyecto</button><p id="project-status" role="status"></p><div id="project-list"></div></div>
       <div id="drawer-tab-dielines" class="drawer-tab-view hidden">
-        <div class="drawer-tab-header">
-          <span class="drawer-title">Biblioteca</span>
+        <div class="drawer-tab-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span class="drawer-title" style="margin:0;">Biblioteca</span>
+          <div id="library-board-pills" class="library-board-pills" role="radiogroup" aria-label="Filtrar por cartón">
+            <button type="button" class="board-pill active" data-board="C1" title="Biblioteca estándar C1">C1</button>
+            <button type="button" class="board-pill" data-board="C2" title="Biblioteca C2">C2</button>
+            <button type="button" class="board-pill" data-board="C3" title="Biblioteca C3">C3</button>
+            <button type="button" class="board-pill" data-board="C8" title="Biblioteca C8">C8</button>
+          </div>
         </div>
 
         <div class="dielines-search-box">
@@ -236,10 +257,10 @@
           <input type="text" id="drawer-dielines-search" placeholder="Buscar por nombre o número" />
         </div>
 
-        <!-- Categorías en scroll horizontal de chips -->
+        <!-- Categorías en scroll horizontal de chips (Preferidos por defecto en primer lugar) -->
         <div id="dielines-categories-bar" class="categories-chip-bar">
-          <button class="cat-chip active" data-cat-slug="ALL">Todos</button>
-          <button class="cat-chip" data-cat-slug="FAVORITES">Preferidos</button>
+          <button class="cat-chip active" data-cat-slug="FAVORITES">Preferidos</button>
+          <button class="cat-chip" data-cat-slug="ALL">Todos</button>
           <button class="cat-chip" data-cat-slug="user-models">Mis modelos</button>
           <button class="cat-chip" data-cat-slug="fefco-box-templates">Cajas FEFCO</button>
           <button class="cat-chip" data-cat-slug="folding-box-dielines">Estuches plegables</button>
@@ -766,54 +787,6 @@
         </div>
       </div>
 
-      <!-- TARJETA INFERIOR: FILE FORMATS + YOU WILL GET (IDÉNTICO A LA IMAGEN) -->
-      <div class="export-formats-card">
-        <div class="export-card-title">Formatos de archivo</div>
-        <button id="btn-create-blend" type="button" class="btn-outline create-blend-button">CREAR .blend</button>
-        <button id="btn-publish-client" type="button" class="btn-primary-blue publish-client-button">Publicar para cliente</button>
-
-        <div class="formats-button-grid">
-          <button class="format-btn" data-export-format="ai" disabled title="Exportación AI nativa aún no disponible; usa PDF o SVG en Illustrator">
-            <span class="format-icon ai">AI</span>
-            <span class="format-label">Troquel AI</span>
-          </button>
-
-          <button class="format-btn" data-export-format="pdf" title="PDF vectorial listo para imprenta 1:1 mm">
-            <span class="format-icon pdf">PDF</span>
-            <span class="format-label">Troquel PDF</span>
-          </button>
-
-          <button class="format-btn" data-export-format="dxf" title="AutoCAD / ArtiosCAD DXF R12 con capas de corte y hendido">
-            <span class="format-icon dxf">DXF</span>
-            <span class="format-label">Troquel DXF</span>
-          </button>
-
-          <button class="format-btn active" data-export-format="svg" title="SVG 1:1 mm para plotter de corte o edición">
-            <span class="format-icon svg">SVG</span>
-            <span class="format-label">Troquel SVG</span>
-          </button>
-
-          <button class="format-btn" data-export-format="glb" title="Modelo 3D animado en milímetros listo para Blender">
-            <span class="format-icon glb">3D</span>
-            <span class="format-label">Blender (.GLB)</span>
-          </button>
-
-          <button class="format-btn" data-export-format="png" title="Captura de alta resolución en PNG">
-            <span class="format-icon png">PNG</span>
-            <span class="format-label">Imagen 3D</span>
-          </button>
-        </div>
-
-        <div class="you-will-get-section">
-          <div class="you-will-get-title">Descargas</div>
-          <ul class="you-will-get-list">
-            <li>Genera y descarga el formato que necesites.</li>
-            <li>Comprueba las medidas y la geometría antes de fabricar.</li>
-            <li>Exporta el plano o el modelo 3D para continuar editándolo.</li>
-          </ul>
-        </div>
-      </div>
-
     </aside>
 
   </main>
@@ -888,7 +861,13 @@
   <dialog id="add-library-dialog" class="cad-import-dialog" aria-labelledby="add-library-title">
     <h3 id="add-library-title">Añadir modelo a la biblioteca</h3>
     <label class="cad-scale-row">Nombre <input id="library-model-name" type="text" maxlength="100" autocomplete="off" /></label>
-    <label class="cad-scale-row">Cartón <select id="library-model-board"><option value="C1">C1 · 1,5 mm</option><option value="C3">C3 · 3 mm</option><option value="C5">C5 · 4,5 mm</option><option value="C8">C8 · 7 mm</option></select></label>
+    <label class="cad-scale-row">Cartón <select id="library-model-board">
+      <option value="C1">C1 · 1,5 mm</option>
+      <option value="C2">C2 · 2,0 mm</option>
+      <option value="C3">C3 · 3,0 mm</option>
+      <option value="C5">C5 · 4,5 mm</option>
+      <option value="C8">C8 · 7,0 mm</option>
+    </select></label>
     <p>Se guarda el troquel con su geometría actual. Elegir el cartón no modifica sus retranqueos ni tolerancias.</p>
     <p id="library-model-status" role="status"></p>
     <div class="cad-import-actions"><button id="library-model-cancel" class="btn-outline">Cancelar</button><button id="library-model-save" class="btn-primary-blue">Añadir a biblioteca</button></div>

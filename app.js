@@ -57,6 +57,8 @@
     symmetryLinks: {},
     openParamsValues: {},   // Valores de Details
     fefcoFilter: 'ALL',
+    catalogCategory: 'FAVORITES',
+    selectedBoardFilter: 'C1',
     fefcoSearch: '',
     boardId: 'M-125B',      // Cartón seleccionado de la base de datos ArtiosCAD
     caliper: 1.5,           // C1 confirmado por el usuario
@@ -2750,6 +2752,18 @@
       closeAllDropdowns();
       downloadSelectedDielineFormat('png');
     });
+
+    document.getElementById('menu-publish-client')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      const pubBtn = document.getElementById('btn-publish-client');
+      if (pubBtn) pubBtn.click();
+      else if (typeof setupClientPublishingClick === 'function') setupClientPublishingClick();
+    });
+
+    document.getElementById('menu-create-blend')?.addEventListener('click', () => {
+      closeAllDropdowns();
+      createBlendScene();
+    });
   }
 
   function applyCurrentPartVariation() {
@@ -2992,6 +3006,17 @@
         catChips.forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         state.catalogCategory = chip.getAttribute('data-cat-slug');
+        catalogLimit = 60;
+        renderDrawerCatalogList();
+      });
+    });
+
+    const boardPills = document.querySelectorAll('.board-pill');
+    boardPills.forEach(pill => {
+      pill.addEventListener('click', () => {
+        boardPills.forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        state.selectedBoardFilter = pill.getAttribute('data-board') || 'C1';
         catalogLimit = 60;
         renderDrawerCatalogList();
       });
@@ -3753,8 +3778,11 @@
       status.textContent='Espesor: '+String(mm).replace('.',',')+' mm. Se conservan los retranqueos y tolerancias del archivo.';
     };
     document.getElementById('btn-add-library').onclick=()=>{
-      if(!state.canAddToLibrary||!state.dieline)return;
-      document.getElementById('library-model-name').value=state.fileName.replace(/\.[^.]+$/,'').slice(0,100);
+      if(!state.dieline) {
+        alert('No hay ningún troquel cargado para añadir a la biblioteca.');
+        return;
+      }
+      document.getElementById('library-model-name').value=(state.fileName||'Mi troquel').replace(/\.[^.]+$/,'').slice(0,100);
       profile.value=state.boardCode||'C1';showProfile();dialog.showModal();
     };
     profile.onchange=showProfile;
@@ -3768,12 +3796,16 @@
         if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('add_library_model',{model:item});
         else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
         userLibraryModels.unshift(item);state.activeFefcoEntry=item;state.fileName=item.name;
-        state.boardCode=item.boardCode;state.caliper=UserLibrary.boardThicknessMm[item.boardCode]||1.5;
-        state.canAddToLibrary=false;document.getElementById('btn-add-library').classList.add('hidden');
+        state.boardCode=item.boardCode;
+        state.selectedBoardFilter=item.boardCode;
+        state.caliper=UserLibrary.boardThicknessMm[item.boardCode]||1.5;
+        state.canAddToLibrary=false;
+        document.getElementById('btn-add-library')?.classList.add('hidden');
         dialog.close();rebuild3DMesh();setMasterFold(state.masterFold);updateDielineInfoUI(state.dieline);
         state.catalogCategory='user-models';state.fefcoSearch='';catalogLimit=60;
         document.getElementById('drawer-dielines-search').value='';
         document.querySelectorAll('.cat-chip').forEach(chip=>chip.classList.toggle('active',chip.getAttribute('data-cat-slug')==='user-models'));
+        document.querySelectorAll('.board-pill').forEach(pill=>pill.classList.toggle('active',pill.getAttribute('data-board')===item.boardCode));
         document.querySelector('.rail-tab-btn[data-drawer-tab="dielines"]')?.click();
         renderDrawerCatalogList();
       }catch(error){status.textContent=error.message||String(error);}
@@ -3809,7 +3841,8 @@
     button.addEventListener('click',e=>{
       e.preventDefault();e.stopPropagation();
       if(!toggleFavoriteModel(Number(item.num)))return;
-      if(state.catalogCategory==='FAVORITES')renderDrawerCatalogList();else update();
+      update();
+      if(state.catalogCategory==='FAVORITES')renderDrawerCatalogList();
     });
     return button;
   }
@@ -3857,11 +3890,15 @@
 
     const allModels = allCatalogModels();
 
-    const catSlug = state.catalogCategory || 'ALL';
+    const catSlug = state.catalogCategory || 'FAVORITES';
+    const selectedBoard = state.selectedBoardFilter || 'C1';
     const normalizar = value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const q = normalizar((state.fefcoSearch || '').trim());
 
     const filtered = allModels.filter(m => {
+      const mBoard = m.userModel ? (m.boardCode || 'C1') : 'C1';
+      if (selectedBoard !== 'ALL' && mBoard !== selectedBoard) return false;
+
       const matchCat = catSlug === 'FAVORITES' ? favoriteModelIds.has(Number(m.num)) : (catSlug === 'ALL') ||
         (Array.isArray(m.modelCategories) && m.modelCategories.includes(catSlug)) ||
         (Array.isArray(m.useCategories) && m.useCategories.includes(catSlug));
@@ -3910,7 +3947,15 @@
       more.textContent = `Mostrar más (${filtered.length - catalogLimit} restantes)`;
       more.addEventListener('click', () => { catalogLimit += 60; renderDrawerCatalogList(); });
       listEl.appendChild(more);
-    } else if (!filtered.length) listEl.textContent = catSlug==='FAVORITES'&&!q?'Todavía no has marcado troqueles como preferidos.':'No se encontraron modelos.';
+    } else if (!filtered.length) {
+      if (catSlug === 'FAVORITES' && !q) {
+        listEl.textContent = 'Todavía no has marcado troqueles como preferidos en ' + selectedBoard + '.';
+      } else if (selectedBoard !== 'C1') {
+        listEl.textContent = `No hay troqueles guardados en ${selectedBoard} todavía. Usa «Añadir a biblioteca» para guardar troqueles aquí.`;
+      } else {
+        listEl.textContent = 'No se encontraron modelos.';
+      }
+    }
   }
 
   function drawMiniDielinePreview(canvas, data) {

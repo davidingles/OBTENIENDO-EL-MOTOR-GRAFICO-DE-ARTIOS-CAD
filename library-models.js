@@ -1,10 +1,10 @@
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.UserLibrary=factory();})(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
-  const boardThicknessMm={C1:1.5,C3:3,C5:4.5,C8:7};
+  const boardThicknessMm={C1:1.5,C2:2,C3:3,C5:4.5,C8:7};
   function validate(model){
     if(!model||!Number.isSafeInteger(model.num)||model.num<=100000000000)throw new Error('Identificador de modelo no válido.');
     if(typeof model.name!=='string'||!model.name.trim()||Array.from(model.name.trim()).length>100)throw new Error('Escribe un nombre de entre 1 y 100 caracteres.');
-    if(!Object.hasOwn(boardThicknessMm,model.boardCode))throw new Error('Elige C1, C3, C5 o C8.');
+    if(!Object.hasOwn(boardThicknessMm,model.boardCode))throw new Error('Elige C1, C2, C3, C5 o C8.');
     const g=model.geometry;
     if(!g||!Array.isArray(g.faces)||!g.faces.length||g.faces.length>10000||!Array.isArray(g.hinges)||!Array.isArray(g.cutSegments)||!Array.isArray(g.foldSegments))throw new Error('El archivo no contiene un troquel válido.');
     if(!['width','height'].every(key=>Number.isFinite(g.bounds?.[key])&&g.bounds[key]>0))throw new Error('Las medidas del plano no son válidas.');
