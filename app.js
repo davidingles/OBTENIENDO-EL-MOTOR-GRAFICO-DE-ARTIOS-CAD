@@ -54,6 +54,9 @@
     showBleed: false,        // Línea verde de sangrado
     bleedMm: 0,             // Sangrado en mm
     showDimensions: true,   // Cotas 2D
+    dimensionDisplayMode: 'main', // 'none' | 'main' | 'all' (3 estados solicitados)
+    showAreaLabels: true,   // Mostrar / ocultar nombres de las áreas
+    pickingDimensionArea: null, // 'L' | 'W' | 'H' cuando se pulsa el icono de la diana
     symmetryLinks: {},
     openParamsValues: {},   // Valores de Details
     fefcoFilter: 'ALL',
@@ -1576,6 +1579,101 @@
   }
 
   // ============================================================================
+  // ASIGNACIÓN Y GESTIÓN DE COTAS POR ÁREA (DIANA 🎯 Y HIT-TESTING DE COTAS)
+  // ============================================================================
+  function applyPickedDimensionFace(dimKey, face) {
+    if (!state.dieline || !face || !face.bounds) return;
+    const b = face.bounds;
+    let val = 0;
+    if (dimKey === 'H') {
+      val = +(b.height > 0 ? b.height : 60).toFixed(1);
+      state.paramH = val;
+      const inp = document.getElementById('input-height');
+      if (inp) inp.value = val;
+    } else if (dimKey === 'L') {
+      val = +(b.width > 0 ? b.width : 200).toFixed(1);
+      state.paramL = val;
+      const inp = document.getElementById('input-length');
+      if (inp) inp.value = val;
+    } else if (dimKey === 'W') {
+      val = +(b.width > 0 ? b.width : 150).toFixed(1);
+      state.paramW = val;
+      const inp = document.getElementById('input-width');
+      if (inp) inp.value = val;
+    }
+
+    // Posicionamiento de flecha sobre el área seleccionada
+    let arrow;
+    if (dimKey === 'H') {
+      const xH = b.minX + Math.min(25, b.width * 0.4);
+      arrow = {
+        lineName: 'H',
+        lineLength: val,
+        p1: { x: xH, y: b.minY },
+        p2: { x: xH, y: b.maxY },
+        tpointer: { x: xH, y: (b.minY + b.maxY) * 0.5, value: 'H=' + val },
+        faceId: face.id,
+        isMain: true
+      };
+    } else {
+      const yMid = b.minY + b.height * 0.5;
+      arrow = {
+        lineName: dimKey,
+        lineLength: val,
+        p1: { x: b.minX, y: yMid },
+        p2: { x: b.maxX, y: yMid },
+        tpointer: { x: (b.minX + b.maxX) * 0.5, y: yMid, value: `${dimKey}=${val}` },
+        faceId: face.id,
+        isMain: true
+      };
+    }
+
+    if (!Array.isArray(state.dieline.sizeArrowData)) state.dieline.sizeArrowData = [];
+    state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a.lineName !== dimKey);
+    state.dieline.sizeArrowData.push(arrow);
+
+    // Cancelar estado de diana
+    state.pickingDimensionArea = null;
+    ['l', 'w', 'h'].forEach(k => {
+      document.getElementById('btn-pick-dim-' + k)?.classList.remove('active-target');
+    });
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d && c2d.style) c2d.style.cursor = 'default';
+
+    if (state.dimensionDisplayMode === 'none') {
+      state.dimensionDisplayMode = 'main';
+      const switchEl = document.getElementById('dimension-mode-switch');
+      if (switchEl) {
+        switchEl.querySelectorAll('.seg-btn-3').forEach(b => {
+          b.classList.toggle('active', b.dataset.mode === 'main');
+        });
+      }
+    }
+
+    vectorMessage(`Área '${face.name || face.label || face.id}' asignada a la cota ${dimKey} (${val} mm).`);
+    render2FDieline();
+  }
+
+  function hitTestArrow(model, p, tol = 8) {
+    if (!model) return null;
+    const dimMode = state.dimensionDisplayMode || 'main';
+    if (dimMode === 'none') return null;
+    const list = (dimMode === 'all')
+      ? [...(model.outsideArrowData || []), ...(model.sizeArrowData || [])]
+      : (model.sizeArrowData || []);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const a = list[i];
+      if (!a || !a.p1 || !a.p2) continue;
+      const d = distPointToSegment(p, a.p1, a.p2);
+      if (d <= tol) return a;
+      if (a.tpointer && Math.hypot(p.x - a.tpointer.x, p.y - a.tpointer.y) <= tol * 1.6) {
+        return a;
+      }
+    }
+    return null;
+  }
+
+  // ============================================================================
   // VISOR CAD 2D INTERACTIVO (CANVAS 2D CON COTA 1:1, CORTE AZUL Y DOBLEZ ROJO)
   // ============================================================================
   function init2DCanvasInteractions() {
@@ -1588,6 +1686,13 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (state.pickingDimensionArea && e.button === 0) {
+        const hitFace = hitTest2DCanvas(e);
+        if (hitFace) {
+          applyPickedDimensionFace(state.pickingDimensionArea, hitFace);
+          return;
+        }
+      }
       if (state.hingeSelectionMode && state.toolMode !== 'pan' && e.button === 0) {
         const rawP = vectorWorldPoint(e, canvas);
         if (state.dieline?.hinges?.length) {
@@ -1623,6 +1728,13 @@
           return;
         }
         if (vectorTool === 'select') {
+          const tf = get2DTransform(canvas, state.dieline.bounds);
+          const arrowHit = hitTestArrow(state.dieline, rawP, 12 / (tf.scale || 1));
+          if (arrowHit) {
+            vectorSelection = { type: 'dimension', arrow: arrowHit };
+            vectorRefreshControls();
+            return;
+          }
           boxSelectCandidate = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, e };
           return;
         }
@@ -1634,6 +1746,18 @@
         const ratio = canvas.width/rect.width;
         artworkDrag = {x:tf.toWorldX((e.clientX-rect.left)*ratio), y:tf.toWorldY((e.clientY-rect.top)*ratio), centerX:state.artwork.centerX,centerY:state.artwork.centerY};
         e.preventDefault();return;
+      }
+      const rawP = vectorWorldPoint(e, canvas);
+      const tf = get2DTransform(canvas, state.dieline.bounds);
+      const arrowHit = hitTestArrow(state.dieline, rawP, 12 / (tf.scale || 1));
+      if (arrowHit && state.toolMode === 'select' && e.button === 0 && !e.shiftKey) {
+        if (!vectorEditing) {
+          const toggleBtn = document.getElementById('vector-toggle');
+          if (toggleBtn) toggleBtn.click();
+        }
+        vectorSelection = { type: 'dimension', arrow: arrowHit };
+        vectorRefreshControls();
+        return;
       }
       const hitFace = hitTest2DCanvas(e);
       if (state.toolMode === 'select' && hitFace && e.button === 0 && !e.shiftKey) {
@@ -1990,29 +2114,44 @@
     }
     drawVectorDraft(ctx,tf,dpr);
 
-    // 5. Dibujar Flechas y Cotas (L, W, H) en Azul estilo Pacdora (Screenshot 1 & 2)
-    if (state.showDimensions && state.view2D.showCota) {
-      const showDetailDimensions = state.activeTab === 'details';
-      if (showDetailDimensions && (!model.outsideArrowData || !model.outsideArrowData.length)) {
+    // 5. Dibujar Flechas y Cotas (L, W, H) - Regidas por el switch de 3 estados (Ocultas, Principales, Todas)
+    const dimMode = state.dimensionDisplayMode || 'main';
+    if (state.showDimensions && state.view2D.showCota && dimMode !== 'none') {
+      if (dimMode === 'all' && (!model.outsideArrowData || !model.outsideArrowData.length)) {
         model.outsideArrowData = DielineEngine.generateOutsideArrowData(model);
       }
       if (!model.sizeArrowData || !model.sizeArrowData.length) {
         model.sizeArrowData = DielineEngine.generateSizeArrowData(model);
       }
-      const availableArrows = showDetailDimensions
-        ? (model.outsideArrowData && model.outsideArrowData.length ? model.outsideArrowData : (model.sizeArrowData || []))
-        : (Array.isArray(model.sizeArrowData) ? model.sizeArrowData : []);
-      const arrowList = showDetailDimensions
-        ? availableArrows
-        : availableArrows.filter(sa => ['L', 'W', 'H'].includes(sa.lineName));
+      let arrowList = [];
+      if (dimMode === 'main') {
+        arrowList = (model.sizeArrowData || []).filter(sa => ['L', 'W', 'H'].includes(sa.lineName) || sa.isMain || sa.isUserCreated);
+      } else if (dimMode === 'all') {
+        const seen = new Set();
+        const combined = [];
+        for (const a of (model.outsideArrowData || [])) {
+          combined.push(a);
+          if (a.lineName) seen.add(a.lineName);
+        }
+        for (const a of (model.sizeArrowData || [])) {
+          if (!a.lineName || !seen.has(a.lineName)) combined.push(a);
+        }
+        arrowList = combined;
+      }
 
       if (arrowList.length > 0) {
-        ctx.strokeStyle = '#0077ff';
-        ctx.fillStyle = '#0077ff';
-        ctx.lineWidth = 1.2 * dpr;
-
         for (const sa of arrowList) {
           if (!sa.p1 || !sa.p2) continue;
+          const isSelectedDim = (vectorSelection?.type === 'dimension' && (vectorSelection.arrow === sa || vectorSelection.arrow?.id === sa.id));
+          ctx.save();
+          ctx.strokeStyle = isSelectedDim ? '#00e5ff' : '#0077ff';
+          ctx.fillStyle = isSelectedDim ? '#00e5ff' : '#0077ff';
+          ctx.lineWidth = (isSelectedDim ? 2.4 : 1.2) * dpr;
+          if (isSelectedDim) {
+            ctx.shadowColor = 'rgba(0, 229, 255, 0.7)';
+            ctx.shadowBlur = 8 * dpr;
+          }
+
           const sx1 = tf.toScreenX(sa.p1.x);
           const sy1 = tf.toScreenY(sa.p1.y);
           const sx2 = tf.toScreenX(sa.p2.x);
@@ -2041,59 +2180,40 @@
             drawHead(sx2, sy2, ang);
           }
 
+          if (isSelectedDim) {
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#00e5ff';
+            ctx.lineWidth = 2 * dpr;
+            ctx.beginPath(); ctx.arc(sx1, sy1, 4 * dpr, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.arc(sx2, sy2, 4 * dpr, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+          }
+
           // Texto de medida (mm)
           const mx = (sx1 + sx2) * 0.5;
           const my = (sy1 + sy2) * 0.5;
           const valNum = Number(sa.lineLength) || Math.hypot(sa.p2.x - sa.p1.x, sa.p2.y - sa.p1.y);
-          const prefix = (!showDetailDimensions && ['L', 'W', 'H'].includes(sa.lineName)) ? `${sa.lineName}=` : '';
+          const prefix = (['L', 'W', 'H'].includes(sa.lineName)) ? `${sa.lineName}=` : '';
           const valDisp = `${prefix}${valNum.toFixed(1)} mm`;
 
           ctx.font = `600 ${Math.round(10.5 * dpr)}px "Inter", system-ui, sans-serif`;
           const tw = ctx.measureText(valDisp).width;
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+          ctx.fillStyle = isSelectedDim ? '#f0fdff' : 'rgba(255, 255, 255, 0.94)';
           ctx.fillRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
-          ctx.strokeStyle = '#0284c7';
-          ctx.lineWidth = 0.8 * dpr;
+          ctx.strokeStyle = isSelectedDim ? '#00cce5' : '#0284c7';
+          ctx.lineWidth = (isSelectedDim ? 1.4 : 0.8) * dpr;
           ctx.strokeRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
-          ctx.fillStyle = '#0284c7';
+          ctx.fillStyle = isSelectedDim ? '#0891b2' : '#0284c7';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(valDisp, mx, my);
+          ctx.restore();
         }
-      } else if (showDetailDimensions) {
-        // Fallback cota perimetral
-        const cotaY = tf.toScreenY(bounds.minY) - 20 * dpr;
-        const x1 = tf.toScreenX(bounds.minX);
-        const x2 = tf.toScreenX(bounds.maxX);
-
-        ctx.strokeStyle = '#0077ff';
-        ctx.fillStyle = '#0077ff';
-        ctx.lineWidth = 1.2 * dpr;
-
-        ctx.beginPath();
-        ctx.moveTo(x1, tf.toScreenY(bounds.minY) - 4 * dpr);
-        ctx.lineTo(x1, cotaY - 6 * dpr);
-        ctx.moveTo(x2, tf.toScreenY(bounds.minY) - 4 * dpr);
-        ctx.lineTo(x2, cotaY - 6 * dpr);
-        ctx.moveTo(x1, cotaY);
-        ctx.lineTo(x2, cotaY);
-        ctx.stroke();
-
-        const labelW = `${bounds.width.toFixed(1)} mm`;
-        ctx.font = `600 ${Math.round(11 * dpr)}px "Inter", system-ui, sans-serif`;
-        const tw = ctx.measureText(labelW).width;
-        const midX = (x1 + x2) / 2;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(midX - tw / 2 - 6 * dpr, cotaY - 8 * dpr, tw + 12 * dpr, 16 * dpr);
-        ctx.fillStyle = '#38bdf8';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(labelW, midX, cotaY);
       }
     }
 
-    // 6. Etiquetas de cada cara y sus medidas en mm
-    if (state.view2D.showLabels) {
+    // 6. Etiquetas de cada cara
+    if (state.view2D.showLabels && state.showAreaLabels !== false) {
       for (const face of model.faces) {
         const sx = tf.toScreenX(face.centroid.x);
         const sy = tf.toScreenY(face.centroid.y);
@@ -2114,12 +2234,6 @@
         ctx.fillStyle = face.id === state.selectedFaceId ? '#006ca8' : '#39475a';
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
         ctx.fillText(shortName, 0, -6 * dpr);
-
-        if (state.activeTab === 'details' && state.showDimensions && state.view2D.showCota) {
-          ctx.font = `500 ${Math.round(8.5 * dpr)}px "JetBrains Mono", monospace`;
-          ctx.fillStyle = '#94a3b8';
-          ctx.fillText(`${face.bounds.width.toFixed(1)}×${face.bounds.height.toFixed(1)}mm`, 0, 6 * dpr);
-        }
         ctx.restore();
       }
     }
@@ -2398,6 +2512,55 @@
         handleDimChange();
       }, { passive: false });
     });
+
+    // Botones diana 🎯 para seleccionar directamente el área que define Largo, Ancho o Alto
+    ['l', 'w', 'h'].forEach(k => {
+      const code = k.toUpperCase();
+      const btn = document.getElementById('btn-pick-dim-' + k);
+      if (btn) {
+        btn.onclick = () => {
+          if (state.pickingDimensionArea === code) {
+            state.pickingDimensionArea = null;
+            btn.classList.remove('active-target');
+            const c2d = document.getElementById('canvas-2d');
+            if (c2d && c2d.style) c2d.style.cursor = 'default';
+            vectorMessage('Selección de área cancelada.');
+          } else {
+            ['l', 'w', 'h'].forEach(other => {
+              document.getElementById('btn-pick-dim-' + other)?.classList.remove('active-target');
+            });
+            state.pickingDimensionArea = code;
+            btn.classList.add('active-target');
+            const c2d = document.getElementById('canvas-2d');
+            if (c2d && c2d.style) c2d.style.cursor = 'crosshair';
+            vectorMessage(`Pincha sobre el área del troquel para acotar ${code === 'L' ? 'el Largo (L)' : code === 'W' ? 'el Ancho (W)' : 'el Alto (H)'}.`);
+          }
+        };
+      }
+    });
+
+    // Switch de 3 estados de visualización de cotas (Ocultas, Principales, Todas)
+    const dimSwitch = document.getElementById('dimension-mode-switch');
+    if (dimSwitch) {
+      dimSwitch.querySelectorAll('.seg-btn-3').forEach(btn => {
+        btn.onclick = () => {
+          dimSwitch.querySelectorAll('.seg-btn-3').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          state.dimensionDisplayMode = btn.dataset.mode;
+          render2FDieline();
+        };
+      });
+    }
+
+    // Toggle para mostrar u ocultar nombres de áreas
+    const btnToggleAreas = document.getElementById('btn-toggle-area-names');
+    if (btnToggleAreas) {
+      btnToggleAreas.onclick = () => {
+        state.showAreaLabels = !state.showAreaLabels;
+        btnToggleAreas.classList.toggle('active', state.showAreaLabels);
+        render2FDieline();
+      };
+    }
 
     // 4. Selector de Material (ArtiosCAD DB)
     const matSelect = document.getElementById('select-material');
@@ -3116,25 +3279,45 @@
     const handleFields = document.getElementById('vector-modal-handle-fields');
     const holeFields = document.getElementById('vector-modal-hole-fields');
     const boxFields = document.getElementById('vector-modal-box-fields');
+    const dimFields = document.getElementById('vector-modal-dim-fields');
     const modalTitle = document.getElementById('vector-modal-title');
 
     if (modal && lineFields && circleFields && handleFields && holeFields) {
       if (vectorTool === 'line') {
         modal.hidden = false;
         modalTitle.textContent = 'Línea · Medidas';
-        lineFields.hidden = false; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true;
+        lineFields.hidden = false; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
       } else if (vectorTool === 'circle') {
         modal.hidden = false;
         modalTitle.textContent = 'Círculo · Medidas';
-        lineFields.hidden = true; circleFields.hidden = false; handleFields.hidden = true; holeFields.hidden = true;
+        lineFields.hidden = true; circleFields.hidden = false; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
       } else if (vectorTool === 'handle') {
         modal.hidden = false;
         modalTitle.textContent = 'Asa · Medidas';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = false; holeFields.hidden = true;
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = false; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
+      } else if (sel?.type === 'dimension' && sel?.arrow) {
+        modal.hidden = false;
+        modalTitle.textContent = 'Cota seleccionada';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true;
+        if (dimFields) {
+          dimFields.hidden = false;
+          const badge = document.getElementById('vector-dim-val-badge');
+          const nameStr = sel.arrow.lineName ? ` [${sel.arrow.lineName}]` : '';
+          if (badge) badge.textContent = `Cota: ${(Number(sel.arrow.lineLength) || 0).toFixed(1)} mm${nameStr}`;
+        }
+      } else if (vectorTool === 'dimension') {
+        modal.hidden = false;
+        modalTitle.textContent = 'Acotar ortogonal (X / Y)';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true;
+        if (dimFields) {
+          dimFields.hidden = false;
+          const badge = document.getElementById('vector-dim-val-badge');
+          if (badge) badge.textContent = 'Pulsa inicio y fin para acotar';
+        }
       } else if (vectorTool === 'select' && sel?.type === 'hole' && hole) {
         modal.hidden = false;
         modalTitle.textContent = 'Asa / Agujero seleccionado';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = false; if (boxFields) boxFields.hidden = true;
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = false; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
         const b = vectorBounds(hole);
         document.getElementById('vector-modal-hole-w').value = (b.maxX - b.minX).toFixed(1);
         document.getElementById('vector-modal-hole-h').value = (b.maxY - b.minY).toFixed(1);
@@ -3143,7 +3326,7 @@
       } else if (vectorTool === 'select' && sel?.type === 'multi' && sel?.items?.length) {
         modal.hidden = false;
         modalTitle.textContent = 'Mover / Copiar trazos (Shift + M)';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = false;
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = false; if (dimFields) dimFields.hidden = true;
         const badge = document.getElementById('vector-box-count-badge');
         if (badge) badge.textContent = `${sel.items.length} trazos seleccionados`;
       } else {
@@ -3176,7 +3359,17 @@
   function setVectorTool(tool) {
     vectorTool=tool;vectorDraft=null;vectorPointer=null;state.toolMode='select';
     state.artworkEditing=false;artworkDrag=null;
-    const help={select:'Selecciona trazos arrastrando un rectángulo o pulsa sobre uno. Mayús: ortogonal. Supr: borrar.',line:'Pulsa el inicio y después el final de la línea. Mayús: ortogonal. Se imanta al troquel.',circle:'Pulsa para colocar el círculo con el radio exacto. Se imanta al troquel.',handle:'Pulsa para colocar el asa centrada en el cursor con medidas exactas.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
+    const help={
+      select:'Selecciona trazos arrastrando un rectángulo o pulsa sobre una línea o cota. Mayús: ortogonal. Supr: borrar.',
+      dimension:'Acotar: pulsa el inicio y el final de la cota. Solo en línea recta ortogonal (X o Y) con imanes a vectores rectos.',
+      line:'Pulsa el inicio y después el final de la línea. Mayús: ortogonal. Se imanta al troquel.',
+      circle:'Pulsa para colocar el círculo con el radio exacto. Se imanta al troquel.',
+      handle:'Pulsa para colocar el asa centrada en el cursor con medidas exactas.',
+      extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',
+      trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',
+      chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',
+      fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'
+    };
     for(const key of Object.keys(help)) {
       const btn = document.getElementById('vector-tool-'+key);
       if (btn) btn.classList.toggle('active', tool===key);
@@ -3200,6 +3393,50 @@
     }
 
     try {
+      if (vectorTool === 'dimension') {
+        if (!vectorDraft) {
+          vectorDraft = { point: p };
+          vectorPointer = p;
+          vectorMessage('Extremo inicial fijado. Pulsa el extremo final para acotar (ortogonal en X o Y).');
+          render2FDieline();
+          return;
+        }
+        let endP = p;
+        const dx = endP.x - vectorDraft.point.x;
+        const dy = endP.y - vectorDraft.point.y;
+        if (Math.abs(dx) >= Math.abs(dy)) {
+          endP = { x: endP.x, y: vectorDraft.point.y };
+        } else {
+          endP = { x: vectorDraft.point.x, y: endP.y };
+        }
+        const len = Math.hypot(endP.x - vectorDraft.point.x, endP.y - vectorDraft.point.y);
+        if (len < 0.5) {
+          vectorMessage('La cota es demasiado pequeña.');
+          return;
+        }
+        const newArrow = {
+          id: 'user_dim_' + Date.now(),
+          lineName: 'Dim',
+          lineLength: +len.toFixed(1),
+          p1: { x: vectorDraft.point.x, y: vectorDraft.point.y },
+          p2: { x: endP.x, y: endP.y },
+          tpointer: {
+            x: (vectorDraft.point.x + endP.x) * 0.5,
+            y: (vectorDraft.point.y + endP.y) * 0.5,
+            value: len.toFixed(1) + ' mm'
+          },
+          isUserCreated: true,
+          isMain: false
+        };
+        if (!Array.isArray(state.dieline.sizeArrowData)) state.dieline.sizeArrowData = [];
+        state.dieline.sizeArrowData.push(newArrow);
+        vectorDraft = null;
+        vectorSelection = { type: 'dimension', arrow: newArrow };
+        vectorRefreshControls();
+        render2FDieline();
+        vectorMessage(`Cota ortogonal de ${len.toFixed(1)} mm creada. Puedes asignarla como L, W o H.`);
+        return;
+      }
       if (vectorTool === 'handle') {
         const w = Number(document.getElementById('vector-handle-width')?.value) || 80;
         const h = Number(document.getElementById('vector-handle-height')?.value) || 25;
@@ -3245,6 +3482,12 @@
         return;
       }
       if (vectorTool === 'select') {
+        const arrowHit = hitTestArrow(state.dieline, raw, 12 * canvas.width / rect.width / tf.scale);
+        if (arrowHit) {
+          vectorSelection = { type: 'dimension', arrow: arrowHit };
+          vectorRefreshControls();
+          return;
+        }
         // 1. Check if clicked inside a hole
         let foundHole = null;
         for (let f = 0; f < state.dieline.faces.length; f++) {
@@ -3470,6 +3713,62 @@
       return;
     }
 
+    // Cota (Acotar ortogonal en X / Y) draft preview
+    if (vectorTool === 'dimension' && vectorDraft?.point && vectorPointer) {
+      const p = vectorDraft.point;
+      let q = vectorPointer;
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      if (Math.abs(dx) >= Math.abs(dy)) {
+        q = { x: q.x, y: p.y };
+      } else {
+        q = { x: p.x, y: q.y };
+      }
+      const sx1 = tf.toScreenX(p.x), sy1 = tf.toScreenY(p.y);
+      const sx2 = tf.toScreenX(q.x), sy2 = tf.toScreenY(q.y);
+      const len = Math.hypot(q.x - p.x, q.y - p.y);
+
+      ctx.save();
+      ctx.strokeStyle = '#0284c7';
+      ctx.fillStyle = '#0284c7';
+      ctx.lineWidth = 1.5 * dpr;
+
+      ctx.beginPath();
+      ctx.moveTo(sx1, sy1);
+      ctx.lineTo(sx2, sy2);
+      ctx.stroke();
+
+      const ang = Math.atan2(sy2 - sy1, sx2 - sx1);
+      const headLen = Math.min(6 * dpr, Math.hypot(sx2 - sx1, sy2 - sy1) * 0.25);
+      if (Math.hypot(sx2 - sx1, sy2 - sy1) > 10 * dpr) {
+        const drawHead = (hx, hy, a) => {
+          ctx.beginPath();
+          ctx.moveTo(hx, hy);
+          ctx.lineTo(hx - headLen * Math.cos(a - Math.PI / 6), hy - headLen * Math.sin(a - Math.PI / 6));
+          ctx.lineTo(hx - headLen * Math.cos(a + Math.PI / 6), hy - headLen * Math.sin(a + Math.PI / 6));
+          ctx.closePath();
+          ctx.fill();
+        };
+        drawHead(sx1, sy1, ang + Math.PI);
+        drawHead(sx2, sy2, ang);
+      }
+
+      const mx = (sx1 + sx2) * 0.5, my = (sy1 + sy2) * 0.5;
+      const txt = `${len.toFixed(1)} mm`;
+      ctx.font = `600 ${Math.round(11 * dpr)}px "Inter", sans-serif`;
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(mx - tw * 0.5 - 4 * dpr, my - 8 * dpr, tw + 8 * dpr, 16 * dpr);
+      ctx.strokeStyle = '#0284c7';
+      ctx.strokeRect(mx - tw * 0.5 - 4 * dpr, my - 8 * dpr, tw + 8 * dpr, 16 * dpr);
+      ctx.fillStyle = '#0284c7';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(txt, mx, my);
+      ctx.restore();
+      return;
+    }
+
     // 5. Line draft or Circle drag
     if (!vectorDraft?.point) return;
     const p = vectorDraft.point;
@@ -3526,7 +3825,7 @@
     const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
     document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
     document.getElementById('vector-close').onclick=()=>toggle(false);
-    for(const tool of ['select','line','circle','handle','extend','trim','chamfer','fillet']) {
+    for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => setVectorTool(tool);
     }
@@ -3681,6 +3980,16 @@
             vectorMessage(err.message || String(err));
           }
         }
+      } else if (vectorSelection.type === 'dimension' && vectorSelection.arrow) {
+        const targetArrow = vectorSelection.arrow;
+        if (Array.isArray(state.dieline?.sizeArrowData)) {
+          state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a !== targetArrow && a.id !== targetArrow.id);
+        }
+        if (Array.isArray(state.dieline?.outsideArrowData)) {
+          state.dieline.outsideArrowData = state.dieline.outsideArrowData.filter(a => a !== targetArrow && a.id !== targetArrow.id);
+        }
+        vectorSelection = null;
+        vectorMessage('Cota eliminada.');
       } else if (vectorSelection.type === 'line' || vectorSelection.kind) {
         try {
           const model = VectorCAD.erase(state.dieline, vectorSelection);
@@ -3698,6 +4007,49 @@
 
     const btnDeleteBox = document.getElementById('vector-btn-delete-box');
     if (btnDeleteBox) btnDeleteBox.onclick = deleteCurrentVectorSelection;
+
+    const btnDeleteDim = document.getElementById('vector-btn-delete-dim');
+    if (btnDeleteDim) btnDeleteDim.onclick = deleteCurrentVectorSelection;
+
+    function assignSelectedDim(code) {
+      if (vectorSelection?.type !== 'dimension' || !vectorSelection?.arrow) {
+        vectorMessage('Selecciona una cota primero.');
+        return;
+      }
+      const arrow = vectorSelection.arrow;
+      arrow.lineName = code;
+      arrow.isMain = true;
+      const val = Number(arrow.lineLength) || (code === 'L' ? state.paramL : code === 'W' ? state.paramW : state.paramH);
+      if (code === 'L') {
+        state.paramL = +val.toFixed(1);
+        const lInp = document.getElementById('input-length');
+        if (lInp) lInp.value = state.paramL;
+      } else if (code === 'W') {
+        state.paramW = +val.toFixed(1);
+        const wInp = document.getElementById('input-width');
+        if (wInp) wInp.value = state.paramW;
+      } else if (code === 'H') {
+        state.paramH = +val.toFixed(1);
+        const hInp = document.getElementById('input-height');
+        if (hInp) hInp.value = state.paramH;
+      }
+      if (!Array.isArray(state.dieline.sizeArrowData)) state.dieline.sizeArrowData = [];
+      state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a === arrow || a.lineName !== code);
+      if (!state.dieline.sizeArrowData.includes(arrow)) state.dieline.sizeArrowData.push(arrow);
+      vectorSelection = null;
+      const m = document.getElementById('vector-tool-modal');
+      if (m) m.hidden = true;
+      vectorRefreshControls();
+      render2FDieline();
+      vectorMessage(`Cota asignada como ${code} (${val.toFixed(1)} mm).`);
+    }
+
+    const btnDimL = document.getElementById('vector-btn-dim-as-l');
+    if (btnDimL) btnDimL.onclick = () => assignSelectedDim('L');
+    const btnDimW = document.getElementById('vector-btn-dim-as-w');
+    if (btnDimW) btnDimW.onclick = () => assignSelectedDim('W');
+    const btnDimH = document.getElementById('vector-btn-dim-as-h');
+    if (btnDimH) btnDimH.onclick = () => assignSelectedDim('H');
 
     const xyInput = document.getElementById('vector-box-xy');
     if (xyInput) {

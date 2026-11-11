@@ -278,29 +278,69 @@
           </div><span class="unit-static">mm</span>
         </div>
 
-        <!-- Inputs de Length, Width, Height -->
-        <div class="size-inputs-grid">
-          <div class="size-field">
+        <!-- Inputs de Largo, Ancho y Alto en fila de arriba a abajo con botón diana a la derecha -->
+        <div class="size-inputs-vertical">
+          <div class="size-field-row">
             <span class="field-label">Largo</span>
-            <div class="field-input-box">
-              <input type="number" id="input-length" min="10" max="2500" step="1" value="315" />
-              <span class="field-unit-label">mm</span>
+            <div class="field-input-and-target">
+              <div class="field-input-box">
+                <input type="number" id="input-length" min="10" max="2500" step="1" value="315" />
+                <span class="field-unit-label">mm</span>
+              </div>
+              <button type="button" class="btn-pick-dim" id="btn-pick-dim-l" data-dim="L" title="seleccionar el área" aria-label="seleccionar el área">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <circle cx="12" cy="12" r="6"></circle>
+                  <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+                  <line x1="12" y1="2" x2="12" y2="5"></line>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                  <line x1="2" y1="12" x2="5" y2="12"></line>
+                  <line x1="19" y1="12" x2="22" y2="12"></line>
+                </svg>
+              </button>
             </div>
           </div>
-          <div class="size-field">
-            <span class="field-label">Ancho</span>
-            <div class="field-input-box">
-              <input type="number" id="input-width" min="10" max="2500" step="1" value="202" />
-              <span class="field-unit-label">mm</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="size-field single">
-          <span class="field-label">Alto</span>
-          <div class="field-input-box">
-            <input type="number" id="input-height" min="10" max="2500" step="1" value="62" />
-            <span class="field-unit-label">mm</span>
+          <div class="size-field-row">
+            <span class="field-label">Ancho</span>
+            <div class="field-input-and-target">
+              <div class="field-input-box">
+                <input type="number" id="input-width" min="10" max="2500" step="1" value="202" />
+                <span class="field-unit-label">mm</span>
+              </div>
+              <button type="button" class="btn-pick-dim" id="btn-pick-dim-w" data-dim="W" title="seleccionar el área" aria-label="seleccionar el área">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <circle cx="12" cy="12" r="6"></circle>
+                  <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+                  <line x1="12" y1="2" x2="12" y2="5"></line>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                  <line x1="2" y1="12" x2="5" y2="12"></line>
+                  <line x1="19" y1="12" x2="22" y2="12"></line>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="size-field-row">
+            <span class="field-label">Alto</span>
+            <div class="field-input-and-target">
+              <div class="field-input-box">
+                <input type="number" id="input-height" min="10" max="2500" step="1" value="62" />
+                <span class="field-unit-label">mm</span>
+              </div>
+              <button type="button" class="btn-pick-dim" id="btn-pick-dim-h" data-dim="H" title="seleccionar el área" aria-label="seleccionar el área">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <circle cx="12" cy="12" r="6"></circle>
+                  <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+                  <line x1="12" y1="2" x2="12" y2="5"></line>
+                  <line x1="12" y1="19" x2="12" y2="22"></line>
+                  <line x1="2" y1="12" x2="5" y2="12"></line>
+                  <line x1="19" y1="12" x2="22" y2="12"></line>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -577,12 +617,31 @@
         </div>
       </div>
 
+      <!-- Controles flotantes bajo la leyenda (Foto 2): Switch 3 estados de cotas y toggle de nombres de área -->
+      <div class="canvas-view-controls">
+        <div class="canvas-control-row">
+          <div class="control-label-micro">Cotas</div>
+          <div class="segmented-control-3" id="dimension-mode-switch" role="radiogroup" aria-label="Visualización de cotas">
+            <button type="button" class="seg-btn-3" data-mode="none" title="No mostrar cotas">Ocultas</button>
+            <button type="button" class="seg-btn-3 active" data-mode="main" title="Mostrar las 3 cotas principales (L, W, H)">Principales</button>
+            <button type="button" class="seg-btn-3" data-mode="all" title="Mostrar todas las cotas del troquel">Todas</button>
+          </div>
+        </div>
+        <div class="canvas-control-row">
+          <button type="button" class="btn-toggle-areas active" id="btn-toggle-area-names" title="Mostrar u ocultar los nombres de cada área">
+            <span class="btn-toggle-dot"></span>
+            <span class="btn-toggle-text">Nombres de áreas</span>
+          </button>
+        </div>
+      </div>
+
       <div class="vector-editor" id="vector-editor">
         <button id="vector-toggle" type="button" aria-expanded="false">Editar vectores</button>
         <div id="vector-controls" hidden>
           <div class="vector-panel-heading">Herramientas 2D <button id="vector-close" type="button" aria-label="Cerrar editor">×</button></div>
           <div class="vector-tools" role="group" aria-label="Herramientas de vectores">
             <button id="vector-tool-select" type="button" class="active">↖ Seleccionar</button>
+            <button id="vector-tool-dimension" type="button">📏 Acotar</button>
             <button id="vector-tool-line" type="button">╱ Línea</button>
             <button id="vector-tool-circle" type="button">◯ Círculo</button>
             <button id="vector-tool-handle" type="button">▭ Asa</button>
@@ -680,6 +739,18 @@
             </div>
             <button id="vector-btn-delete-box" type="button" class="btn-danger-outline" style="width:100%;margin-top:8px;">🗑️ Borrar selección (Supr)</button>
             <p class="vector-modal-hint">Introduce dos medidas separadas por espacio: <strong>x y</strong> (ej: <code>-20 0</code>). X negativo: izquierda. Y negativo: abajo. <strong>Supr</strong>: borrar selección.</p>
+          </div>
+
+          <!-- Campos para Cota / Herramienta Acotar -->
+          <div id="vector-modal-dim-fields" class="vector-modal-fields" hidden>
+            <div id="vector-dim-val-badge" class="vector-selection-badge" style="font-weight:600;color:#0284c7;margin-bottom:8px;">Cota: 0.0 mm</div>
+            <p class="vector-modal-hint" style="margin-bottom:8px;">Asignar como cota principal del modelo o conservar libre:</p>
+            <div class="vector-modal-actions" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
+              <button id="vector-btn-dim-as-l" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como L</button>
+              <button id="vector-btn-dim-as-w" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como W</button>
+              <button id="vector-btn-dim-as-h" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como H</button>
+            </div>
+            <button id="vector-btn-delete-dim" type="button" class="btn-danger-outline" style="width:100%;">🗑️ Borrar cota (Supr)</button>
           </div>
         </div>
       </div>
