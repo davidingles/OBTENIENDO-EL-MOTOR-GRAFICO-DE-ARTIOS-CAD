@@ -97,3 +97,41 @@ test('VectorCAD: selección por rectángulo (trazos dentro o tocados), mover y c
   assert.equal(copied.cutSegments.length, model.cutSegments.length + 2, 'Debe añadir 2 nuevos cortes duplicados');
   assert.equal(copied.foldSegments.length, model.foldSegments.length + 1, 'Debe añadir 1 nuevo hendido duplicado');
 });
+
+test('VectorCAD: stretch tipo CAD estira trazos cruzados y desplaza trazos interiores', () => {
+  const model = {
+    faces: [],
+    cutSegments: [
+      { x1: 0, y1: 10, x2: 100, y2: 10, type: 'CUT' },  // Línea horizontal atravesada por el box (x=0 fuera, x=100 dentro)
+      { x1: 0, y1: 50, x2: 100, y2: 50, type: 'CUT' },  // Segunda línea horizontal atravesada
+      { x1: 100, y1: 10, x2: 100, y2: 50, type: 'CUT' }, // Línea vertical completamente dentro del box
+      { x1: -50, y1: 0, x2: -50, y2: 100, type: 'CUT' } // Línea completamente fuera del box
+    ],
+    foldSegments: []
+  };
+
+  // Rectángulo de selección que abarca el extremo derecho (x de 80 a 120, y de 0 a 60)
+  const box = { minX: 80, maxX: 120, minY: 0, maxY: 60 };
+
+  // Estirar hacia la derecha 25 mm (dx = 25, dy = 0)
+  const stretched = VectorCAD.stretch(model, box, 25, 0);
+
+  // La línea vertical interior (x=100) debe moverse a x=125
+  assert.equal(stretched.cutSegments[2].x1, 125);
+  assert.equal(stretched.cutSegments[2].x2, 125);
+
+  // Las líneas horizontales atravesadas deben alargarse (x1=0 se queda fija, x2 pasa de 100 a 125)
+  assert.equal(stretched.cutSegments[0].x1, 0, 'Extremo fuera del box permanece fijo');
+  assert.equal(stretched.cutSegments[0].x2, 125, 'Extremo dentro del box se alarga por dx');
+  assert.equal(stretched.cutSegments[1].x1, 0, 'Extremo fuera del box permanece fijo');
+  assert.equal(stretched.cutSegments[1].x2, 125, 'Extremo dentro del box se alarga por dx');
+
+  // La línea completamente exterior permanece inalterada
+  assert.equal(stretched.cutSegments[3].x1, -50);
+  assert.equal(stretched.cutSegments[3].x2, -50);
+
+  // Probar eliminación con deleteSegments (como la tecla Supr)
+  const toDelete = [{ kind: 'cut', index: 2 }];
+  const afterDelete = VectorCAD.deleteSegments(stretched, toDelete);
+  assert.equal(afterDelete.cutSegments.length, 3, 'Debe haber eliminado 1 segmento');
+});

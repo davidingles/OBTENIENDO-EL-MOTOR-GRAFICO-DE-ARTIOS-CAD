@@ -1632,14 +1632,25 @@
       state.view2D.isDragging = false;
       artworkDrag = null;
       if (boxSelect) {
+        const box = {
+          minX: Math.min(boxSelect.startX, boxSelect.curX),
+          maxX: Math.max(boxSelect.startX, boxSelect.curX),
+          minY: Math.min(boxSelect.startY, boxSelect.curY),
+          maxY: Math.max(boxSelect.startY, boxSelect.curY)
+        };
         const items = boxSelect.selectedItems || [];
         boxSelect = null;
         const cand = boxSelectCandidate;
         boxSelectCandidate = null;
         if (items.length > 0) {
-          vectorSelection = { type: 'multi', items };
+          vectorSelection = { type: 'multi', box, items };
           vectorRefreshControls();
-          vectorMessage(`${items.length} trazos seleccionados. Introduce distancia y eje, o pulsa Shift + M.`);
+          vectorMessage(`${items.length} trazos seleccionados. Introduce x y o pulsa Shift + M.`);
+          const xyInput = document.getElementById('vector-box-xy');
+          if (xyInput) {
+            xyInput.focus();
+            xyInput.select();
+          }
         } else {
           vectorSelection = null;
           vectorRefreshControls();
@@ -2902,7 +2913,7 @@
   function setVectorTool(tool) {
     vectorTool=tool;vectorDraft=null;vectorPointer=null;state.toolMode='select';
     state.artworkEditing=false;artworkDrag=null;
-    const help={select:'Selecciona un trazo o el interior de un agujero.',erase:'Pulsa un trazo para borrarlo. Los círculos nuevos se borran completos.',line:'Pulsa el inicio y después el final de la línea. Mayús: ortogonal. Se imanta al troquel.',circle:'Pulsa para colocar el círculo con el radio exacto. Se imanta al troquel.',handle:'Pulsa para colocar el asa centrada en el cursor con medidas exactas.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
+    const help={select:'Selecciona trazos arrastrando un rectángulo o pulsa sobre uno. Mayús: ortogonal. Supr: borrar.',line:'Pulsa el inicio y después el final de la línea. Mayús: ortogonal. Se imanta al troquel.',circle:'Pulsa para colocar el círculo con el radio exacto. Se imanta al troquel.',handle:'Pulsa para colocar el asa centrada en el cursor con medidas exactas.',extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'};
     for(const key of Object.keys(help)) {
       const btn = document.getElementById('vector-tool-'+key);
       if (btn) btn.classList.toggle('active', tool===key);
@@ -3252,7 +3263,7 @@
     const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
     document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
     document.getElementById('vector-close').onclick=()=>toggle(false);
-    for(const tool of ['select','erase','line','circle','handle','extend','trim','chamfer','fillet']) {
+    for(const tool of ['select','line','circle','handle','extend','trim','chamfer','fillet']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => setVectorTool(tool);
     }
@@ -3331,30 +3342,38 @@
       } catch (err) { vectorMessage(err.message || String(err)); }
     };
     function applyBoxMoveOrCopy() {
-      if (vectorSelection?.type !== 'multi' || !vectorSelection?.items?.length) {
+      if (vectorSelection?.type !== 'multi' || !vectorSelection?.box) {
         vectorMessage('Selecciona trazos arrastrando un rectángulo primero.');
         return;
       }
-      const dist = Number(document.getElementById('vector-box-dist')?.value) || 0;
-      const axis = document.getElementById('vector-box-axis')?.value || 'x_pos';
+      const xyInput = document.getElementById('vector-box-xy');
+      const val = xyInput ? xyInput.value.trim() : '-20 0';
+      const parts = val.split(/\s+/);
+      if (parts.length < 2) {
+        vectorMessage('Introduce dos medidas separadas por espacio: x y (ej: -20 0)');
+        return;
+      }
+      const userX = Number(parts[0]);
+      const userY = Number(parts[1]);
+      if (!Number.isFinite(userX) || !Number.isFinite(userY)) {
+        vectorMessage('Medidas no válidas. Introduce dos números separados por espacio (ej: -20 0)');
+        return;
+      }
+      // Convención de ejes solicitada:
+      // x negativo: izquierda, x positivo: derecha -> dx = userX
+      // y negativo: abajo, y positivo: arriba -> dy = -userY (en canvas +Y es hacia abajo)
+      const dx = userX;
+      const dy = -userY;
       const isCopy = document.getElementById('vector-box-is-copy')?.checked || false;
-      if (dist === 0) { vectorMessage('Introduce una distancia mayor que 0 mm.'); return; }
-      let dx = 0, dy = 0;
-      if (axis === 'x_pos') dx = dist;
-      else if (axis === 'x_neg') dx = -dist;
-      else if (axis === 'y_pos') dy = dist;
-      else if (axis === 'y_neg') dy = -dist;
 
       try {
         const count = vectorSelection.items.length;
-        const model = isCopy
-          ? VectorCAD.copySegments(state.dieline, vectorSelection.items, dx, dy)
-          : VectorCAD.moveSegments(state.dieline, vectorSelection.items, dx, dy);
+        const model = VectorCAD.stretch(state.dieline, vectorSelection.box, dx, dy, isCopy);
         vectorSelection = null;
         commitVectorEdit(model);
         vectorMessage(isCopy
-          ? `Copia realizada con éxito: ${count} trazos duplicados (ΔX: ${dx} mm, ΔY: ${dy} mm).`
-          : `Trazos desplazados: ${dx} mm en X, ${dy} mm en Y.`);
+          ? `Copia realizada con éxito (${count} trazos).`
+          : `Líneas estiradas y desplazadas: x = ${userX} mm, y = ${userY} mm.`);
         const m = document.getElementById('vector-tool-modal');
         if (m) m.hidden = true;
       } catch (err) {
@@ -3373,6 +3392,16 @@
       if (m) m.hidden = true;
     };
 
+    const xyInput = document.getElementById('vector-box-xy');
+    if (xyInput) {
+      xyInput.onkeydown = e => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          applyBoxMoveOrCopy();
+        }
+      };
+    }
+
     window.addEventListener('keydown', e => {
       if (e.key === 'Escape' && vectorEditing) {
         vectorDraft = null; vectorSelection = null; boxSelect = null; boxSelectCandidate = null;
@@ -3382,6 +3411,49 @@
       if (vectorEditing && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
         e.preventDefault();
         applyBoxMoveOrCopy();
+      }
+      if (vectorEditing && (e.key === 'Delete' || e.key === 'Backspace' || e.key === 'Supr')) {
+        const activeTag = document.activeElement ? document.activeElement.tagName : '';
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+        if (vectorSelection) {
+          e.preventDefault();
+          if (vectorSelection.type === 'multi' && vectorSelection.items?.length) {
+            try {
+              const count = vectorSelection.items.length;
+              const model = VectorCAD.deleteSegments(state.dieline, vectorSelection.items);
+              vectorSelection = null;
+              commitVectorEdit(model);
+              vectorMessage(`${count} trazos eliminados.`);
+            } catch (err) {
+              vectorMessage(err.message || String(err));
+            }
+          } else if (vectorSelection.type === 'hole') {
+            const face = state.dieline?.faces?.[vectorSelection.face];
+            const hole = face?.holes?.[vectorSelection.index];
+            if (hole) {
+              try {
+                const model = VectorCAD.deleteHole(state.dieline, hole);
+                vectorSelection = null;
+                commitVectorEdit(model);
+                vectorMessage('Agujero eliminado.');
+              } catch (err) {
+                vectorMessage(err.message || String(err));
+              }
+            }
+          } else if (vectorSelection.type === 'line' || vectorSelection.kind) {
+            try {
+              const model = VectorCAD.erase(state.dieline, vectorSelection);
+              vectorSelection = null;
+              commitVectorEdit(model);
+              vectorMessage('Trazo eliminado.');
+            } catch (err) {
+              vectorMessage(err.message || String(err));
+            }
+          }
+          const m = document.getElementById('vector-tool-modal');
+          if (m) m.hidden = true;
+          render2FDieline();
+        }
       }
     });
     document.getElementById('vector-apply-kind').onclick=()=>{if(!vectorLine())return;try {const model=VectorCAD.classify(state.dieline,vectorSelection,document.getElementById('vector-kind').value==='fold'?'fold':'cut');vectorSelection=null;commitVectorEdit(model);}catch(error){vectorMessage(error.message);}};
@@ -3405,7 +3477,8 @@
     };
     document.getElementById('vector-undo').onclick=()=>{if(!vectorHistory.length)return;vectorRedo.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorHistory.pop());vectorMessage('Cambio deshecho.');};
     document.getElementById('vector-redo').onclick=()=>{if(!vectorRedo.length)return;vectorHistory.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorRedo.pop());vectorMessage('Cambio rehecho.');};
-    document.getElementById('vector-save').onclick=saveCurrentProject;
+    const btnVecSave = document.getElementById('vector-save');
+    if (btnVecSave) btnVecSave.onclick = saveCurrentProject;
   }
 
   const PROJECTS_KEY='troqueles-vicente-projects-v1';

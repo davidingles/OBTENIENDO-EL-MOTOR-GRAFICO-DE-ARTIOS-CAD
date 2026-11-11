@@ -165,6 +165,63 @@
     }
     return m;
   }
+
+  function deleteSegments(model, selectedItems) {
+    const m = normalize(model);
+    const cutIndices = new Set(selectedItems.filter(i => i.kind === 'cut').map(i => i.index));
+    const foldIndices = new Set(selectedItems.filter(i => i.kind === 'fold').map(i => i.index));
+    m.cutSegments = m.cutSegments.filter((_, idx) => !cutIndices.has(idx));
+    m.foldSegments = m.foldSegments.filter((_, idx) => !foldIndices.has(idx));
+    return m;
+  }
+
+  function stretch(model, box, dx, dy, isCopy = false) {
+    const m = normalize(model);
+    const inBox = (x, y) => x >= box.minX - 1e-4 && x <= box.maxX + 1e-4 && y >= box.minY - 1e-4 && y <= box.maxY + 1e-4;
+
+    if (isCopy) {
+      const group = 'copy-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+      for (const kind of ['cut', 'fold']) {
+        const segs = list(m, kind);
+        const originalCount = segs.length;
+        for (let i = 0; i < originalCount; i++) {
+          const s = segs[i];
+          const in1 = inBox(s.x1, s.y1), in2 = inBox(s.x2, s.y2);
+          if (in1 && in2) {
+            segs.push(line(
+              { x: s.x1 + dx, y: s.y1 + dy },
+              { x: s.x2 + dx, y: s.y2 + dy },
+              { type: kind === 'fold' ? 'FOLD' : 'CUT', vectorGroup: group, vectorCreated: true }
+            ));
+          } else if (in1 || in2) {
+            const p1 = in1 ? { x: s.x1 + dx, y: s.y1 + dy } : { x: s.x1, y: s.y1 };
+            const p2 = in2 ? { x: s.x2 + dx, y: s.y2 + dy } : { x: s.x2, y: s.y2 };
+            segs.push(line(p1, p2, { type: kind === 'fold' ? 'FOLD' : 'CUT', vectorGroup: group, vectorCreated: true }));
+          }
+        }
+      }
+      return m;
+    }
+
+    for (const kind of ['cut', 'fold']) {
+      for (const s of list(m, kind)) {
+        const in1 = inBox(s.x1, s.y1);
+        const in2 = inBox(s.x2, s.y2);
+        if (in1 && in2) {
+          s.x1 += dx; s.y1 += dy;
+          s.x2 += dx; s.y2 += dy;
+          delete s.vectorGroup;
+        } else if (in1 && !in2) {
+          s.x1 += dx; s.y1 += dy;
+          delete s.vectorGroup;
+        } else if (!in1 && in2) {
+          s.x2 += dx; s.y2 += dy;
+          delete s.vectorGroup;
+        }
+      }
+    }
+    return m;
+  }
   function classify(model,ref,kind){
     const m=normalize(model),s=get(m,ref);if(!s)throw Error('Selecciona una línea.');
     if(ref.kind===kind)return m;
@@ -301,5 +358,5 @@
     }
     return engine.enforceFlapLengthLimit(m);
   }
-  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments};
+  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments,deleteSegments,stretch};
 });

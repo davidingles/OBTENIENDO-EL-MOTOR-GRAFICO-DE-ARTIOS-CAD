@@ -481,7 +481,6 @@
           <div class="vector-panel-heading">Herramientas 2D <button id="vector-close" type="button" aria-label="Cerrar editor">×</button></div>
           <div class="vector-tools" role="group" aria-label="Herramientas de vectores">
             <button id="vector-tool-select" type="button" class="active">↖ Seleccionar</button>
-            <button id="vector-tool-erase" type="button">⌫ Borrador</button>
             <button id="vector-tool-line" type="button">╱ Línea</button>
             <button id="vector-tool-circle" type="button">◯ Círculo</button>
             <button id="vector-tool-handle" type="button">▭ Asa</button>
@@ -502,7 +501,6 @@
           </div>
 
           <div class="vector-history"><button id="vector-undo" type="button">↶ Deshacer</button><button id="vector-redo" type="button">↷ Rehacer</button></div>
-          <button id="vector-save" class="vector-save" type="button">Guardar en proyectos</button>
           <p id="vector-status" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
         </div>
 
@@ -567,26 +565,18 @@
           <!-- Campos para Selección por Rectángulo (Shift + M) -->
           <div id="vector-modal-box-fields" class="vector-modal-fields" hidden>
             <div id="vector-box-count-badge" class="vector-selection-badge" style="font-weight:600;color:#0788c6;margin-bottom:8px;">0 trazos seleccionados</div>
-            <label>Distancia a mover (mm)
-              <input id="vector-box-dist" type="number" step="0.5" value="20">
-            </label>
-            <label>Eje de desplazamiento
-              <select id="vector-box-axis">
-                <option value="x_pos">Eje X (+) · Derecha</option>
-                <option value="x_neg">Eje X (-) · Izquierda</option>
-                <option value="y_pos">Eje Y (+) · Arriba</option>
-                <option value="y_neg">Eje Y (-) · Abajo</option>
-              </select>
+            <label>x , y
+              <input id="vector-box-xy" type="text" placeholder="-20 0" value="-20 0" style="width:110px;font-family:monospace;font-size:13px;padding:6px;border:1px solid #0788c6;border-radius:4px;">
             </label>
             <label class="vector-checkbox-label" style="display:flex;align-items:center;gap:8px;margin:8px 0;cursor:pointer;">
               <input id="vector-box-is-copy" type="checkbox">
-              <span>Crear copia (duplicar trazos)</span>
+              <span>Crear copia (duplicar)</span>
             </label>
             <div class="vector-modal-actions">
-              <button id="vector-btn-apply-box" type="button" class="btn-primary-blue">Aplicar (Shift + M)</button>
+              <button id="vector-btn-apply-box" type="button" class="btn-primary-blue">Mover / Copiar (Shift + M)</button>
               <button id="vector-btn-cancel-box" type="button" class="btn-outline">Cerrar</button>
             </div>
-            <p class="vector-modal-hint">💡 Arrastra un rectángulo con la herramienta Seleccionar para envolver o tocar trazos. Shift+M para mover/copiar.</p>
+            <p class="vector-modal-hint">Introduce dos medidas separadas por espacio: <strong>x y</strong> (ej: <code>-20 0</code>). X negativo: izquierda. Y negativo: abajo. <strong>Supr</strong>: borrar selección.</p>
           </div>
         </div>
       </div>
