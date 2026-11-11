@@ -3588,6 +3588,7 @@ dependencies = [
 name = "troqueles-vicente"
 version = "0.2.0"
 dependencies = [
+ "base64 0.23.1",
  "serde_json",
  "tauri",
  "tauri-build",

@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::io::Write;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
+mod client_publishing;
 
 fn validate_library_model(model: &Value) -> Result<u64, String> {
     let id = model["num"]
@@ -222,11 +223,77 @@ async fn save_export(
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn create_blend(app: tauri::AppHandle, data: Vec<u8>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if data.len() < 12 || data.len() > 250_000_000 || &data[..4] != b"glTF" {
+            return Err("El modelo GLB no es válido o supera 250 MB".into());
+        }
+        let base = std::path::PathBuf::from(std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into())).join("Blender Foundation");
+        let mut candidates: Vec<_> = std::fs::read_dir(base).map_err(|_| "Instala Blender en este equipo para crear archivos .blend".to_string())?
+            .filter_map(Result::ok).map(|e| e.path().join("blender.exe")).filter(|p| p.is_file()).collect();
+        candidates.sort();
+        let blender = candidates.pop().ok_or("No se encuentra blender.exe")?;
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
+        let temp = app.path().app_cache_dir().map_err(|e| e.to_string())?.join(format!("blend-{}", stamp));
+        std::fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
+        let input = temp.join("modelo.glb");
+        let script = temp.join("create_blend.py");
+        let destination = app.path().desktop_dir().map_err(|e| e.to_string())?.join(format!("Troquel-Animado-{}.blend", stamp));
+        std::fs::write(&input, data).map_err(|e| e.to_string())?;
+        std::fs::write(&script, include_str!("../../desktop/create_blend.py")).map_err(|e| e.to_string())?;
+        let mut command = std::process::Command::new(blender);
+        command.args(["--background", "--factory-startup", "--python-exit-code", "1", "--python"])
+            .arg(&script).arg("--").arg(&input).arg(&destination);
+        #[cfg(windows)] {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let output = command.output().map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_dir_all(&temp);
+        if !output.status.success() || !destination.is_file() {
+            return Err(format!("Blender no pudo crear la escena: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(destination.to_string_lossy().into_owned())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn save_project(app: tauri::AppHandle, project: Value) -> Result<(), String> {
+    let id=project["id"].as_str().filter(|s| !s.is_empty() && s.len() < 80 && s.chars().all(|c| c.is_ascii_alphanumeric() || c=='-')).ok_or("Identificador de proyecto no válido")?.to_string();
+    let bytes=serde_json::to_vec(&project).map_err(|e|e.to_string())?;
+    if bytes.len()>40_000_000 { return Err("El proyecto supera 40 MB".into()); }
+    let dir=app.path().app_data_dir().map_err(|e|e.to_string())?.join("projects");
+    std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    let target=dir.join(format!("{}.json",id));
+    if target.exists() { return Err("El proyecto ya existe".into()); }
+    std::fs::write(target,bytes).map_err(|e|e.to_string())
+}
+
+#[tauri::command]
+async fn load_projects(app: tauri::AppHandle) -> Result<Vec<Value>, String> {
+    let dir=app.path().app_data_dir().map_err(|e|e.to_string())?.join("projects");
+    if !dir.exists() {return Ok(vec![]);}
+    let mut projects=Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e|e.to_string())? {
+        let path=entry.map_err(|e|e.to_string())?.path();
+        if path.extension().and_then(|x|x.to_str())!=Some("json") {continue;}
+        let bytes=std::fs::read(path).map_err(|e|e.to_string())?;
+        if bytes.len()>40_000_000{return Err("Un proyecto supera 40 MB".into());}
+        projects.push(serde_json::from_slice(&bytes).map_err(|e|e.to_string())?);
+    }
+    Ok(projects)
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            client_publishing::publish_client_model,
             save_export,
+            create_blend,
+            save_project,
+            load_projects,
             load_library_models,
             add_library_model,
             update_library_model

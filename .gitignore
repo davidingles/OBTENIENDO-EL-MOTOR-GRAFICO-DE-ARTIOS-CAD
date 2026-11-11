@@ -9,3 +9,4 @@ web-dist/
 node_modules/
 src-tauri/target/
 src-tauri/gen/
+*.lnk

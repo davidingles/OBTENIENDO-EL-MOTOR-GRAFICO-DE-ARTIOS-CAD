@@ -267,7 +267,7 @@
     const loader = new THREE.TextureLoader();
     const dataUri = (window.ARTIOS_TEXTURES && window.ARTIOS_TEXTURES[fileName])
       ? window.ARTIOS_TEXTURES[fileName]
-      : `assets/textures/${fileName}`;
+      : fileName === 'corrugado.png' ? 'assets/corrugado.png' : `assets/textures/${fileName}`;
 
     const tex = loader.load(dataUri, () => {
       tex.needsUpdate = true;
@@ -291,7 +291,7 @@
 
     const surfaceTex = getArtiosTexture(board.surfaceTex, 1, 1);
     const innerTex = getArtiosTexture(board.innerTex || board.surfaceTex, 1, 1);
-    const edgeTex = getArtiosTexture(board.edgeTex, 1, 1);
+    const edgeTex = getArtiosTexture('corrugado.png', 1, 1);
 
     // 1. Material Cara Exterior (con vertexColors activado para sombrear la fibra comprimida en el hendido)
     matOuterFace = new THREE.MeshStandardMaterial({
@@ -376,8 +376,8 @@
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
-    state.canAddToLibrary = allowLibraryAdd;
-    document.getElementById('btn-add-library')?.classList.toggle('hidden',!allowLibraryAdd);
+    state.canAddToLibrary = false;
+    document.getElementById('btn-add-library')?.classList.add('hidden');
     clearArtwork();
     state.baseDieline = model;
     state.dieline = model;
@@ -915,6 +915,9 @@
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(allNorm, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(allUv, 2));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(allCol, 3));
+    // GLTFExporter slices material groups through the index accessor. Without
+    // indices this bundled version exports the whole mesh once per material.
+    geo.setIndex(Array.from({length: vertexCursor}, (_, i) => i));
 
     return geo;
   }
@@ -1363,6 +1366,108 @@
         embedImages: true
       }
     );
+  }
+
+  function buildClientGLB() {
+    if (!dielineRootGroup || !state.dieline?.faces.length || state.dieline.vector3DStale) {
+      return Promise.reject(new Error('Cierra los contornos y comprueba el modelo 3D antes de publicarlo.'));
+    }
+    if (!THREE.GLTFExporter) return Promise.reject(new Error('No está disponible el exportador GLB.'));
+    // Snapshot the current pose; publishing must not modify the editor or play fold animations.
+    const root = dielineRootGroup.clone(true);
+    root.traverse(object => { if (object.userData?.isCADHelper) object.visible = false; });
+    root.scale.multiplyScalar(0.001);
+    root.position.multiplyScalar(0.001);
+    root.userData = { ...root.userData, clientViewer: true, units: 'meters' };
+    return new Promise((resolve, reject) => {
+      try {
+        new THREE.GLTFExporter().parse(root, result => {
+          if (result instanceof ArrayBuffer) resolve(result);
+          else reject(new Error('No se ha podido generar el archivo GLB.'));
+        }, { binary: true, onlyVisible: true, embedImages: true });
+      } catch (error) { reject(error); }
+    });
+  }
+
+  function setupClientPublishing() {
+    const dialog = document.getElementById('publish-client-dialog');
+    const form = document.getElementById('publish-client-form');
+    if (!dialog || !form) return;
+    const input = document.getElementById('publish-client-key');
+    const status = document.getElementById('publish-client-status');
+    const submit = document.getElementById('publish-client-submit');
+    const close = document.getElementById('publish-client-close');
+    const resultPanel = document.getElementById('publish-client-result');
+    const share = document.getElementById('publish-client-share');
+    let publishing = false;
+    document.getElementById('btn-publish-client')?.addEventListener('click', () => {
+      if (!state.dieline || state.dieline.vector3DStale) { alert('Abre una caja y cierra sus contornos antes de publicarla.'); return; }
+      status.textContent = '';
+      resultPanel.hidden = true;
+      submit.disabled = false;
+      dialog.showModal();
+      input.focus();
+    });
+    close.addEventListener('click', () => { if (!publishing) dialog.close(); });
+    dialog.addEventListener('cancel', event => { if (publishing) event.preventDefault(); });
+    document.getElementById('publish-client-copy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(share.value); status.textContent = 'Enlace y clave copiados.'; }
+      catch (_) { share.focus(); share.select(); status.textContent = 'Pulsa Ctrl+C para copiar los datos seleccionados.'; }
+    });
+    input.addEventListener('input', () => { resultPanel.hidden = true; submit.disabled = false; });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (publishing) return;
+      let filename;
+      try { filename = ClientPublishing.modelFilename(input.value); }
+      catch (error) { status.dataset.error = 'true'; status.textContent = error.message; input.focus(); return; }
+      publishing = true;
+      submit.disabled = input.disabled = close.disabled = true;
+      status.dataset.error = 'false';
+      resultPanel.hidden = true;
+      status.textContent = 'Generando y subiendo la caja…';
+      try {
+        const data = Array.from(new Uint8Array(await buildClientGLB()));
+        let result;
+        if (window.__TAURI__?.core?.invoke) {
+          result = await window.__TAURI__.core.invoke('publish_client_model', { filename, data });
+        } else {
+          if (!/^https?:$/.test(location.protocol) || !['localhost', '127.0.0.1'].includes(location.hostname)) throw new Error('Publica desde la aplicación de escritorio o el servidor local.');
+          const response = await fetch('/api/publish-client-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename, data }) });
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || 'No se pudo publicar la caja.');
+          result = body;
+        }
+        share.value = `Visor: ${result.url}\nClave: ${result.key}`;
+        resultPanel.hidden = false;
+        status.textContent = 'Caja subida. GitHub Pages puede tardar unos minutos en mostrarla. Puedes copiar los datos para el cliente.';
+      } catch (error) {
+        status.dataset.error = 'true';
+        status.textContent = String(error.message || error);
+      } finally {
+        publishing = false;
+        input.disabled = close.disabled = false;
+        submit.disabled = !resultPanel.hidden;
+      }
+    });
+  }
+
+  async function createBlendScene() {
+    const button=document.getElementById('btn-create-blend');
+    if(!window.__TAURI__?.core?.invoke){alert('Abre la aplicación de escritorio para crear la escena en Blender.');return;}
+    if(!dielineRootGroup || !state.dieline?.faces.length || state.dieline.vector3DStale){alert('Cierra los contornos antes de crear el archivo Blender.');return;}
+    button.disabled=true;button.textContent='Creando escena en Blender…';
+    try {
+      const root=dielineRootGroup.clone(true);
+      root.traverse(o=>{if(o.userData?.isCADHelper)o.visible=false;});
+      root.scale.multiplyScalar(.001);root.position.multiplyScalar(.001);
+      const clips=buildBlenderAnimationClips().filter(c=>c.name.startsWith('02_'));
+      const result=await new Promise(resolve=>new THREE.GLTFExporter().parse(root,resolve,{binary:true,animations:clips,onlyVisible:true,embedImages:true}));
+      if(!(result instanceof ArrayBuffer))throw Error('No se ha podido generar el modelo GLB.');
+      const path=await window.__TAURI__.core.invoke('create_blend',{data:Array.from(new Uint8Array(result))});
+      alert('Escena Blender guardada en el Escritorio:\n'+path);
+    }catch(error){alert('No se pudo crear el archivo .blend: '+(error.message||error));}
+    finally{button.disabled=false;button.textContent='CREAR .blend';}
   }
 
   // ============================================================================
@@ -1977,6 +2082,7 @@
     const railTabs = document.querySelectorAll('.rail-tab-btn');
     const drawerViews = {
       dielines: document.getElementById('drawer-tab-dielines'),
+      projects: document.getElementById('drawer-tab-projects'),
       basic: document.getElementById('drawer-tab-basic'),
       details: document.getElementById('drawer-tab-details'),
       parts: document.getElementById('drawer-tab-parts'),
@@ -2000,6 +2106,8 @@
         // Al cambiar a Details, regenerar parámetros avanzados y forzar redibujo de cotas 2D detalladas
         if (tabKey === 'details') {
           renderDetailsTabUI();
+        } else if (tabKey === 'projects') {
+          renderProjects();
         } else if (tabKey === 'dielines') {
           renderDrawerCatalogList();
         }
@@ -2263,6 +2371,9 @@
 
     document.getElementById('btn-art-settings')?.addEventListener('click', openArtworkOptions);
     initUserLibraryUI();
+    document.getElementById('project-save').onclick=saveCurrentProject;
+    document.getElementById('btn-create-blend')?.addEventListener('click',createBlendScene);
+    setupClientPublishing();
     initVectorEditor();
     document.getElementById('btn-set-base')?.addEventListener('click',async()=>{
       try{
@@ -2708,19 +2819,48 @@
     };
     document.getElementById('vector-undo').onclick=()=>{if(!vectorHistory.length)return;vectorRedo.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorHistory.pop());vectorMessage('Cambio deshecho.');};
     document.getElementById('vector-redo').onclick=()=>{if(!vectorRedo.length)return;vectorHistory.push(vectorClone(state.dieline));vectorDraft=null;vectorSelection=null;displayVectorModel(vectorRedo.pop());vectorMessage('Cambio rehecho.');};
-    document.getElementById('vector-save').onclick=async()=>{
-      const button=document.getElementById('vector-save');button.disabled=true;
-      try { await userLibraryReady;
-        const current=state.activeFefcoEntry?.userModel?state.activeFefcoEntry:null;
-        const item=current ? {...current,geometry:vectorClone(state.dieline),length:state.dieline.boxDimensionsMm?.length,width:state.dieline.boxDimensionsMm?.width,height:state.dieline.boxDimensionsMm?.depth,updatedAt:new Date().toISOString()} : UserLibrary.create(state.fileName.slice(0,100),state.boardCode,state.dieline,state.fileName);
-        UserLibrary.validate(item);
-        if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke(current?'update_library_model':'add_library_model',{model:item});
-        else {const list=current?userLibraryModels.map(m=>m.num===item.num?item:m):[item,...userLibraryModels];window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify(list));}
-        userLibraryModels=current?userLibraryModels.map(m=>m.num===item.num?item:m):[item,...userLibraryModels];state.activeFefcoEntry=item;state.canAddToLibrary=false;document.getElementById('btn-add-library')?.classList.add('hidden');
-        document.getElementById('vector-status').textContent=current?'Modelo de tu biblioteca actualizado.':'Copia guardada en Mis modelos de la biblioteca.';
-        if(state.activeTab==='dielines')renderDrawerCatalogList();
-      }catch(error){document.getElementById('vector-status').textContent='No se pudo guardar: '+(error.message||error);}finally{button.disabled=false;}
-    };
+    document.getElementById('vector-save').onclick=saveCurrentProject;
+  }
+
+  const PROJECTS_KEY='troqueles-vicente-projects-v1';
+  async function readProjects(){
+    if(window.__TAURI__?.core?.invoke)return await window.__TAURI__.core.invoke('load_projects');
+    return JSON.parse(window.localStorage.getItem(PROJECTS_KEY)||'[]');
+  }
+  async function saveCurrentProject(){
+    if(!state.dieline)return;
+    const name=prompt('Nombre del proyecto:',state.fileName.replace(/\.[^.]+$/,'')||'Mi proyecto');
+    if(name===null)return;
+    if(!name.trim()){alert('Escribe un nombre para el proyecto.');return;}
+    const item={id:Date.now().toString(36)+'-'+Math.random().toString(36).slice(2),name:name.trim().slice(0,100),geometry:vectorClone(state.dieline),artwork:state.artwork?vectorClone(state.artwork):null,boardCode:state.boardCode,boardId:state.boardId,masterFold:state.masterFold,createdAt:new Date().toISOString()};
+    try {
+      if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('save_project',{project:item});
+      else {const projects=await readProjects();projects.unshift(item);window.localStorage.setItem(PROJECTS_KEY,JSON.stringify(projects));}
+      document.getElementById('project-status').textContent='Proyecto guardado.';
+      document.getElementById('vector-status').textContent='Proyecto guardado. La biblioteca no se ha modificado.';
+      if(state.activeTab==='projects')await renderProjects();
+    }catch(error){alert('No se pudo guardar el proyecto: '+(error.message||error));}
+  }
+  async function renderProjects(){
+    const list=document.getElementById('project-list');list.replaceChildren();
+    try{
+      const projects=await readProjects();projects.sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+      if(!projects.length){list.textContent='Todavía no hay proyectos guardados.';return;}
+      for(const project of projects){
+        const button=document.createElement('button');button.className='btn-outline';button.style.cssText='display:block;width:100%;margin:8px 0;text-align:left';button.textContent=project.name;
+        button.onclick=async()=>{try{
+          if(!project.geometry||!Array.isArray(project.geometry.faces)||!Array.isArray(project.geometry.cutSegments)||!Array.isArray(project.geometry.foldSegments))throw Error('El proyecto no contiene geometría válida.');
+          state.activeFefcoEntry=null;state.boardCode=project.boardCode||'C1';state.caliper=UserLibrary.boardThicknessMm[state.boardCode]||1.5;state.boardId=project.boardId||state.boardId;
+          if(project.geometry.faces.length)applyNewDielineModel(vectorClone(project.geometry),project.name,false,false);
+          else {clearArtwork();state.fileName=project.name;state.canAddToLibrary=false;state.selectedFaceId=null;state.hingeAngles={};vectorSelection=null;vectorHistory=[];vectorRedo=[];}
+          state.baseDieline=vectorClone(project.geometry);state.dieline=vectorClone(project.geometry);state.parametricDieline=state.dieline;syncParametricInputsUI(state.dieline);
+          if(project.artwork?.dataUrl)await loadArtworkData(project.artwork.dataUrl,project.artwork);
+          rebuild3DMesh();setMasterFold(project.masterFold??.75);render2FDieline();
+          document.getElementById('project-status').textContent='Proyecto abierto: '+project.name;
+        }catch(error){document.getElementById('project-status').textContent='No se pudo abrir: '+(error.message||error);}};
+        list.appendChild(button);
+      }
+    }catch(error){document.getElementById('project-status').textContent='No se pudieron cargar los proyectos: '+(error.message||error);}
   }
 
   const USER_LIBRARY_KEY='troqueles-vicente-user-library-v1';

@@ -92,6 +92,7 @@
         <span>Troqueles</span>
       </button>
 
+      <button class="rail-tab-btn" data-drawer-tab="projects" title="Proyectos guardados"><span aria-hidden="true" style="font-size:22px">▣</span><span>Proyectos</span></button>
       <button class="rail-tab-btn active" data-drawer-tab="basic" title="Dimensiones básicas y material">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M4 7V4h16v3"></path>
@@ -140,6 +141,7 @@
     <aside id="drawer-panel" class="drawer-card">
 
       <!-- ================= PESTAÑA 1: DIELINES ================= -->
+      <div id="drawer-tab-projects" class="drawer-tab-view hidden"><div class="drawer-title">Proyectos</div><p>Guarda aquí tus troqueles con sus cambios e imágenes.</p><button id="project-save" class="btn-primary-blue">Guardar proyecto</button><p id="project-status" role="status"></p><div id="project-list"></div></div>
       <div id="drawer-tab-dielines" class="drawer-tab-view hidden">
         <div class="drawer-tab-header">
           <span class="drawer-title">Biblioteca</span>
@@ -479,7 +481,7 @@
             <p>Arrastra la imagen sobre el plano. El resultado se muestra en el exterior del modelo 3D.</p>
           </div>
           <div class="vector-history"><button id="vector-undo" type="button">↶ Deshacer</button><button id="vector-redo" type="button">↷ Rehacer</button></div>
-          <button id="vector-save" class="vector-save" type="button">Guardar en biblioteca</button>
+          <button id="vector-save" class="vector-save" type="button">Guardar en proyectos</button>
           <p id="vector-status" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
         </div>
       </div>
@@ -580,6 +582,7 @@
       <div class="export-formats-card">
         <div class="export-card-title">Formatos de archivo</div>
         <button id="btn-create-blend" type="button" class="btn-outline create-blend-button">CREAR .blend</button>
+        <button id="btn-publish-client" type="button" class="btn-primary-blue publish-client-button">Publicar para cliente</button>
 
         <div class="formats-button-grid">
           <button class="format-btn" data-export-format="ai" disabled title="Exportación AI nativa aún no disponible; usa PDF o SVG en Illustrator">
@@ -639,7 +642,24 @@
   <script src="artwork-layout.js"></script>
   <script src="library-models.js"></script>
   <script src="vector-cad.js"></script>
+  <script src="client-publishing.js"></script>
   <script src="app.js"></script>
+  <dialog id="publish-client-dialog" class="part-options-dialog" aria-labelledby="publish-client-title">
+    <form id="publish-client-form">
+      <div class="part-options-head"><strong id="publish-client-title">Publicar para cliente</strong><button id="publish-client-close" type="button" class="icon-btn" aria-label="Cerrar publicación">×</button></div>
+      <p>Se publicará la caja con el plegado y la imagen que estás viendo.</p>
+      <label class="art-field" for="publish-client-key">Clave del cliente</label>
+      <input id="publish-client-key" class="publish-client-input" required maxlength="84" autocomplete="off" spellcheck="false" placeholder="Ejemplo: cliente123" aria-describedby="publish-client-help" />
+      <p id="publish-client-help">El nombre será la clave. Usa letras sin acentos, números, guiones o guiones bajos.</p>
+      <p id="publish-client-status" role="status" aria-live="polite"></p>
+      <div id="publish-client-result" hidden>
+        <label class="art-field" for="publish-client-share">Datos para el cliente</label>
+        <textarea id="publish-client-share" readonly rows="3" class="publish-client-input"></textarea>
+        <button id="publish-client-copy" type="button" class="btn-outline">Copiar enlace y clave</button>
+      </div>
+      <button id="publish-client-submit" type="submit" class="btn-primary-blue">Subir caja a GitHub</button>
+    </form>
+  </dialog>
   <dialog id="part-options-dialog" class="part-options-dialog" aria-labelledby="part-options-title">
     <div class="part-options-head">
       <strong id="part-options-title">Ajustar pieza</strong>

@@ -1282,3 +1282,11 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .vector-artwork { border-top:1px solid #e3eaf0; margin-top:12px; padding-top:12px; }
 .vector-artwork button { width:100%; margin-top:6px; }
 .vector-artwork p { color:#64798d; font-size:11px; }
+/* Publicación del modelo en el visor de clientes. */
+.publish-client-button { width: 100%; margin: 10px 0; }
+.publish-client-input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; }
+#publish-client-dialog { max-width: min(460px, 90vw); }
+#publish-client-dialog p { font-size: 13px; line-height: 1.5; }
+#publish-client-status[data-error="true"] { color: #b42318; }
+#publish-client-submit { margin-top: 12px; }
+

@@ -111,6 +111,22 @@ test('GLB convierte milímetros a metros sin modificar el visor y conserva la an
     assert.equal(exported.userData.units,'meters');
     assert.ok(options.animations.length>=1);
     assert.equal(options.embedImages,true);
+    let panels=0;
+    exported.traverse(object=>{
+      if(!object.isMesh || !Array.isArray(object.material))return;
+      panels++;
+      const geometry=object.geometry;
+      assert.ok(geometry.index,'GLB requiere índices para respetar los grupos de material');
+      const used=new Set();
+      for(const group of geometry.groups){
+        for(let i=group.start;i<group.start+group.count;i++){
+          assert.ok(!used.has(i),'los grupos no deben repetir triángulos');
+          used.add(i);
+        }
+      }
+      assert.equal(used.size,geometry.index.count);
+    });
+    assert.ok(panels>0);
   }finally{THREE.GLTFExporter=original;}
 });
 

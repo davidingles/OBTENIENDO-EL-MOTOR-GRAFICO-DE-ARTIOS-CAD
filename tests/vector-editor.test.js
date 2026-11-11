@@ -5,7 +5,7 @@ const engine=require('../dieline-engine'),UserLibrary=require('../library-models
 function setup(){
  const els=new Map(),storage=new Map();
  const el=id=>{if(!els.has(id))els.set(id,{value:'',textContent:'',hidden:false,disabled:false,classList:{add(){}}});return els.get(id);};
- const ctx={DielineEngine:engine,UserLibrary,VectorCAD,TextEncoder,console,performance,window:{addEventListener(){},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}},document:{getElementById:el},alert:e=>{throw Error(e)}};
+ const ctx={DielineEngine:engine,UserLibrary,VectorCAD,TextEncoder,console,performance,prompt:()=>"Proyecto prueba",window:{addEventListener(){},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}},document:{getElementById:el},alert:e=>{throw Error(e)}};
  vm.createContext(ctx);
  let source=fs.readFileSync(require.resolve('../app'),'utf8').replace(/\}\)\(\);\s*$/,`rebuild3DMesh=()=>{};setMasterFold=()=>{};buildHingeSlidersUI=()=>{};render2FDieline=()=>{}; globalThis.api={state,initVectorEditor,select(v){vectorSelection=v;},getModels(){return userLibraryModels;}};})();`);
  vm.runInContext(source,ctx);return {api:ctx.api,el,storage};
@@ -22,6 +22,8 @@ test('agujeros, clasificación real y guardado explícito con deshacer/rehacer',
  el('vector-undo').onclick();assert.equal(api.state.dieline.cutSegments.length,before);el('vector-redo').onclick();assert.equal(api.state.dieline.foldSegments.length,1);
  // Save a closed valid model and update the same personal model on the next save.
  api.state.dieline=model();api.state.dieline.cutSegments.push({x1:0,y1:0,x2:10,y2:0},{x1:10,y1:0,x2:10,y2:10},{x1:10,y1:10,x2:0,y2:10},{x1:0,y1:10,x2:0,y2:0});
- await el('vector-save').onclick();assert.equal(api.getModels().length,1);
- await el('vector-save').onclick();assert.equal(api.getModels().length,1);assert.equal(JSON.parse([...storage.values()][0]).length,1);
+ api.state.artwork={dataUrl:'data:image/png;base64,AA==',centerX:1,centerY:2};
+ await el('vector-save').onclick();assert.equal(api.getModels().length,0);
+ const projects=JSON.parse([...storage.values()][0]);assert.equal(projects.length,1);assert.equal(projects[0].artwork.dataUrl,'data:image/png;base64,AA==');assert.equal(projects[0].geometry.cutSegments.length,8);
+ await el('vector-save').onclick();assert.equal(api.getModels().length,0);assert.equal(JSON.parse([...storage.values()][0]).length,2);
 });
