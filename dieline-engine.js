@@ -1921,9 +1921,22 @@
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     let totalAreaMm2 = 0;
 
+    // Los agujeros interiores (asas, orificios, uñeros interiores) conservan sus medidas exactas sin deformarse
+    const holeTranslations = [];
     const newFaces = baseModel.faces.map(f => {
       const poly = f.polygon.map(p => ({ x: warpX(p.x), y: warpY(p.y) }));
-      const holes = (f.holes || []).map(hp => hp.map(p => ({ x: warpX(p.x), y: warpY(p.y) })));
+      const holes = (f.holes || []).map(hp => {
+        if (!hp || !hp.length) return [];
+        const xs = hp.map(p => p.x), ys = hp.map(p => p.y);
+        const oldCx = (Math.min(...xs) + Math.max(...xs)) * 0.5;
+        const oldCy = (Math.min(...ys) + Math.max(...ys)) * 0.5;
+        const newCx = warpX(oldCx);
+        const newCy = warpY(oldCy);
+        const dx = newCx - oldCx;
+        const dy = newCy - oldCy;
+        holeTranslations.push({ dx, dy, points: hp });
+        return hp.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      });
 
       let fMinX = Infinity, fMinY = Infinity, fMaxX = -Infinity, fMaxY = -Infinity;
       let cx = 0, cy = 0, area2 = 0;
@@ -1969,8 +1982,22 @@
       };
     });
 
+    const isPointInHole = (pt, holePts) => holePts.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < 0.2);
     let totalCutLengthMm = 0;
     const newCutSegments = (baseModel.cutSegments || []).map(s => {
+      let matchedTrans = null;
+      for (const trans of holeTranslations) {
+        if (isPointInHole({ x: s.x1, y: s.y1 }, trans.points) && isPointInHole({ x: s.x2, y: s.y2 }, trans.points)) {
+          matchedTrans = trans;
+          break;
+        }
+      }
+      if (matchedTrans) {
+        const x1 = s.x1 + matchedTrans.dx, y1 = s.y1 + matchedTrans.dy;
+        const x2 = s.x2 + matchedTrans.dx, y2 = s.y2 + matchedTrans.dy;
+        totalCutLengthMm += Math.hypot(x2 - x1, y2 - y1);
+        return { ...s, x1, y1, x2, y2 };
+      }
       const x1 = warpX(s.x1), y1 = warpY(s.y1);
       const x2 = warpX(s.x2), y2 = warpY(s.y2);
       totalCutLengthMm += Math.hypot(x2 - x1, y2 - y1);
@@ -2109,11 +2136,22 @@
       return edit ? mapInFace(p,edit) : {...p};
     };
     const area = poly => Math.abs(poly.reduce((s,p,i) => {const q=poly[(i+1)%poly.length];return s+p.x*q.y-q.x*p.y;},0)/2);
+    const holeTranslations = [];
     const faces = model.faces.map(face => {
       const edit = edits.find(e => e.face.id === face.id);
       if (!edit) return face;
       const polygon = face.polygon.map(p => mapInFace(p,edit));
-      const holes = (face.holes || []).map(h => h.map(p => mapInFace(p,edit)));
+      const holes = (face.holes || []).map(h => {
+        if (!h || !h.length) return [];
+        const xs = h.map(p => p.x), ys = h.map(p => p.y);
+        const oldCx = (Math.min(...xs) + Math.max(...xs)) * 0.5;
+        const oldCy = (Math.min(...ys) + Math.max(...ys)) * 0.5;
+        const newC = mapInFace({ x: oldCx, y: oldCy }, edit);
+        const dx = newC.x - oldCx;
+        const dy = newC.y - oldCy;
+        holeTranslations.push({ dx, dy, points: h });
+        return h.map(p => ({ x: p.x + dx, y: p.y + dy }));
+      });
       const xs=polygon.map(p=>p.x),ys=polygon.map(p=>p.y);
       const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
       const bounds={minX,maxX,minY,maxY,width:maxX-minX,height:maxY-minY};
@@ -2121,7 +2159,18 @@
       return {...face,polygon,points:polygon,holes,bounds,bbox:{...bounds},areaMm2,area:areaMm2,
         centroid:face.centroid ? mapInFace(face.centroid,edit) : face.centroid};
     });
+    const isPointInHole = (pt, holePts) => holePts.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < 0.2);
     const segments = list => (list || []).map(s => {
+      let matchedTrans = null;
+      for (const trans of holeTranslations) {
+        if (isPointInHole({ x: s.x1, y: s.y1 }, trans.points) && isPointInHole({ x: s.x2, y: s.y2 }, trans.points)) {
+          matchedTrans = trans;
+          break;
+        }
+      }
+      if (matchedTrans) {
+        return { ...s, x1: s.x1 + matchedTrans.dx, y1: s.y1 + matchedTrans.dy, x2: s.x2 + matchedTrans.dx, y2: s.y2 + matchedTrans.dy };
+      }
       const a=mapPoint({x:s.x1,y:s.y1}),b=mapPoint({x:s.x2,y:s.y2});
       return {...s,x1:a.x,y1:a.y,x2:b.x,y2:b.y};
     });

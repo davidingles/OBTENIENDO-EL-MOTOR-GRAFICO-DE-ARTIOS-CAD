@@ -743,14 +743,18 @@
 
           <!-- Campos para Cota / Herramienta Acotar -->
           <div id="vector-modal-dim-fields" class="vector-modal-fields" hidden>
-            <div id="vector-dim-val-badge" class="vector-selection-badge" style="font-weight:600;color:#0284c7;margin-bottom:8px;">Cota: 0.0 mm</div>
-            <p class="vector-modal-hint" style="margin-bottom:8px;">Asignar como cota principal del modelo o conservar libre:</p>
-            <div class="vector-modal-actions" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;">
-              <button id="vector-btn-dim-as-l" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como L</button>
-              <button id="vector-btn-dim-as-w" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como W</button>
-              <button id="vector-btn-dim-as-h" type="button" class="btn-outline" style="font-size:12px;padding:6px 4px;">Usar como H</button>
+            <div id="vector-dim-val-badge" class="vector-selection-badge" style="font-weight:600;color:#0284c7;margin-bottom:8px;">Cota seleccionada</div>
+            <div class="vector-dim-type-selector" style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:4px;margin-bottom:10px;">
+              <button id="vector-btn-dim-type-l" type="button" class="btn-dim-chip active" data-dim-type="L">L</button>
+              <button id="vector-btn-dim-type-w" type="button" class="btn-dim-chip" data-dim-type="W">W</button>
+              <button id="vector-btn-dim-type-h" type="button" class="btn-dim-chip" data-dim-type="H">H</button>
+              <button id="vector-btn-dim-type-free" type="button" class="btn-dim-chip" data-dim-type="Libre">Libre</button>
             </div>
-            <button id="vector-btn-delete-dim" type="button" class="btn-danger-outline" style="width:100%;">🗑️ Borrar cota (Supr)</button>
+            <div class="vector-modal-actions" style="display:flex;flex-direction:column;gap:6px;">
+              <button id="vector-btn-delete-dim" type="button" class="btn-danger-outline" style="width:100%;">🗑️ Borrar cota (Supr)</button>
+              <button id="vector-btn-add-dim" type="button" class="btn-primary-blue" style="width:100%;">➕ Añadir cota</button>
+            </div>
+            <p id="vector-dim-hint" class="vector-modal-hint" style="margin-top:8px;">Pulsa 'Añadir cota' y marca 2 puntos en el lienzo para trazar la cota.</p>
           </div>
         </div>
       </div>

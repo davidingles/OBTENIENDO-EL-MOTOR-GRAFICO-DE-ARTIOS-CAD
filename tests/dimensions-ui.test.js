@@ -152,17 +152,24 @@ test('Switch 3 estados (Ocultas, Principales, Todas) y toggle de nombres de áre
   assert.equal(api.state.showAreaLabels, false);
 });
 
-test('Herramienta Acotar crea cotas ortogonales (X/Y) y permite borrarlas con Supr', () => {
+test('Herramienta Acotar: chips L/W/H/Libre, borrar con botón/Supr, añadir cota y actualizar medidas', () => {
   const { api, el } = setupEnvironment();
   api.state.dieline = createSampleModel();
   api.initVectorEditor();
   api.setVectorTool('dimension');
   assert.equal(api.getVectorTool(), 'dimension');
 
-  // Simular inicio de cota en (10, 20)
-  api.setVectorDraft({ point: { x: 10, y: 20 } });
+  // 1. Al activar 'dimension', por defecto selecciona cota L y marca el chip L
+  assert.equal(api.state.activeDimType, 'L');
+  assert.ok(api.getVectorSelection()?.arrow?.id === 'sa_L', 'Cota L seleccionada automáticamente');
 
-  // Simular segundo clic en (110, 40) -> al ser horizontal (|dx| = 100 > |dy| = 20), bloquea ortogonal Y=20, longitud 100
+  // 2. Borrar cota seleccionada con el botón de borrar
+  el('vector-btn-delete-dim').onclick();
+  assert.equal(api.state.dieline.sizeArrowData.some(a => a.id === 'sa_L'), false, 'Cota L borrada correctamente');
+
+  // 3. Añadir nueva cota L con el botón '➕ Añadir cota'
+  el('vector-btn-add-dim').onclick();
+  api.setVectorDraft({ point: { x: 10, y: 20 } });
   api.vectorCanvasClick({
     currentTarget: {
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
@@ -174,22 +181,90 @@ test('Herramienta Acotar crea cotas ortogonales (X/Y) y permite borrarlas con Su
   });
 
   const customArrows = api.state.dieline.sizeArrowData.filter(a => a.isUserCreated);
-  assert.ok(customArrows.length >= 1, 'Se creó la cota de usuario');
-  const userArrow = customArrows[0];
-  assert.ok(userArrow.lineLength > 0, 'La longitud de la cota es positiva');
-  assert.ok(userArrow.p1.x === userArrow.p2.x || userArrow.p1.y === userArrow.p2.y, 'Cota estrictamente ortogonal (X o Y)');
+  assert.ok(customArrows.length >= 1, 'Se creó la cota de usuario para L');
+  const userArrowL = customArrows[0];
+  assert.equal(userArrowL.lineName, 'L');
+  assert.ok(userArrowL.lineLength > 0);
+  assert.equal(api.state.paramL, userArrowL.lineLength, 'Medida personalizada L actualizada a la medida trazada');
+  assert.equal(el('input-length').value, userArrowL.lineLength);
 
-  // Seleccionar la cota del algoritmo y borrarla
-  const arrowToDelete = api.state.dieline.sizeArrowData.find(a => a.id === 'sa_L');
-  assert.ok(arrowToDelete, 'Existe cota algorítmica sa_L');
-  api.setVectorSelection({ type: 'dimension', arrow: arrowToDelete });
+  // 4. Chip 'Libre': permite medir cualquier distancia sin sobreescribir L, W ni H
+  el('vector-btn-dim-type-free').onclick();
+  assert.equal(api.state.activeDimType, 'Libre');
+  el('vector-btn-add-dim').onclick();
+  api.setVectorDraft({ point: { x: 50, y: 50 } });
+  api.vectorCanvasClick({
+    currentTarget: {
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+      width: 800,
+      height: 600
+    },
+    clientX: 130,
+    clientY: 50
+  });
 
-  // Borrar con botón de borrar o tecla Supr
+  const freeDim = api.state.dieline.sizeArrowData.find(a => a.lineName === 'Dim');
+  assert.ok(freeDim, 'Cota libre creada');
+  assert.ok(freeDim.lineLength > 0);
+  assert.equal(freeDim.isMain, false);
+  assert.equal(api.state.paramL, userArrowL.lineLength, 'L no fue sobreescrita por la cota libre');
+
+  // 5. Borrar cota libre
+  api.setVectorSelection({ type: 'dimension', arrow: freeDim });
   el('vector-btn-delete-dim').onclick();
-  assert.equal(api.state.dieline.sizeArrowData.some(a => a.id === 'sa_L'), false, 'La cota algorítmica ha sido borrada');
+  assert.equal(api.state.dieline.sizeArrowData.some(a => a === freeDim), false, 'Cota libre borrada');
 
-  // Borrar cota de usuario
-  api.setVectorSelection({ type: 'dimension', arrow: userArrow });
-  el('vector-btn-delete-dim').onclick();
-  assert.equal(api.state.dieline.sizeArrowData.some(a => a === userArrow), false, 'La cota de usuario ha sido borrada');
+  // 6. Al cerrar el editor de vectores la modal nunca debe quedarse abierta
+  el('vector-close').onclick();
+  assert.equal(el('vector-tool-modal').hidden, true, 'Modal cerrada al salir de edición de vectores');
+});
+
+test('Al cambiar el tamaño de un área no se deforman agujeros ni asas', () => {
+  const model = {
+    faces: [
+      {
+        id: 1,
+        name: 'Panel Principal',
+        role: 'BODY',
+        polygon: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 300 }, { x: 0, y: 300 }],
+        bounds: { minX: 0, maxX: 200, minY: 0, maxY: 300, width: 200, height: 300 },
+        // Agujero circular / asa de 40x20 mm centrado en (100, 150)
+        holes: [
+          [
+            { x: 80, y: 140 },
+            { x: 120, y: 140 },
+            { x: 120, y: 160 },
+            { x: 80, y: 160 }
+          ]
+        ]
+      }
+    ],
+    cutSegments: [
+      { x1: 80, y1: 140, x2: 120, y2: 140 },
+      { x1: 120, y1: 140, x2: 120, y2: 160 },
+      { x1: 120, y1: 160, x2: 80, y2: 160 },
+      { x1: 80, y1: 160, x2: 80, y2: 140 }
+    ],
+    foldSegments: [],
+    hinges: [],
+    boxDimensionsMm: { length: 200, width: 150, depth: 300 }
+  };
+
+  // Redimensionar el panel de 200 a 400 en X (el doble)
+  const resized = engine.resizeDielineParametric(model, 400, 150, 300);
+  assert.ok(resized);
+
+  const holeResized = resized.faces[0].holes[0];
+  const holeXs = holeResized.map(p => p.x);
+  const holeYs = holeResized.map(p => p.y);
+  const holeW = Math.max(...holeXs) - Math.min(...holeXs);
+  const holeH = Math.max(...holeYs) - Math.min(...holeYs);
+
+  // El agujero no debe deformarse: debe mantener EXACTAMENTE 40 mm de ancho y 20 mm de alto
+  assert.equal(Math.round(holeW), 40, 'El ancho del agujero/asa se conserva sin deformarse');
+  assert.equal(Math.round(holeH), 20, 'El alto del agujero/asa se conserva sin deformarse');
+
+  // Los segmentos de corte del agujero también deben conservar su longitud original
+  const segW = Math.hypot(resized.cutSegments[0].x2 - resized.cutSegments[0].x1, resized.cutSegments[0].y2 - resized.cutSegments[0].y1);
+  assert.equal(Math.round(segW), 40, 'Segmento de corte del agujero conserva longitud original');
 });

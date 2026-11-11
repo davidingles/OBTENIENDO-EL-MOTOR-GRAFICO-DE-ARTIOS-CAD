@@ -57,6 +57,7 @@
     dimensionDisplayMode: 'main', // 'none' | 'main' | 'all' (3 estados solicitados)
     showAreaLabels: true,   // Mostrar / ocultar nombres de las áreas
     pickingDimensionArea: null, // 'L' | 'W' | 'H' cuando se pulsa el icono de la diana
+    activeDimType: 'L',     // 'L' | 'W' | 'H' | 'Libre' tipo de cota activo en herramienta acotar
     symmetryLinks: {},
     openParamsValues: {},   // Valores de Details
     fefcoFilter: 'ALL',
@@ -3262,6 +3263,40 @@
 
   function vectorMessage(message) { document.getElementById('vector-status').textContent=message; }
   function vectorLine() { return vectorSelection?.type==='line' ? VectorCAD.get(state.dieline,vectorSelection) : null; }
+  function selectDimType(type) {
+    state.activeDimType = type;
+    ['l', 'w', 'h', 'free'].forEach(k => {
+      const code = k === 'free' ? 'Libre' : k.toUpperCase();
+      const btn = document.getElementById('vector-btn-dim-type-' + k);
+      if (btn && btn.classList) btn.classList.toggle('active', code === type);
+    });
+
+    const badge = document.getElementById('vector-dim-val-badge');
+    const hint = document.getElementById('vector-dim-hint');
+
+    if (type === 'Libre') {
+      if (vectorSelection?.type === 'dimension' && !['L', 'W', 'H'].includes(vectorSelection.arrow?.lineName)) {
+        if (badge) badge.textContent = `Cota libre: ${(Number(vectorSelection.arrow.lineLength) || 0).toFixed(1)} mm`;
+      } else {
+        vectorSelection = null;
+        if (badge) badge.textContent = 'Cota libre (distancia informativa)';
+      }
+      if (hint) hint.textContent = "Pulsa 'Añadir cota' y marca 2 puntos en el lienzo para medir cualquier distancia.";
+    } else {
+      const arrow = (state.dieline?.sizeArrowData || []).find(a => a.lineName === type);
+      if (arrow) {
+        vectorSelection = { type: 'dimension', arrow };
+        if (badge) badge.textContent = `Cota ${type}: ${(Number(arrow.lineLength) || 0).toFixed(1)} mm`;
+        if (hint) hint.textContent = `Cota ${type} seleccionada. Pulsa 'Borrar cota' para eliminarla o 'Añadir cota' para redibujarla.`;
+      } else {
+        vectorSelection = null;
+        if (badge) badge.textContent = `Sin cota ${type} definida`;
+        if (hint) hint.textContent = `No hay cota ${type}. Pulsa 'Añadir cota' y marca 2 puntos en el troquel para trazarla.`;
+      }
+    }
+    render2FDieline();
+  }
+
   function vectorRefreshControls() {
     const sel=vectorSelection,model=state.dieline,hole=sel?.type==='hole'?model?.faces[sel.face]?.holes?.[sel.index]:null;
     const line=vectorLine();
@@ -3295,24 +3330,28 @@
         modal.hidden = false;
         modalTitle.textContent = 'Asa · Medidas';
         lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = false; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
-      } else if (sel?.type === 'dimension' && sel?.arrow) {
-        modal.hidden = false;
-        modalTitle.textContent = 'Cota seleccionada';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true;
-        if (dimFields) {
-          dimFields.hidden = false;
-          const badge = document.getElementById('vector-dim-val-badge');
-          const nameStr = sel.arrow.lineName ? ` [${sel.arrow.lineName}]` : '';
-          if (badge) badge.textContent = `Cota: ${(Number(sel.arrow.lineLength) || 0).toFixed(1)} mm${nameStr}`;
-        }
-      } else if (vectorTool === 'dimension') {
+      } else if (vectorTool === 'dimension' || (sel?.type === 'dimension' && sel?.arrow)) {
         modal.hidden = false;
         modalTitle.textContent = 'Acotar ortogonal (X / Y)';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true;
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true;
+        if (boxFields) boxFields.hidden = true;
         if (dimFields) {
           dimFields.hidden = false;
+          if (sel?.type === 'dimension' && sel?.arrow) {
+            const code = ['L', 'W', 'H'].includes(sel.arrow.lineName) ? sel.arrow.lineName : 'Libre';
+            state.activeDimType = code;
+          }
+          const curType = state.activeDimType || 'L';
+          ['l', 'w', 'h', 'free'].forEach(k => {
+            const code = k === 'free' ? 'Libre' : k.toUpperCase();
+            const btn = document.getElementById('vector-btn-dim-type-' + k);
+            if (btn && btn.classList) btn.classList.toggle('active', code === curType);
+          });
           const badge = document.getElementById('vector-dim-val-badge');
-          if (badge) badge.textContent = 'Pulsa inicio y fin para acotar';
+          if (sel?.type === 'dimension' && sel?.arrow) {
+            const nameStr = sel.arrow.lineName ? ` [${sel.arrow.lineName}]` : '';
+            if (badge) badge.textContent = `Cota: ${(Number(sel.arrow.lineLength) || 0).toFixed(1)} mm${nameStr}`;
+          }
         }
       } else if (vectorTool === 'select' && sel?.type === 'hole' && hole) {
         modal.hidden = false;
@@ -3376,6 +3415,9 @@
     }
     document.getElementById('vector-help').textContent=help[tool]+' Mayús: ortogonal / desplazar · Esc: cancelar.';
     document.getElementById('vector-value-label').hidden=!['chamfer','fillet'].includes(tool);
+    if (tool === 'dimension') {
+      selectDimType(state.activeDimType || 'L');
+    }
     vectorRefreshControls();
   }
   function vectorCanvasClick(e) {
@@ -3394,10 +3436,11 @@
 
     try {
       if (vectorTool === 'dimension') {
+        const dimType = state.activeDimType || 'L';
         if (!vectorDraft) {
           vectorDraft = { point: p };
           vectorPointer = p;
-          vectorMessage('Extremo inicial fijado. Pulsa el extremo final para acotar (ortogonal en X o Y).');
+          vectorMessage(`Extremo inicial fijado para cota ${dimType}. Pulsa el extremo final (ortogonal en X o Y).`);
           render2FDieline();
           return;
         }
@@ -3414,27 +3457,47 @@
           vectorMessage('La cota es demasiado pequeña.');
           return;
         }
+        const isMain = ['L', 'W', 'H'].includes(dimType);
         const newArrow = {
           id: 'user_dim_' + Date.now(),
-          lineName: 'Dim',
+          lineName: isMain ? dimType : 'Dim',
           lineLength: +len.toFixed(1),
           p1: { x: vectorDraft.point.x, y: vectorDraft.point.y },
           p2: { x: endP.x, y: endP.y },
           tpointer: {
             x: (vectorDraft.point.x + endP.x) * 0.5,
             y: (vectorDraft.point.y + endP.y) * 0.5,
-            value: len.toFixed(1) + ' mm'
+            value: (isMain ? `${dimType}=` : '') + len.toFixed(1) + ' mm'
           },
           isUserCreated: true,
-          isMain: false
+          isMain
         };
         if (!Array.isArray(state.dieline.sizeArrowData)) state.dieline.sizeArrowData = [];
+        if (isMain) {
+          state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a.lineName !== dimType);
+        }
         state.dieline.sizeArrowData.push(newArrow);
+
+        // Actualizar la cifra que aparece en 'medidas personalizadas'
+        if (dimType === 'L') {
+          state.paramL = +len.toFixed(1);
+          const lInp = document.getElementById('input-length');
+          if (lInp) lInp.value = state.paramL;
+        } else if (dimType === 'W') {
+          state.paramW = +len.toFixed(1);
+          const wInp = document.getElementById('input-width');
+          if (wInp) wInp.value = state.paramW;
+        } else if (dimType === 'H') {
+          state.paramH = +len.toFixed(1);
+          const hInp = document.getElementById('input-height');
+          if (hInp) hInp.value = state.paramH;
+        }
+
         vectorDraft = null;
         vectorSelection = { type: 'dimension', arrow: newArrow };
-        vectorRefreshControls();
+        selectDimType(dimType);
         render2FDieline();
-        vectorMessage(`Cota ortogonal de ${len.toFixed(1)} mm creada. Puedes asignarla como L, W o H.`);
+        vectorMessage(`Cota ${dimType} (${len.toFixed(1)} mm) trazada y actualizada en Medidas.`);
         return;
       }
       if (vectorTool === 'handle') {
@@ -3822,9 +3885,27 @@
     };
     const adjImg = document.getElementById('vector-adjust-image');
     if (adjImg) adjImg.onclick = () => { if (state.artwork) openArtworkOptions(); else vectorMessage('Sube primero una imagen.'); };
-    const toggle=on=>{vectorEditing=on;controls.hidden=!on;document.getElementById('vector-toggle').setAttribute('aria-expanded',String(on));vectorSelection=null;vectorDraft=null;if(on)setVectorTool('select');else render2FDieline();};
-    document.getElementById('vector-toggle').onclick=()=>toggle(!vectorEditing);
-    document.getElementById('vector-close').onclick=()=>toggle(false);
+    const toggle = on => {
+      vectorEditing = on;
+      controls.hidden = !on;
+      const toggleBtn = document.getElementById('vector-toggle');
+      if (toggleBtn?.setAttribute) toggleBtn.setAttribute('aria-expanded', String(on));
+      vectorSelection = null;
+      vectorDraft = null;
+      const m = document.getElementById('vector-tool-modal');
+      if (m) m.hidden = true;
+      if (on) {
+        setVectorTool('select');
+      } else {
+        state.pickingDimensionArea = null;
+        ['l', 'w', 'h'].forEach(k => {
+          document.getElementById('btn-pick-dim-' + k)?.classList.remove('active-target');
+        });
+        render2FDieline();
+      }
+    };
+    document.getElementById('vector-toggle').onclick = () => toggle(!vectorEditing);
+    document.getElementById('vector-close').onclick = () => toggle(false);
     for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => setVectorTool(tool);
@@ -4001,7 +4082,13 @@
         }
       }
       const m = document.getElementById('vector-tool-modal');
-      if (m) m.hidden = true;
+      if (m && vectorTool !== 'dimension') m.hidden = true;
+      if (vectorTool === 'dimension') {
+        const badge = document.getElementById('vector-dim-val-badge');
+        const hint = document.getElementById('vector-dim-hint');
+        if (badge) badge.textContent = 'Cota eliminada';
+        if (hint) hint.textContent = "Cota borrada. Pulsa 'Añadir cota' para trazar una nueva.";
+      }
       render2FDieline();
     }
 
@@ -4010,6 +4097,24 @@
 
     const btnDeleteDim = document.getElementById('vector-btn-delete-dim');
     if (btnDeleteDim) btnDeleteDim.onclick = deleteCurrentVectorSelection;
+
+    const btnDimTypeL = document.getElementById('vector-btn-dim-type-l');
+    if (btnDimTypeL) btnDimTypeL.onclick = () => selectDimType('L');
+    const btnDimTypeW = document.getElementById('vector-btn-dim-type-w');
+    if (btnDimTypeW) btnDimTypeW.onclick = () => selectDimType('W');
+    const btnDimTypeH = document.getElementById('vector-btn-dim-type-h');
+    if (btnDimTypeH) btnDimTypeH.onclick = () => selectDimType('H');
+    const btnDimTypeFree = document.getElementById('vector-btn-dim-type-free');
+    if (btnDimTypeFree) btnDimTypeFree.onclick = () => selectDimType('Libre');
+
+    const btnAddDim = document.getElementById('vector-btn-add-dim');
+    if (btnAddDim) {
+      btnAddDim.onclick = () => {
+        vectorDraft = null;
+        const t = state.activeDimType || 'L';
+        vectorMessage(`Pulsa en el troquel el primer punto para la cota ${t}...`);
+      };
+    }
 
     function assignSelectedDim(code) {
       if (vectorSelection?.type !== 'dimension' || !vectorSelection?.arrow) {
@@ -4037,19 +4142,10 @@
       state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a === arrow || a.lineName !== code);
       if (!state.dieline.sizeArrowData.includes(arrow)) state.dieline.sizeArrowData.push(arrow);
       vectorSelection = null;
-      const m = document.getElementById('vector-tool-modal');
-      if (m) m.hidden = true;
-      vectorRefreshControls();
+      selectDimType(code);
       render2FDieline();
       vectorMessage(`Cota asignada como ${code} (${val.toFixed(1)} mm).`);
     }
-
-    const btnDimL = document.getElementById('vector-btn-dim-as-l');
-    if (btnDimL) btnDimL.onclick = () => assignSelectedDim('L');
-    const btnDimW = document.getElementById('vector-btn-dim-as-w');
-    if (btnDimW) btnDimW.onclick = () => assignSelectedDim('W');
-    const btnDimH = document.getElementById('vector-btn-dim-as-h');
-    if (btnDimH) btnDimH.onclick = () => assignSelectedDim('H');
 
     const xyInput = document.getElementById('vector-box-xy');
     if (xyInput) {
