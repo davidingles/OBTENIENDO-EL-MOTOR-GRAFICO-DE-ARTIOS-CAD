@@ -1825,6 +1825,53 @@
    *  - Custom `.svg` dielines (RSC American boxes, trays, folding cartons)
    *  - All 116 FEFCO models (instant 60fps client-side feedback while dragging sliders/wheel)
    */
+  // Only infer a rectangular sleeve from four rectangular walls connected in a
+  // strip with an end glue seam. Names and matching dimensions are insufficient.
+  function inferSleeveBands(model, targets) {
+    const walls = model.faces.filter(f => f.role === 'BODY');
+    if (walls.length !== 4) return [];
+    const near = (a, b) => Math.abs(a - b) < 0.25;
+    const linked = (a, b) => (model.hinges || []).some(h => {
+      const ids = [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+      return ids.includes(a.id) && ids.includes(b.id) &&
+        (h.defaultAngle == null || near(Math.abs(h.defaultAngle), 90));
+    });
+    for (const axis of ['x', 'y']) {
+      const cross = axis === 'x' ? 'y' : 'x';
+      const lo = axis === 'x' ? 'minX' : 'minY', hi = axis === 'x' ? 'maxX' : 'maxY';
+      const clo = axis === 'x' ? 'minY' : 'minX', chi = axis === 'x' ? 'maxY' : 'maxX';
+      const ordered = [...walls].sort((a,b) => a.bounds[lo] - b.bounds[lo]);
+      const first = ordered[0].bounds;
+      if (!ordered.every(f => {
+        const b = f.bounds, poly = f.polygon || [];
+        let area = 0;
+        for (let i=0;i<poly.length;i++) {
+          const a=poly[i], c=poly[(i+1)%poly.length]; area += a.x*c.y-c.x*a.y;
+        }
+        return near(b[clo], first[clo]) && near(b[chi], first[chi]) &&
+          Math.abs(Math.abs(area/2) - b.width*b.height) < 0.001*b.width*b.height;
+      })) continue;
+      if (!ordered.slice(1).every((f,i) => near(ordered[i].bounds[hi], f.bounds[lo]) && linked(ordered[i],f))) continue;
+      if (!model.faces.some(f => f.role === 'GLUE_FLAP' && (linked(f,ordered[0]) || linked(f,ordered[3])))) continue;
+      const labels = [null, null];
+      let conflict = false;
+      for (const arrow of model.sizeArrowData || []) {
+        if (!['L','W'].includes(arrow.lineName) || !arrow.p1 || !arrow.p2 || !near(arrow.p1[cross],arrow.p2[cross])) continue;
+        const min = Math.min(arrow.p1[axis],arrow.p2[axis]), max = Math.max(arrow.p1[axis],arrow.p2[axis]);
+        const i = ordered.findIndex(f => near(f.bounds[lo],min) && near(f.bounds[hi],max));
+        if (i < 0) continue;
+        if (labels[i%2] && labels[i%2] !== arrow.lineName) conflict = true;
+        labels[i%2] = arrow.lineName;
+      }
+      if (conflict || (labels[0] && labels[0] === labels[1])) return [];
+      if (!labels[0] && !labels[1]) continue;
+      if (!labels[0]) labels[0] = labels[1] === 'L' ? 'W' : 'L';
+      if (!labels[1]) labels[1] = labels[0] === 'L' ? 'W' : 'L';
+      return ordered.map((f,i) => ({axis, min:f.bounds[lo], max:f.bounds[hi], targetSpan:targets[labels[i%2]]}));
+    }
+    return [];
+  }
+
   function resizeDielineParametric(baseModel, newL, newW, newH, bandEdit = null) {
     if (!baseModel) return null;
     const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
@@ -1835,7 +1882,8 @@
     const targetW = Math.max(10, Number(newW) || origW);
     const targetH = Math.max(10, Number(newH) || origH);
 
-    if (!bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
+    const sleeveBands = inferSleeveBands(baseModel, {L: targetL, W: targetW});
+    if (!sleeveBands.length && !bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
       return enforceFlapLengthLimit(baseModel);
     }
 
@@ -1891,6 +1939,12 @@
         max: Math.max(sa.p1[axis], sa.p2[axis]),
         targetSpan: targets[sa.lineName]
       }));
+      for (const band of sleeveBands.filter(b => b.axis === axis)) {
+        for (let i=anchors.length-1;i>=0;i--) {
+          if (anchors[i].min < band.max && anchors[i].max > band.min) anchors.splice(i,1);
+        }
+        anchors.push(band);
+      }
       if (!anchors.length) return intervals;
       const remaining = intervals.flatMap(interval => {
         const scale = interval.targetSpan / (interval.max - interval.min);

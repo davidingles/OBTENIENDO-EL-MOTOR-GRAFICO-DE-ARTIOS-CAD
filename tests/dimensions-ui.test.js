@@ -132,6 +132,9 @@ test('Dianas (🎯): seleccionar directamente el área del modelo determina las 
   const arrowH = api.state.dieline.sizeArrowData.find(a => a.lineName === 'H');
   assert.ok(arrowH, 'La cota H existe');
   assert.equal(arrowH.lineLength, 300);
+  assert.equal(api.state.baseDieline.boxDimensionsMm.width, 200);
+  assert.equal(api.state.baseDieline.sizeArrowData.find(a => a.lineName === 'W').faceId, 1);
+  assert.notEqual(api.state.baseDieline, api.state.dieline);
 });
 
 test('Switch 3 estados (Ocultas, Principales, Todas) y toggle de nombres de área', () => {
@@ -187,6 +190,7 @@ test('Herramienta Acotar: chips L/W/H/Libre, borrar con botón/Supr, añadir cot
   assert.ok(userArrowL.lineLength > 0);
   assert.equal(api.state.paramL, userArrowL.lineLength, 'Medida personalizada L actualizada a la medida trazada');
   assert.equal(el('input-length').value, userArrowL.lineLength);
+  assert.equal(api.state.baseDieline.sizeArrowData.find(a => a.lineName === 'L').lineLength, userArrowL.lineLength);
 
   // 4. Chip 'Libre': permite medir cualquier distancia sin sobreescribir L, W ni H
   el('vector-btn-dim-type-free').onclick();
@@ -213,6 +217,8 @@ test('Herramienta Acotar: chips L/W/H/Libre, borrar con botón/Supr, añadir cot
   api.setVectorSelection({ type: 'dimension', arrow: freeDim });
   el('vector-btn-delete-dim').onclick();
   assert.equal(api.state.dieline.sizeArrowData.some(a => a === freeDim), false, 'Cota libre borrada');
+  assert.equal(api.state.baseDieline.sizeArrowData.some(a => a.id === freeDim.id), false);
+  assert.ok(api.state.baseDieline.sizeArrowData.some(a => a.lineName === 'L'));
 
   // 6. Al cerrar el editor de vectores la modal nunca debe quedarse abierta
   el('vector-close').onclick();

@@ -606,6 +606,15 @@
    * Redimensiona en tiempo real el modelo actual (tanto .SVG como los 116 modelos FEFCO)
    * al alterar Largo (L), Ancho (W) o Alto (H) en la vista 2D, actualizando al instante el 2D y el 3D.
    */
+  function persistDimensionAnchors() {
+    if (!state.dieline) return;
+    state.dieline.boxDimensionsMm = {length: state.paramL, width: state.paramW, depth: state.paramH};
+    state.baseDieline = vectorClone(state.dieline);
+    state.parametricDieline = state.dieline;
+    // Current geometry already includes local band edits.
+    state.openParamsValues = {};
+  }
+
   function applyParametricResizeRealTime(newL, newW, newH) {
     if (!state.baseDieline) return;
     if(state.dieline?.vector3DStale){document.getElementById('param-sync-status').textContent='Cierra el contorno antes de cambiar las medidas.';return;}
@@ -1630,6 +1639,8 @@
     if (!Array.isArray(state.dieline.sizeArrowData)) state.dieline.sizeArrowData = [];
     state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a.lineName !== dimKey);
     state.dieline.sizeArrowData.push(arrow);
+
+    persistDimensionAnchors();
 
     // Cancelar estado de diana
     state.pickingDimensionArea = null;
@@ -3457,7 +3468,7 @@
         }
         const isMain = ['L', 'W', 'H'].includes(dimType);
         const newArrow = {
-          id: 'user_dim_' + Date.now(),
+          id: 'user_dim_' + Date.now() + '_' + Math.random().toString(36).slice(2),
           lineName: isMain ? dimType : 'Dim',
           lineLength: +len.toFixed(1),
           p1: { x: vectorDraft.point.x, y: vectorDraft.point.y },
@@ -3492,6 +3503,7 @@
         }
 
         vectorDraft = null;
+        persistDimensionAnchors();
         vectorSelection = { type: 'dimension', arrow: newArrow };
         selectDimType(dimType);
         render2FDieline();
@@ -4062,12 +4074,13 @@
       } else if (vectorSelection.type === 'dimension' && vectorSelection.arrow) {
         const targetArrow = vectorSelection.arrow;
         if (Array.isArray(state.dieline?.sizeArrowData)) {
-          state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a !== targetArrow && a.id !== targetArrow.id);
+          state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a !== targetArrow && (targetArrow.id == null || a.id !== targetArrow.id));
         }
         if (Array.isArray(state.dieline?.outsideArrowData)) {
-          state.dieline.outsideArrowData = state.dieline.outsideArrowData.filter(a => a !== targetArrow && a.id !== targetArrow.id);
+          state.dieline.outsideArrowData = state.dieline.outsideArrowData.filter(a => a !== targetArrow && (targetArrow.id == null || a.id !== targetArrow.id));
         }
         vectorSelection = null;
+        persistDimensionAnchors();
         vectorMessage('Cota eliminada.');
       } else if (vectorSelection.type === 'line' || vectorSelection.kind) {
         try {
@@ -4140,6 +4153,7 @@
       state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a === arrow || a.lineName !== code);
       if (!state.dieline.sizeArrowData.includes(arrow)) state.dieline.sizeArrowData.push(arrow);
       vectorSelection = null;
+      persistDimensionAnchors();
       selectDimType(code);
       render2FDieline();
       vectorMessage(`Cota asignada como ${code} (${val.toFixed(1)} mm).`);
