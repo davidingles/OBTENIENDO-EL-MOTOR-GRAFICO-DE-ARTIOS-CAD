@@ -119,6 +119,52 @@
     m.cutSegments=m.cutSegments.filter(s=>!segs.some(t=>sameSeg(s,t)));
     return m;
   }
+
+  function segmentIntersectsBox(s, box) {
+    const { minX, maxX, minY, maxY } = box;
+    const inBox = (x, y) => x >= minX - 1e-4 && x <= maxX + 1e-4 && y >= minY - 1e-4 && y <= maxY + 1e-4;
+    if (inBox(s.x1, s.y1) || inBox(s.x2, s.y2)) return true;
+    const ccw = (p, q, r) => (r.y - p.y) * (q.x - p.x) > (q.y - p.y) * (r.x - p.x);
+    const intersect = (p1, p2, p3, p4) => (ccw(p1, p3, p4) !== ccw(p2, p3, p4)) && (ccw(p1, p2, p3) !== ccw(p1, p2, p4));
+    const p1 = { x: s.x1, y: s.y1 }, p2 = { x: s.x2, y: s.y2 };
+    const bTL = { x: minX, y: maxY }, bTR = { x: maxX, y: maxY };
+    const bBL = { x: minX, y: minY }, bBR = { x: maxX, y: minY };
+    return intersect(p1, p2, bTL, bTR) || intersect(p1, p2, bTR, bBR) || intersect(p1, p2, bBR, bBL) || intersect(p1, p2, bBL, bTL);
+  }
+
+  function selectInBox(model, box) {
+    const cuts = (model.cutSegments || []).map((s, index) => ({ s, kind: 'cut', index })).filter(item => segmentIntersectsBox(item.s, box));
+    const folds = (model.foldSegments || []).map((s, index) => ({ s, kind: 'fold', index })).filter(item => segmentIntersectsBox(item.s, box));
+    return [...cuts, ...folds];
+  }
+
+  function moveSegments(model, selectedItems, dx, dy) {
+    const m = normalize(model);
+    for (const item of selectedItems) {
+      const seg = list(m, item.kind)[item.index];
+      if (seg) {
+        seg.x1 += dx; seg.y1 += dy; seg.x2 += dx; seg.y2 += dy;
+        delete seg.vectorGroup;
+      }
+    }
+    return m;
+  }
+
+  function copySegments(model, selectedItems, dx, dy) {
+    const m = normalize(model);
+    const group = 'copy-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    for (const item of selectedItems) {
+      const seg = list(m, item.kind)[item.index];
+      if (seg) {
+        list(m, item.kind).push(line(
+          { x: seg.x1 + dx, y: seg.y1 + dy },
+          { x: seg.x2 + dx, y: seg.y2 + dy },
+          { type: item.kind === 'fold' ? 'FOLD' : 'CUT', vectorGroup: group, vectorCreated: true }
+        ));
+      }
+    }
+    return m;
+  }
   function classify(model,ref,kind){
     const m=normalize(model),s=get(m,ref);if(!s)throw Error('Selecciona una línea.');
     if(ref.kind===kind)return m;
@@ -255,5 +301,5 @@
     }
     return engine.enforceFlapLengthLimit(m);
   }
-  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole};
+  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments};
 });

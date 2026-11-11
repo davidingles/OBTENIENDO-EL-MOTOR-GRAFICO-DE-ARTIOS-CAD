@@ -68,3 +68,32 @@ test('VectorCAD: dibujo de asa, mover, copiar y eliminar con medidas exactas', (
   baseH = dieline.faces.find(f => f.pacdoraName === 'H');
   assert.equal(baseH.holes.length, 1, 'Queda exactamente un agujero tras eliminar el otro');
 });
+
+
+test('VectorCAD: selección por rectángulo (trazos dentro o tocados), mover y copiar con eje y distancia', () => {
+  const model = {
+    cutSegments: [
+      { x1: 10, y1: 10, x2: 30, y2: 10, type: 'CUT' }, // Totalmente dentro
+      { x1: 0, y1: 25, x2: 60, y2: 25, type: 'CUT' },  // Cruzando/tocando
+      { x1: 100, y1: 100, x2: 120, y2: 100, type: 'CUT' } // Fuera
+    ],
+    foldSegments: [
+      { x1: 20, y1: 0, x2: 20, y2: 40, type: 'FOLD' }  // Cruzando/tocando
+    ]
+  };
+
+  const box = { minX: 5, maxX: 50, minY: 5, maxY: 35 };
+  const selected = VectorCAD.selectInBox(model, box);
+  assert.equal(selected.length, 3, 'Debe seleccionar los 2 cortes (dentro y cruzando) y el hendido cruzando');
+
+  // Mover en Eje X (+) 25 mm
+  const moved = VectorCAD.moveSegments(model, selected, 25, 0);
+  assert.equal(moved.cutSegments[0].x1, 35);
+  assert.equal(moved.cutSegments[0].x2, 55);
+  assert.equal(moved.cutSegments[2].x1, 100, 'El trazo exterior no debe moverse');
+
+  // Copiar en Eje Y (+) 30 mm
+  const copied = VectorCAD.copySegments(model, selected, 0, 30);
+  assert.equal(copied.cutSegments.length, model.cutSegments.length + 2, 'Debe añadir 2 nuevos cortes duplicados');
+  assert.equal(copied.foldSegments.length, model.foldSegments.length + 1, 'Debe añadir 1 nuevo hendido duplicado');
+});

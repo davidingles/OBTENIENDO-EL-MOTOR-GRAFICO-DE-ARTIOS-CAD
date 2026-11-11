@@ -1526,6 +1526,10 @@
           holeDrag = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, hole };
           return;
         }
+        if (vectorTool === 'select') {
+          boxSelectCandidate = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, e };
+          return;
+        }
         vectorCanvasClick(e);
         return;
       }
@@ -1559,6 +1563,23 @@
         if (dyInput) dyInput.value = dy.toFixed(1);
         render2FDieline();
         return;
+      }
+      if (boxSelectCandidate) {
+        const rawP = vectorWorldPoint(e, canvas);
+        if (Math.hypot(rawP.x - boxSelectCandidate.startX, rawP.y - boxSelectCandidate.startY) > 2) {
+          boxSelect = boxSelectCandidate;
+          boxSelect.curX = rawP.x;
+          boxSelect.curY = rawP.y;
+          const box = {
+            minX: Math.min(boxSelect.startX, boxSelect.curX),
+            maxX: Math.max(boxSelect.startX, boxSelect.curX),
+            minY: Math.min(boxSelect.startY, boxSelect.curY),
+            maxY: Math.max(boxSelect.startY, boxSelect.curY)
+          };
+          boxSelect.selectedItems = VectorCAD.selectInBox(state.dieline, box);
+          render2FDieline();
+          return;
+        }
       }
       if (artworkDrag && state.artwork) {
         const tf=get2DTransform(canvas,state.dieline.bounds),rect=canvas.getBoundingClientRect(),ratio=canvas.width/rect.width;
@@ -1610,6 +1631,28 @@
     window.addEventListener('pointerup', () => {
       state.view2D.isDragging = false;
       artworkDrag = null;
+      if (boxSelect) {
+        const items = boxSelect.selectedItems || [];
+        boxSelect = null;
+        const cand = boxSelectCandidate;
+        boxSelectCandidate = null;
+        if (items.length > 0) {
+          vectorSelection = { type: 'multi', items };
+          vectorRefreshControls();
+          vectorMessage(`${items.length} trazos seleccionados. Introduce distancia y eje, o pulsa Shift + M.`);
+        } else {
+          vectorSelection = null;
+          vectorRefreshControls();
+        }
+        render2FDieline();
+        return;
+      }
+      if (boxSelectCandidate) {
+        const e = boxSelectCandidate.e;
+        boxSelectCandidate = null;
+        vectorCanvasClick(e);
+        return;
+      }
       if (holeDrag) {
         const dx = holeDrag.curX - holeDrag.startX;
         const dy = holeDrag.curY - holeDrag.startY;
@@ -2758,7 +2801,7 @@
 
   // Edits are applied to a private model snapshot until explicitly saved.
   let vectorEditing=false, vectorSelection=null, vectorHistory=[], vectorRedo=[];
-  let vectorTool='select', vectorDraft=null, vectorPointer=null, holeDrag=null;
+  let vectorTool='select', vectorDraft=null, vectorPointer=null, holeDrag=null, boxSelect=null, boxSelectCandidate=null;
   const vectorClone = value => JSON.parse(JSON.stringify(value));
   function vectorInside(p, poly) {
     let inside=false;
@@ -2798,6 +2841,7 @@
     const circleFields = document.getElementById('vector-modal-circle-fields');
     const handleFields = document.getElementById('vector-modal-handle-fields');
     const holeFields = document.getElementById('vector-modal-hole-fields');
+    const boxFields = document.getElementById('vector-modal-box-fields');
     const modalTitle = document.getElementById('vector-modal-title');
 
     if (modal && lineFields && circleFields && handleFields && holeFields) {
@@ -2816,12 +2860,18 @@
       } else if (vectorTool === 'select' && sel?.type === 'hole' && hole) {
         modal.hidden = false;
         modalTitle.textContent = 'Asa / Agujero seleccionado';
-        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = false;
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = false; if (boxFields) boxFields.hidden = true;
         const b = vectorBounds(hole);
         document.getElementById('vector-modal-hole-w').value = (b.maxX - b.minX).toFixed(1);
         document.getElementById('vector-modal-hole-h').value = (b.maxY - b.minY).toFixed(1);
         document.getElementById('vector-hole-dx').value = 0;
         document.getElementById('vector-hole-dy').value = 0;
+      } else if (vectorTool === 'select' && sel?.type === 'multi' && sel?.items?.length) {
+        modal.hidden = false;
+        modalTitle.textContent = 'Mover / Copiar trazos (Shift + M)';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = false;
+        const badge = document.getElementById('vector-box-count-badge');
+        if (badge) badge.textContent = `${sel.items.length} trazos seleccionados`;
       } else {
         modal.hidden = true;
       }
@@ -2970,6 +3020,61 @@
   }
   function drawVectorDraft(ctx,tf,dpr) {
     if (!vectorEditing) return;
+
+    // A. Render live rectangular marquee crossing selection
+    if (boxSelect && Math.hypot(boxSelect.curX - boxSelect.startX, boxSelect.curY - boxSelect.startY) > 2) {
+      const minX = Math.min(boxSelect.startX, boxSelect.curX);
+      const maxX = Math.max(boxSelect.startX, boxSelect.curX);
+      const minY = Math.min(boxSelect.startY, boxSelect.curY);
+      const maxY = Math.max(boxSelect.startY, boxSelect.curY);
+      const sx1 = tf.toScreenX(minX), sy1 = tf.toScreenY(minY);
+      const sx2 = tf.toScreenX(maxX), sy2 = tf.toScreenY(maxY);
+      const bx = Math.min(sx1, sx2), by = Math.min(sy1, sy2);
+      const bw = Math.abs(sx2 - sx1), bh = Math.abs(sy2 - sy1);
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 192, 135, 0.14)';
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeStyle = '#00c087';
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.setLineDash([5 * dpr, 3 * dpr]);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+
+      if (boxSelect.selectedItems?.length) {
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 2.5 * dpr;
+        ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
+        ctx.shadowBlur = 6 * dpr;
+        for (const item of boxSelect.selectedItems) {
+          const s = item.s;
+          ctx.beginPath();
+          ctx.moveTo(tf.toScreenX(s.x1), tf.toScreenY(s.y1));
+          ctx.lineTo(tf.toScreenX(s.x2), tf.toScreenY(s.y2));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // B. Highlight multi-segment selection
+    if (vectorSelection?.type === 'multi' && vectorSelection?.items?.length) {
+      ctx.save();
+      ctx.strokeStyle = '#00e5ff';
+      ctx.lineWidth = 2.8 * dpr;
+      ctx.shadowColor = 'rgba(0, 229, 255, 0.7)';
+      ctx.shadowBlur = 8 * dpr;
+      for (const item of vectorSelection.items) {
+        const seg = (item.kind === 'fold' ? state.dieline.foldSegments : state.dieline.cutSegments)[item.index];
+        if (seg) {
+          ctx.beginPath();
+          ctx.moveTo(tf.toScreenX(seg.x1), tf.toScreenY(seg.y1));
+          ctx.lineTo(tf.toScreenX(seg.x2), tf.toScreenY(seg.y2));
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
 
     // 0. Render dragging hole ghost
     if (holeDrag) {
@@ -3225,7 +3330,60 @@
         vectorMessage('Agujero eliminado.');
       } catch (err) { vectorMessage(err.message || String(err)); }
     };
-    window.addEventListener('keydown',e=>{if(e.key==='Escape'&&vectorEditing){vectorDraft=null;vectorSelection=null;vectorMessage('Operación cancelada.');vectorRefreshControls();}});
+    function applyBoxMoveOrCopy() {
+      if (vectorSelection?.type !== 'multi' || !vectorSelection?.items?.length) {
+        vectorMessage('Selecciona trazos arrastrando un rectángulo primero.');
+        return;
+      }
+      const dist = Number(document.getElementById('vector-box-dist')?.value) || 0;
+      const axis = document.getElementById('vector-box-axis')?.value || 'x_pos';
+      const isCopy = document.getElementById('vector-box-is-copy')?.checked || false;
+      if (dist === 0) { vectorMessage('Introduce una distancia mayor que 0 mm.'); return; }
+      let dx = 0, dy = 0;
+      if (axis === 'x_pos') dx = dist;
+      else if (axis === 'x_neg') dx = -dist;
+      else if (axis === 'y_pos') dy = dist;
+      else if (axis === 'y_neg') dy = -dist;
+
+      try {
+        const count = vectorSelection.items.length;
+        const model = isCopy
+          ? VectorCAD.copySegments(state.dieline, vectorSelection.items, dx, dy)
+          : VectorCAD.moveSegments(state.dieline, vectorSelection.items, dx, dy);
+        vectorSelection = null;
+        commitVectorEdit(model);
+        vectorMessage(isCopy
+          ? `Copia realizada con éxito: ${count} trazos duplicados (ΔX: ${dx} mm, ΔY: ${dy} mm).`
+          : `Trazos desplazados: ${dx} mm en X, ${dy} mm en Y.`);
+        const m = document.getElementById('vector-tool-modal');
+        if (m) m.hidden = true;
+      } catch (err) {
+        vectorMessage(err.message || String(err));
+      }
+    }
+
+    const btnApplyBox = document.getElementById('vector-btn-apply-box');
+    if (btnApplyBox) btnApplyBox.onclick = applyBoxMoveOrCopy;
+
+    const btnCancelBox = document.getElementById('vector-btn-cancel-box');
+    if (btnCancelBox) btnCancelBox.onclick = () => {
+      vectorSelection = null;
+      vectorRefreshControls();
+      const m = document.getElementById('vector-tool-modal');
+      if (m) m.hidden = true;
+    };
+
+    window.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && vectorEditing) {
+        vectorDraft = null; vectorSelection = null; boxSelect = null; boxSelectCandidate = null;
+        vectorMessage('Operación cancelada.');
+        vectorRefreshControls();
+      }
+      if (vectorEditing && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+        e.preventDefault();
+        applyBoxMoveOrCopy();
+      }
+    });
     document.getElementById('vector-apply-kind').onclick=()=>{if(!vectorLine())return;try {const model=VectorCAD.classify(state.dieline,vectorSelection,document.getElementById('vector-kind').value==='fold'?'fold':'cut');vectorSelection=null;commitVectorEdit(model);}catch(error){vectorMessage(error.message);}};
     document.getElementById('vector-apply-hole').onclick=()=>{
       if(vectorSelection?.type!=='hole')return;
