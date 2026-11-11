@@ -1872,6 +1872,71 @@
     return [];
   }
 
+  // Track the three physical directions through orthogonal folds. A width
+  // measured on a lid can therefore drive the side wall's horizontal span.
+  function inferFoldDimensionBands(model, targets) {
+    const faces = new Map(model.faces.map(f => [f.id, f]));
+    const frames = new Map(), edges = new Map();
+    const root = model.rootFaceId ?? model.faces[0]?.id;
+    if (!faces.has(root)) return [];
+    for (const h of model.hinges || []) {
+      if (!h.p1 || !h.p2) continue;
+      const dx=Math.abs(h.p2.x-h.p1.x), dy=Math.abs(h.p2.y-h.p1.y);
+      const angle=Math.abs(h.defaultAngle ?? 90);
+      if (Math.min(dx,dy)>0.05 || Math.max(dx,dy)<1 || Math.abs(angle-90)>1) continue;
+      const a=h.parentFaceId ?? h.parentId ?? h.faceA, b=h.childFaceId ?? h.childId ?? h.faceB;
+      if (!faces.has(a) || !faces.has(b)) continue;
+      for (const [from,to] of [[a,b],[b,a]]) {
+        if (!edges.has(from)) edges.set(from,[]);
+        edges.get(from).push({to, swap:dx>dy?1:0});
+      }
+    }
+    frames.set(root,[0,1,2]);
+    const queue=[root];
+    for (let i=0;i<queue.length;i++) for (const edge of edges.get(queue[i]) || []) {
+      const frame=[...frames.get(queue[i])];
+      [frame[edge.swap],frame[2]]=[frame[2],frame[edge.swap]];
+      if (frames.has(edge.to)) {
+        if (frames.get(edge.to).some((v,j)=>v!==frame[j])) return [];
+      } else { frames.set(edge.to,frame); queue.push(edge.to); }
+    }
+    const labels=new Map();
+    for (const arrow of model.sizeArrowData || []) {
+      if (!['L','W','H'].includes(arrow.lineName) || !arrow.p1 || !arrow.p2) continue;
+      const axis=Math.abs(arrow.p2.y-arrow.p1.y)<0.05?'x':Math.abs(arrow.p2.x-arrow.p1.x)<0.05?'y':null;
+      if (!axis) continue;
+      const lo=axis==='x'?'minX':'minY',hi=axis==='x'?'maxX':'maxY';
+      const cross=axis==='x'?'y':'x',clo=axis==='x'?'minY':'minX',chi=axis==='x'?'maxY':'maxX';
+      const min=Math.min(arrow.p1[axis],arrow.p2[axis]),max=Math.max(arrow.p1[axis],arrow.p2[axis]);
+      const candidates=model.faces.filter(f=>frames.has(f.id) && f.role!=='GLUE_FLAP' &&
+        (arrow.faceId == null || arrow.faceId===f.id) &&
+        Math.abs(f.bounds[lo]-min)<3 && Math.abs(f.bounds[hi]-max)<3 &&
+        arrow.p1[cross]>=f.bounds[clo]-0.1 && arrow.p1[cross]<=f.bounds[chi]+0.1);
+      const dirs=new Set(candidates.map(f=>frames.get(f.id)[axis==='x'?0:1]));
+      if (dirs.size!==1) continue;
+      const dir=[...dirs][0];
+      if (labels.has(dir) && labels.get(dir)!==arrow.lineName) return [];
+      labels.set(dir,arrow.lineName);
+    }
+    if (labels.size!==3 || new Set(labels.values()).size!==3) return [];
+    const dims=model.boxDimensionsMm || {};
+    const original={L:dims.length,W:dims.width,H:dims.depth};
+    const bands=[];
+    for (const f of model.faces) {
+      if (!frames.has(f.id) || f.role==='GLUE_FLAP') continue;
+      for (const [i,axis,lo,hi] of [[0,'x','minX','maxX'],[1,'y','minY','maxY']]) {
+        const label=labels.get(frames.get(f.id)[i]), span=f.bounds[hi]-f.bounds[lo];
+        const reference=original[label];
+        // Keep manufacturing allowances; partial dust flaps and locking tabs
+        // are not promoted to full walls just because they share a direction.
+        if (!(reference>0) || Math.abs(span-reference)>Math.max(6,reference*0.04)) continue;
+        const targetSpan=span+targets[label]-reference;
+        if (targetSpan>1) bands.push({axis,min:f.bounds[lo],max:f.bounds[hi],targetSpan});
+      }
+    }
+    return bands;
+  }
+
   function resizeDielineParametric(baseModel, newL, newW, newH, bandEdit = null) {
     if (!baseModel) return null;
     const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
@@ -1883,6 +1948,7 @@
     const targetH = Math.max(10, Number(newH) || origH);
 
     const sleeveBands = inferSleeveBands(baseModel, {L: targetL, W: targetW});
+    const foldBands = inferFoldDimensionBands(baseModel, {L: targetL, W: targetW, H: targetH});
     if (!sleeveBands.length && !bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
       return enforceFlapLengthLimit(baseModel);
     }
@@ -1962,6 +2028,15 @@
       });
       return [...anchors, ...remaining];
     };
+    // Fold directions replace dimension-by-size guesses wherever resolved.
+    for (const [axis, intervals] of [['x',xIntervals],['y',yIntervals]]) {
+      const inferred=foldBands.filter(b=>b.axis===axis);
+      if (!inferred.length) continue;
+      for (let i=intervals.length-1;i>=0;i--) {
+        if (inferred.some(b=>intervals[i].min<b.max && intervals[i].max>b.min)) intervals.splice(i,1);
+      }
+      intervals.push(...inferred);
+    }
     const anchoredXIntervals = anchorDimensionBands(xIntervals, 'x');
     const anchoredYIntervals = anchorDimensionBands(yIntervals, 'y');
 
@@ -3475,6 +3550,7 @@
     buildDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,
+    inferFoldDimensionBands,
     enforceFlapLengthLimit,
     getSideLocksData,
     applyPartVariationToModel,

@@ -274,3 +274,12 @@ test('Al cambiar el tamaño de un área no se deforman agujeros ni asas', () => 
   const segW = Math.hypot(resized.cutSegments[0].x2 - resized.cutSegments[0].x1, resized.cutSegments[0].y2 - resized.cutSegments[0].y1);
   assert.equal(Math.round(segW), 40, 'Segmento de corte del agujero conserva longitud original');
 });
+
+test('reasignar una cota conserva las dimensiones de referencia para propagar el cambio', () => {
+  const { api } = setupEnvironment();
+  api.state.dieline = createSampleModel();
+  api.state.dieline.boxDimensionsMm = {length:400,width:200,depth:300};
+  api.applyPickedDimensionFace('W',api.state.dieline.faces[1]);
+  assert.equal(api.state.paramW,400);
+  assert.equal(api.state.baseDieline.boxDimensionsMm.width,200);
+});

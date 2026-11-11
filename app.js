@@ -608,7 +608,9 @@
    */
   function persistDimensionAnchors() {
     if (!state.dieline) return;
-    state.dieline.boxDimensionsMm = {length: state.paramL, width: state.paramW, depth: state.paramH};
+    // The reference dimensions describe existing geometry, not the newly
+    // assigned measurement. Replacing them loses the delta for related walls.
+    state.dieline.boxDimensionsMm ||= {length: state.paramL, width: state.paramW, depth: state.paramH};
     state.baseDieline = vectorClone(state.dieline);
     state.parametricDieline = state.dieline;
     // Current geometry already includes local band edits.
