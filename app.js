@@ -1379,12 +1379,13 @@
     root.scale.multiplyScalar(0.001);
     root.position.multiplyScalar(0.001);
     root.userData = { ...root.userData, clientViewer: true, units: 'meters' };
+    const clips = buildBlenderAnimationClips();
     return new Promise((resolve, reject) => {
       try {
         new THREE.GLTFExporter().parse(root, result => {
           if (result instanceof ArrayBuffer) resolve(result);
           else reject(new Error('No se ha podido generar el archivo GLB.'));
-        }, { binary: true, onlyVisible: true, embedImages: true });
+        }, { binary: true, animations: clips, onlyVisible: true, embedImages: true });
       } catch (error) { reject(error); }
     });
   }

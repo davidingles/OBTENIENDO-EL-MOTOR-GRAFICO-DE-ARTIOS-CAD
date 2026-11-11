@@ -19,6 +19,6 @@ context.sample(engine.buildDielineModelFromPacdora(entry.knifeData, entry)).then
   fs.mkdirSync(path.dirname(destination), { recursive: true });
   fs.writeFileSync(destination, Buffer.from(data));
   const json = JSON.parse(Buffer.from(data).subarray(20, 20 + new DataView(data).getUint32(12, true)).toString());
-  if (json.animations?.length) throw new Error('La caja publicada debe conservar la posición actual sin animación de plegado.');
+  if (!json.animations?.length) throw new Error('La caja publicada debe incluir la animación de plegado.');
   console.log('Caja demo exportada con buildClientGLB: ' + data.byteLength + ' bytes');
 }).catch(error => { console.error(error); process.exitCode = 1; });

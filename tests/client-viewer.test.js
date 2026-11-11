@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const { modelFilename } = require('../client-publishing');
 
-function setup(outcome = 'ready') {
+function setup(outcome = 'ready', hasAnimations = false) {
   const elements = new Map();
   class Element {
     constructor() { this.value = ''; this.listeners = {}; this.dataset = {}; this.classList = { add() {}, remove() {} }; this.hidden = false; }
@@ -14,8 +14,20 @@ function setup(outcome = 'ready') {
   const document = { documentElement: new Element(), getElementById(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); } };
   const calls = [];
   class ModelViewer {
-    constructor() { calls.push('construct'); this.autoRotate = true; this.flaps = []; }
-    async loadModel(url, label) { calls.push(url); this.onStatus('loading'); this.contentLabel = label; this.onStatus(outcome, { error: { response: { status: 404 } } }); }
+    constructor() {
+      calls.push('construct');
+      this.autoRotate = true;
+      this.flaps = [];
+      this.isPlayingAnimation = false;
+    }
+    async loadModel(url, label) {
+      calls.push(url);
+      this.onStatus('loading');
+      this.contentLabel = label;
+      this.onStatus(outcome, { hasAnimations, error: { response: { status: 404 } } });
+    }
+    setAnimationProgress(p) { calls.push(['progress', p]); }
+    toggleAnimation() { this.isPlayingAnimation = !this.isPlayingAnimation; calls.push(['toggleAnim', this.isPlayingAnimation]); }
     dispose() { calls.push('dispose'); }
   }
   const source = fs.readFileSync(require('node:path').join(__dirname, '../dist/client-viewer/js/main.js'), 'utf8')
@@ -48,4 +60,17 @@ test('una clave inexistente conserva el formulario y admite otro intento', async
   assert.equal(ui.document.getElementById('client-gate').hidden, false);
   assert.match(ui.document.getElementById('client-status').textContent, /No encontramos/);
   await ui.submit(); assert.equal(ui.calls.length, 3);
+});
+test('si el modelo tiene animación se activa el slider y los controles de plegado', async () => {
+  const ui = setup('ready', true);
+  ui.document.getElementById('client-key').value = 'caja_anim';
+  await ui.submit();
+  const animPanel = ui.document.getElementById('anim-panel');
+  assert.equal(animPanel.hidden, false);
+  const slider = ui.document.getElementById('anim-slider');
+  slider.value = 50;
+  slider.listeners.input();
+  assert.deepEqual(ui.calls.at(-1), ['progress', 0.5]);
+  ui.document.getElementById('btn-anim-play').listeners.click();
+  assert.deepEqual(ui.calls.at(-1), ['toggleAnim', true]);
 });
