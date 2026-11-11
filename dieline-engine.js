@@ -2246,15 +2246,257 @@
     return best;
   }
 
+  
+  function getSideLocksData(model) {
+    if (!model || !model.faces) return null;
+    const hl = model.faces.find(f => f.pacdoraName === 'HL' || f.name?.includes('HL') || f.label?.includes('HL'));
+    const hr = model.faces.find(f => f.pacdoraName === 'HR' || f.name?.includes('HR') || f.label?.includes('HR'));
+    const base = model.faces.find(f => f.pacdoraName === 'H' || (f.role === 'BODY' && f.id === model.rootFaceId));
+    if (!hl || !hr || !base) return null;
+    return { hl, hr, base, spanY: hl.bounds.height, minY: hl.bounds.minY, maxY: hl.bounds.maxY };
+  }
+
+  function applySideLocksVariation(baseModel, params) {
+    const data = getSideLocksData(baseModel);
+    if (!data) {
+      return { ...baseModel, partError: 'Esta variación requiere una caja automontable con solapas laterales (HL/HR).' };
+    }
+
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces.map(f => ({
+        ...f,
+        polygon: f.polygon.map(p => ({ ...p })),
+        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+      })),
+      cutSegments: baseModel.cutSegments.map(s => ({ ...s })),
+      foldSegments: baseModel.foldSegments.map(s => ({ ...s })),
+      hinges: baseModel.hinges.map(h => ({ ...h })),
+      activePartVariation: 'side_locks',
+      partOptions: params
+    };
+
+    const hl = model.faces.find(f => f.id === data.hl.id);
+    const hr = model.faces.find(f => f.id === data.hr.id);
+    const base = model.faces.find(f => f.id === data.base.id);
+
+    const count = params.count || 2;
+    const length = params.length || 36;
+    const distance = params.distance || 80;
+    const radius = params.radius ?? 2.5;
+    const depth = params.depth || 3.8;
+
+    const minY = hl.bounds.minY;
+    const maxY = hl.bounds.maxY;
+    const midY = (minY + maxY) / 2;
+
+    let centers = [];
+    if (count === 1) centers = [midY];
+    else if (count === 2) centers = [midY + distance / 2, midY - distance / 2];
+    else centers = [midY + distance, midY, midY - distance];
+    centers.sort((a, b) => b - a);
+
+    // 1. Reconstruir HL (machos a la izquierda)
+    const xMachoHL = hl.bounds.minX;
+    const xBaseHL = hl.bounds.minX + depth;
+    const xInnerHL = hl.bounds.maxX;
+
+    const newHlPoly = [
+      { x: xInnerHL, y: maxY },
+      { x: xBaseHL, y: maxY }
+    ];
+    for (const cy of centers) {
+      const yTop = cy + length / 2;
+      const yBot = cy - length / 2;
+      const taper = Math.min(1.5, depth);
+      newHlPoly.push({ x: xBaseHL, y: yTop + taper });
+      newHlPoly.push({ x: xMachoHL, y: yTop });
+      newHlPoly.push({ x: xMachoHL, y: yBot });
+      newHlPoly.push({ x: xBaseHL, y: yBot - taper });
+    }
+    newHlPoly.push({ x: xBaseHL, y: minY });
+    newHlPoly.push({ x: xInnerHL, y: minY });
+    hl.polygon = newHlPoly;
+
+    // 2. Reconstruir HR (machos a la derecha)
+    const xMachoHR = hr.bounds.maxX;
+    const xBaseHR = hr.bounds.maxX - depth;
+    const xInnerHR = hr.bounds.minX;
+
+    const newHrPoly = [
+      { x: xInnerHR, y: maxY },
+      { x: xInnerHR, y: minY },
+      { x: xBaseHR, y: minY }
+    ];
+    const centersAsc = centers.slice().sort((a, b) => a - b);
+    for (const cy of centersAsc) {
+      const yBot = cy - length / 2;
+      const yTop = cy + length / 2;
+      const taper = Math.min(1.5, depth);
+      newHrPoly.push({ x: xBaseHR, y: yBot - taper });
+      newHrPoly.push({ x: xMachoHR, y: yBot });
+      newHrPoly.push({ x: xMachoHR, y: yTop });
+      newHrPoly.push({ x: xBaseHR, y: yTop + taper });
+    }
+    newHrPoly.push({ x: xBaseHR, y: maxY });
+    hr.polygon = newHrPoly;
+
+    // 3. Reconstruir ranuras hembra en Base H
+    const xLeft = base.bounds.minX;
+    const xRight = base.bounds.maxX;
+    const yBaseMin = base.bounds.minY;
+    const yBaseMax = base.bounds.maxY;
+    const slotW = 5.0;
+    const r = Math.max(0, Math.min(radius, slotW / 2, length / 4));
+
+    function slotPoints(cx, cy, isLeft) {
+      const yTop = cy + length / 2;
+      const yBot = cy - length / 2;
+      const sign = isLeft ? 1 : -1;
+      const xInner = cx + sign * slotW;
+      const pts = [];
+      if (r < 0.2) {
+        pts.push({ x: cx, y: yTop });
+        pts.push({ x: xInner, y: yTop });
+        pts.push({ x: xInner, y: yBot });
+        pts.push({ x: cx, y: yBot });
+        return pts;
+      }
+      pts.push({ x: cx, y: yTop });
+      for (let i = 0; i <= 4; i++) {
+        const a = (i / 4) * (Math.PI / 2);
+        pts.push({ x: xInner - sign * r + sign * Math.sin(a) * r, y: yTop - r + Math.cos(a) * r });
+      }
+      pts.push({ x: xInner, y: yBot + r });
+      for (let i = 0; i <= 4; i++) {
+        const a = (i / 4) * (Math.PI / 2);
+        pts.push({ x: xInner - sign * r + sign * Math.cos(a) * r, y: yBot + r - Math.sin(a) * r });
+      }
+      pts.push({ x: cx, y: yBot });
+      return pts;
+    }
+
+    const rightSlotPoints = [];
+    for (const cy of centersAsc) {
+      const yBot = cy - length / 2;
+      const yTop = cy + length / 2;
+      rightSlotPoints.push({ x: xRight, y: yBot });
+      rightSlotPoints.push(...slotPoints(xRight, cy, false));
+      rightSlotPoints.push({ x: xRight, y: yTop });
+    }
+
+    const leftSlotPoints = [];
+    for (const cy of centers) {
+      const yTop = cy + length / 2;
+      const yBot = cy - length / 2;
+      leftSlotPoints.push({ x: xLeft, y: yTop });
+      leftSlotPoints.push(...slotPoints(xLeft, cy, true));
+      leftSlotPoints.push({ x: xLeft, y: yBot });
+    }
+
+    base.polygon = [
+      { x: xLeft, y: yBaseMin },
+      { x: xRight, y: yBaseMin },
+      ...rightSlotPoints,
+      { x: xRight, y: yBaseMax },
+      { x: xLeft, y: yBaseMax },
+      ...leftSlotPoints
+    ];
+
+    // 4. Actualizar cortes y hendidos
+    model.cutSegments = model.cutSegments.filter(s => {
+      if (s.x1 <= xBaseHL + 0.5 && s.x2 <= xBaseHL + 0.5 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      if (s.x1 >= xBaseHR - 0.5 && s.x2 >= xBaseHR - 0.5 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      if (Math.abs(s.x1 - xLeft) < slotW + 1 && Math.abs(s.x2 - xLeft) < slotW + 1 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      if (Math.abs(s.x1 - xRight) < slotW + 1 && Math.abs(s.x2 - xRight) < slotW + 1 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      return true;
+    });
+
+    model.foldSegments = model.foldSegments.filter(s => {
+      if (Math.abs(s.x1 - xLeft) < 1 && Math.abs(s.x2 - xLeft) < 1 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      if (Math.abs(s.x1 - xRight) < 1 && Math.abs(s.x2 - xRight) < 1 && s.y1 >= minY - 2 && s.y2 <= maxY + 2) return false;
+      return true;
+    });
+
+    const addCutLine = (p1, p2) => {
+      if (Math.hypot(p2.x - p1.x, p2.y - p1.y) > 0.05) {
+        model.cutSegments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, type: 'CUT', isPartMod: true });
+      }
+    };
+    const addFoldLine = (p1, p2) => {
+      if (Math.hypot(p2.x - p1.x, p2.y - p1.y) > 0.05) {
+        model.foldSegments.push({ x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, type: 'FOLD', isPartMod: true });
+      }
+    };
+
+    // Cortes de HL
+    for (let i = 1; i < newHlPoly.length - 1; i++) addCutLine(newHlPoly[i], newHlPoly[i + 1]);
+    // Cortes de HR
+    for (let i = 2; i < newHrPoly.length; i++) addCutLine(newHrPoly[i], newHrPoly[(i + 1) % newHrPoly.length]);
+
+    // Cortes y pliegues en ranuras izquierda
+    const sortedYLeft = [yBaseMax];
+    for (const cy of centers) {
+      const yTop = cy + length / 2;
+      const yBot = cy - length / 2;
+      sortedYLeft.push(yTop, yBot);
+      const pts = [{ x: xLeft, y: yTop }, ...slotPoints(xLeft, cy, true), { x: xLeft, y: yBot }];
+      for (let i = 0; i < pts.length - 1; i++) addCutLine(pts[i], pts[i + 1]);
+      addCutLine({ x: xLeft, y: yTop }, { x: xLeft, y: yBot });
+    }
+    sortedYLeft.push(yBaseMin);
+    for (let i = 0; i < sortedYLeft.length; i += 2) {
+      addFoldLine({ x: xLeft, y: sortedYLeft[i] }, { x: xLeft, y: sortedYLeft[i + 1] });
+    }
+
+    // Cortes y pliegues en ranuras derecha
+    const sortedYRight = [yBaseMin];
+    for (const cy of centersAsc) {
+      const yBot = cy - length / 2;
+      const yTop = cy + length / 2;
+      sortedYRight.push(yBot, yTop);
+      const pts = [{ x: xRight, y: yBot }, ...slotPoints(xRight, cy, false), { x: xRight, y: yTop }];
+      for (let i = 0; i < pts.length - 1; i++) addCutLine(pts[i], pts[i + 1]);
+      addCutLine({ x: xRight, y: yBot }, { x: xRight, y: yTop });
+    }
+    sortedYRight.push(yBaseMax);
+    for (let i = 0; i < sortedYRight.length; i += 2) {
+      addFoldLine({ x: xRight, y: sortedYRight[i] }, { x: xRight, y: sortedYRight[i + 1] });
+    }
+
+    // Recalcular bounds
+    for (const face of [hl, hr, base]) {
+      const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
+      face.bounds = { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+      face.bbox = { ...face.bounds };
+    }
+
+    return model;
+  }
+
   function getPartVariationSettings(model, key, options = {}) {
-    const edge = getPartEdge(model);
-    if (!edge) return {params:{}, limits:{}};
     const clamp = (value, min, max, fallback) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : fallback));
     const limits = {}, params = {};
     const field = (name, min, max, fallback) => {
       limits[name] = {min, max:Math.max(min, max)};
       params[name] = +clamp(options[name], min, limits[name].max, Math.round(fallback*2)/2).toFixed(3);
     };
+
+    if (key === 'side_locks') {
+      const data = getSideLocksData(model);
+      const span = data ? data.spanY : 100;
+      params.count = [1, 2, 3].includes(Number(options.count)) ? Number(options.count) : 2;
+      field('length', 10, Math.max(10, span * 0.4), 36);
+      const maxDist = params.count === 3 ? Math.max(15, (span - params.length - 8) / 2) : Math.max(15, span - params.length - 8);
+      const defDist = params.count === 3 ? Math.min(45, maxDist * 0.8) : Math.min(80, maxDist * 0.8);
+      field('distance', 10, maxDist, defDist);
+      field('radius', 0, 5, 2.5);
+      field('depth', 2, 8, 3.8);
+      return {params, limits};
+    }
+
+    const edge = getPartEdge(model);
+    if (!edge) return {params:{}, limits:{}};
     if (key === 'handle') {
       field('length', 4, edge.length-8, 86);
       field('width', 3, edge.depth-8, 22);
@@ -2278,6 +2520,10 @@
   function applyPartVariationToModel(baseModel, partKey, options = {}) {
     if (!baseModel || !partKey || partKey === 'standard') return baseModel;
     if (partKey === 'tear_strip') return applyLegacyPartVariation(baseModel, partKey);
+    if (partKey === 'side_locks') {
+      const {params} = getPartVariationSettings(baseModel, partKey, options);
+      return applySideLocksVariation(baseModel, params);
+    }
     const edge = getPartEdge(baseModel);
     if (!edge) return baseModel;
     const {params} = getPartVariationSettings(baseModel, partKey, options);
@@ -2890,6 +3136,7 @@
     buildDielineModelFromPacdora,
     resizeDielineParametric,
     enforceFlapLengthLimit,
+    getSideLocksData,
     applyPartVariationToModel,
     getPartVariationSettings,
     findPrimaryLidFlapFace,

@@ -2184,15 +2184,23 @@
         card.classList.add('active');
         state.activePart = partKey;
         applyCurrentPartVariation();
-        if (['handle', 'thumb_notch', 'tab_lock'].includes(partKey)) openPartOptions(partKey);
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks'].includes(partKey)) openPartOptions(partKey);
       });
 
       card.addEventListener('mouseenter', () => {
-        if (state.dieline && DielineEngine.findPrimaryLidFlapFace) {
-          const flap = DielineEngine.findPrimaryLidFlapFace(state.dieline);
-          if (flap) {
-            state.partHoverFaceId = flap.id;
-            render2FDieline();
+        if (state.dieline) {
+          if (partKey === 'side_locks') {
+            const data = DielineEngine.getSideLocksData ? DielineEngine.getSideLocksData(state.dieline) : null;
+            if (data) {
+              state.partHoverFaceId = data.hl.id;
+              render2FDieline();
+            }
+          } else if (DielineEngine.findPrimaryLidFlapFace) {
+            const flap = DielineEngine.findPrimaryLidFlapFace(state.dieline);
+            if (flap) {
+              state.partHoverFaceId = flap.id;
+              render2FDieline();
+            }
           }
         }
       });
@@ -2452,9 +2460,10 @@
     const fields = document.getElementById('part-options-fields');
     if (!dialog || !fields || !state.parametricDieline) return;
     fields.replaceChildren();
-    const titles = {handle:'Asa', thumb_notch:'Uñero', tab_lock:'Pestaña de cierre'};
-    document.getElementById('part-options-title').textContent = titles[key];
+    const titles = {handle:'Asa', thumb_notch:'Uñero', tab_lock:'Pestaña de cierre', side_locks:'Machos y hembras'};
+    document.getElementById('part-options-title').textContent = titles[key] || 'Variación de pieza';
     const controls = new Map();
+    if (!state.partParams[key]) state.partParams[key] = {};
     let settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, state.partParams[key]);
     state.partParams[key] = {...settings.params};
     const sync = () => {
@@ -2462,9 +2471,18 @@
       state.partParams[key] = {...settings.params};
       for (const [name, control] of controls) {
         const limit = settings.limits[name];
-        if (limit) for (const input of [control.number, control.slider]) { input.min=limit.min; input.max=limit.max; input.value=settings.params[name]; }
-        else control.number.value = settings.params[name];
-        control.row.hidden = name === 'distance' && settings.params.count !== 2;
+        if (limit) {
+          for (const input of [control.number, control.slider]) {
+            if (input) {
+              input.min = limit.min;
+              input.max = limit.max;
+              input.value = settings.params[name];
+            }
+          }
+        } else if (control.number) {
+          control.number.value = settings.params[name];
+        }
+        control.row.hidden = name === 'distance' && Number(settings.params.count) < 2;
       }
     };
     const change = (name, value) => {
@@ -2479,24 +2497,36 @@
       ? [['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)']]
       : key === 'thumb_notch'
         ? [['count','Número de uñeros'],['radius','Radio del uñero (mm)'],['distance','Distancia entre centros (mm)']]
-        : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
+        : key === 'side_locks'
+          ? [['count','Número de encastres'],['length','Largo del macho / hembra (mm)'],['distance','Distancia entre centros (mm)'],['radius','Radio de las esquinas (mm)'],['depth','Saliente del macho (mm)']]
+          : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
     for (const [name, label] of definitions) {
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;
       let number, slider;
       if (name === 'count') {
         number = document.createElement('select');
-        for (const [value,text] of [[1,'Uno'],[2,'Dos']]) { const option=document.createElement('option');option.value=value;option.textContent=text;number.appendChild(option); }
+        const countOptions = key === 'side_locks'
+          ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
+          : [[1, 'Uno'], [2, 'Dos']];
+        for (const [value, text] of countOptions) {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = text;
+          number.appendChild(option);
+        }
+        number.value = settings.params.count || countOptions[0][0];
         number.addEventListener('change', () => change(name, number.value));
         row.append(title, number);
       } else {
-        number = document.createElement('input'); number.type='number';number.step='0.5';number.setAttribute('aria-label',label);
-        slider = document.createElement('input'); slider.type='range';slider.step='0.5';slider.setAttribute('aria-label',label+' · deslizador');
-        number.addEventListener('input', () => {if (number.value !== '') change(name, number.value);});
+        number = document.createElement('input'); number.type = 'number'; number.step = '0.5'; number.setAttribute('aria-label', label);
+        slider = document.createElement('input'); slider.type = 'range'; slider.step = '0.5'; slider.setAttribute('aria-label', label + ' · deslizador');
+        number.addEventListener('input', () => { if (number.value !== '') change(name, number.value); });
         slider.addEventListener('input', () => change(name, slider.value));
-        row.append(title,number,slider);
+        row.append(title, number, slider);
       }
-      controls.set(name,{row,number,slider});fields.appendChild(row);
+      controls.set(name, {row, number, slider});
+      fields.appendChild(row);
     }
     sync();
     document.getElementById('part-options-status').textContent = state.dieline.partError || 'Cambios en tiempo real en el plano y el 3D.';
