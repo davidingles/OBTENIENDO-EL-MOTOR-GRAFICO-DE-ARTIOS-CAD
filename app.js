@@ -466,7 +466,7 @@
   }
 
   function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false) {
-    model = DielineEngine.enforceFlapLengthLimit(VectorCAD.normalize(model));
+    model = DielineEngine.reconcileDimensionMeasurements(DielineEngine.enforceFlapLengthLimit(VectorCAD.normalize(model)));
     vectorSelection = null; vectorDraft=null; vectorRedo=[];
     vectorHistory = [];
     clearTimeout(livePacdoraTimer);
@@ -673,7 +673,9 @@
     state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart, state.partParams[state.activePart]);
     state.solverAvailable = true;
     state.solverPending = false;
-    document.getElementById('param-sync-status').textContent = 'Cálculo local · medidas estimadas';
+    document.getElementById('param-sync-status').textContent = resized.dimensionErrors?.length
+      ? 'Hay medidas sin resolver: las cotas muestran la geometría real.'
+      : 'Cálculo local · medidas estimadas';
     updateDielineInfoUI(state.dieline);
     rebuild3DMesh();
     setMasterFold(state.masterFold);
@@ -2231,7 +2233,7 @@
           // Texto de medida (mm)
           const mx = (sx1 + sx2) * 0.5;
           const my = (sy1 + sy2) * 0.5;
-          const valNum = Number(sa.lineLength) || Math.hypot(sa.p2.x - sa.p1.x, sa.p2.y - sa.p1.y);
+          const valNum = DielineEngine.measureDimensionArrow(sa);
           const prefix = (['L', 'W', 'H'].includes(sa.lineName)) ? `${sa.lineName}=` : '';
           const valDisp = `${prefix}${valNum.toFixed(1)} mm`;
 
@@ -3314,7 +3316,7 @@
 
     if (type === 'Libre') {
       if (vectorSelection?.type === 'dimension' && !['L', 'W', 'H'].includes(vectorSelection.arrow?.lineName)) {
-        if (badge) badge.textContent = `Cota libre: ${(Number(vectorSelection.arrow.lineLength) || 0).toFixed(1)} mm`;
+        if (badge) badge.textContent = `Cota libre: ${(DielineEngine.measureDimensionArrow(vectorSelection.arrow)).toFixed(1)} mm`;
       } else {
         vectorSelection = null;
         if (badge) badge.textContent = 'Cota libre (distancia informativa)';
@@ -3324,7 +3326,7 @@
       const arrow = (state.dieline?.sizeArrowData || []).find(a => a.lineName === type);
       if (arrow) {
         vectorSelection = { type: 'dimension', arrow };
-        if (badge) badge.textContent = `Cota ${type}: ${(Number(arrow.lineLength) || 0).toFixed(1)} mm`;
+        if (badge) badge.textContent = `Cota ${type}: ${(DielineEngine.measureDimensionArrow(arrow)).toFixed(1)} mm`;
         if (hint) hint.textContent = `Cota ${type} seleccionada. Pulsa 'Borrar cota' para eliminarla o 'Añadir cota' para redibujarla.`;
       } else {
         vectorSelection = null;
@@ -3388,7 +3390,7 @@
           const badge = document.getElementById('vector-dim-val-badge');
           if (sel?.type === 'dimension' && sel?.arrow) {
             const nameStr = sel.arrow.lineName ? ` [${sel.arrow.lineName}]` : '';
-            if (badge) badge.textContent = `Cota: ${(Number(sel.arrow.lineLength) || 0).toFixed(1)} mm${nameStr}`;
+            if (badge) badge.textContent = `Cota: ${(DielineEngine.measureDimensionArrow(sel.arrow)).toFixed(1)} mm${nameStr}`;
           }
         }
       } else if (vectorTool === 'select' && sel?.type === 'hole' && hole) {
@@ -4167,7 +4169,7 @@
       const arrow = vectorSelection.arrow;
       arrow.lineName = code;
       arrow.isMain = true;
-      const val = Number(arrow.lineLength) || (code === 'L' ? state.paramL : code === 'W' ? state.paramW : state.paramH);
+      const val = DielineEngine.measureDimensionArrow(arrow);
       if (code === 'L') {
         state.paramL = +val.toFixed(1);
         const lInp = document.getElementById('input-length');

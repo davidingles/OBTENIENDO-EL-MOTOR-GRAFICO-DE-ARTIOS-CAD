@@ -1983,6 +1983,39 @@
     return h.planarSlope ?? dx/dy;
   }
 
+  // A dimension is a measurement of two geometric anchors. Requested solver
+  // values must never override it, even when a constraint could not be satisfied.
+  function measureDimensionArrow(arrow) {
+    if(!arrow?.p1 || !arrow?.p2)return 0;
+    return Math.hypot(arrow.p2.x-arrow.p1.x,arrow.p2.y-arrow.p1.y);
+  }
+
+  function reconcileDimensionMeasurements(model) {
+    if(!model)return model;
+    const arrows=list=>(list || []).map(a=>{
+      if(!a.p1 || !a.p2)return a;
+      const lineLength=measureDimensionArrow(a);
+      const prefix=['L','W','H'].includes(a.lineName)?a.lineName+'=':'';
+      return {...a,lineLength,tpointer:a.tpointer?{...a.tpointer,value:prefix+lineLength.toFixed(1)+' mm'}:a.tpointer};
+    });
+    const sizeArrowData=arrows(model.sizeArrowData), dims=model.boxDimensionsMm || {};
+    const requested={L:dims.length,W:dims.width,H:dims.depth};
+    const dimensionErrors=sizeArrowData.filter(a=>Number.isFinite(requested[a.lineName]) &&
+      Math.abs(a.lineLength-requested[a.lineName])>0.1).map(a=>({dimension:a.lineName,requested:requested[a.lineName],measured:a.lineLength}));
+    return {...model,sizeArrowData,outsideArrowData:arrows(model.outsideArrowData),dimensionErrors};
+  }
+
+  // Move every stroke belonging to an internal feature with the SAME rigid
+  // transform as its hole. In particular, a handle crease must not use the wall warp.
+  function rigidFeatureForSegment(s, translations) {
+    return translations.find(t=>{
+      const xs=t.points.map(p=>p.x),ys=t.points.map(p=>p.y);
+      const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys),eps=0.2;
+      return [s.x1,s.x2].every(x=>x>=minX-eps&&x<=maxX+eps) &&
+        [s.y1,s.y2].every(y=>y>=minY-eps&&y<=maxY+eps);
+    });
+  }
+
   function resizeDielineParametric(baseModel, newL, newW, newH, bandEdit = null) {
     if (!baseModel) return null;
     const origL = Math.max(5, baseModel.boxDimensionsMm?.length || 200);
@@ -1996,7 +2029,7 @@
     const sleeveBands = inferSleeveBands(baseModel, {L: targetL, W: targetW});
     const foldBands = inferFoldDimensionBands(baseModel, {L: targetL, W: targetW, H: targetH});
     if (!sleeveBands.length && !bandEdit && Math.abs(targetL - origL) < 0.05 && Math.abs(targetW - origW) < 0.05 && Math.abs(targetH - origH) < 0.05) {
-      return enforceFlapLengthLimit(baseModel);
+      return reconcileDimensionMeasurements(enforceFlapLengthLimit(baseModel));
     }
 
     const xIntervals = [];
@@ -2160,7 +2193,7 @@
     const isPointInHole = (pt, holePts) => holePts.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < 0.2);
     let totalCutLengthMm = 0;
     const newCutSegments = (baseModel.cutSegments || []).map(s => {
-      let matchedTrans = null;
+      let matchedTrans = rigidFeatureForSegment(s,holeTranslations);
       for (const trans of holeTranslations) {
         if (isPointInHole({ x: s.x1, y: s.y1 }, trans.points) && isPointInHole({ x: s.x2, y: s.y2 }, trans.points)) {
           matchedTrans = trans;
@@ -2181,15 +2214,17 @@
 
     let totalFoldLengthMm = 0;
     const newFoldSegments = (baseModel.foldSegments || []).map(s => {
-      const x1 = warpX(s.x1), y1 = warpY(s.y1);
-      const x2 = warpX(s.x2), y2 = warpY(s.y2);
+      const feature=rigidFeatureForSegment(s,holeTranslations);
+      const x1 = feature?s.x1+feature.dx:warpX(s.x1), y1 = feature?s.y1+feature.dy:warpY(s.y1);
+      const x2 = feature?s.x2+feature.dx:warpX(s.x2), y2 = feature?s.y2+feature.dy:warpY(s.y2);
       totalFoldLengthMm += Math.hypot(x2 - x1, y2 - y1);
       return { ...s, x1, y1, x2, y2 };
     });
 
     const newHinges = (baseModel.hinges || []).map(h => {
-      const p1 = { x: warpX(h.p1.x), y: warpY(h.p1.y) };
-      const p2 = { x: warpX(h.p2.x), y: warpY(h.p2.y) };
+      const feature=rigidFeatureForSegment({x1:h.p1.x,y1:h.p1.y,x2:h.p2.x,y2:h.p2.y},holeTranslations);
+      const p1 = { x: feature?h.p1.x+feature.dx:warpX(h.p1.x), y: feature?h.p1.y+feature.dy:warpY(h.p1.y) };
+      const p2 = { x: feature?h.p2.x+feature.dx:warpX(h.p2.x), y: feature?h.p2.y+feature.dy:warpY(h.p2.y) };
       const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
       return {
         ...h,
@@ -2211,21 +2246,19 @@
     }));
 
     const warpArrowList = (arr) => (arr || []).map(sa => {
-      const p1 = sa.p1 ? { x: warpX(sa.p1.x), y: warpY(sa.p1.y) } : null;
-      const p2 = sa.p2 ? { x: warpX(sa.p2.x), y: warpY(sa.p2.y) } : null;
+      const feature=sa.p1&&sa.p2?rigidFeatureForSegment({x1:sa.p1.x,y1:sa.p1.y,x2:sa.p2.x,y2:sa.p2.y},holeTranslations):null;
+      const map=p=>feature?{x:p.x+feature.dx,y:p.y+feature.dy}:{x:warpX(p.x),y:warpY(p.y)};
+      const p1 = sa.p1 ? map(sa.p1) : null;
+      const p2 = sa.p2 ? map(sa.p2) : null;
       const tpointer = sa.tpointer ? { ...sa.tpointer, x: warpX(sa.tpointer.x), y: warpY(sa.tpointer.y) } : null;
-      let lineLength = sa.lineLength;
-      if (sa.lineName === 'L') lineLength = targetL;
-      else if (sa.lineName === 'W') lineLength = targetW;
-      else if (sa.lineName === 'H') lineLength = targetH;
-      else if (p1 && p2) lineLength = +Math.hypot(p2.x - p1.x, p2.y - p1.y).toFixed(1);
+      const lineLength = p1 && p2 ? Math.hypot(p2.x-p1.x,p2.y-p1.y) : sa.lineLength;
       return { ...sa, p1, p2, tpointer, lineLength };
     });
 
     const blankW = Math.max(1, maxX - minX);
     const blankH = Math.max(1, maxY - minY);
 
-    return enforceFlapLengthLimit({
+    return reconcileDimensionMeasurements(enforceFlapLengthLimit({
       ...baseModel,
       blankWidthMm: blankW,
       blankHeightMm: blankH,
@@ -2255,7 +2288,7 @@
       bleedSegments: newBleedSegments,
       faces: newFaces,
       hinges: newHinges
-    });
+    }));
   }
 
   // These four end flaps must fit across half the width of the main H panel.
@@ -3482,7 +3515,8 @@
         });
       }
     }
-    return arrows;
+    return arrows.map(a=>{const lineLength=measureDimensionArrow(a);return {...a,lineLength,
+      tpointer:a.tpointer?{...a.tpointer,value:a.lineName+'='+lineLength.toFixed(1)+' mm'}:a.tpointer};});
   }
 
   function generateOutsideArrowData(model) {
@@ -3581,7 +3615,7 @@
     if (!Array.isArray(model.outsideArrowData) || !model.outsideArrowData.length) {
       model.outsideArrowData = generateOutsideArrowData(model);
     }
-    return model;
+    return reconcileDimensionMeasurements(model);
   }
 
   function buildDielineModel(svgText) {
@@ -3649,6 +3683,8 @@
     buildDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,
+    measureDimensionArrow,
+    reconcileDimensionMeasurements,
     inferFoldDimensionBands,
     enforceFlapLengthLimit,
     getSideLocksData,
