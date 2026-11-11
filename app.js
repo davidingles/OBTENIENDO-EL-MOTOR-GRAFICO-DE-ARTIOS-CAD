@@ -134,9 +134,30 @@
   let vectorRedo = [];
   const vectorClone = value => JSON.parse(JSON.stringify(value));
 
+  function captureUndoState() {
+    return vectorClone({model: state.dieline, parameters: {
+      baseDieline: state.baseDieline, parametricDieline: state.parametricDieline,
+      paramL: state.paramL, paramW: state.paramW, paramH: state.paramH,
+      openParamsValues: state.openParamsValues, activePart: state.activePart,
+      partParams: state.partParams, boardId: state.boardId, caliper: state.caliper,
+      hingeAngles: state.hingeAngles, masterFold: state.masterFold
+    }});
+  }
+
+  function restoreUndoState(snapshot) {
+    displayVectorModel(snapshot.model);
+    Object.assign(state, snapshot.parameters);
+    syncParametricInputsUI({boxDimensionsMm: {
+      length: state.paramL, width: state.paramW, depth: state.paramH
+    }});
+    setMasterFold(state.masterFold);
+    vectorRefreshControls();
+    render2FDieline();
+  }
+
   function recordUndoState() {
     if (!state.dieline) return;
-    vectorHistory.push(vectorClone(state.dieline));
+    vectorHistory.push(captureUndoState());
     if (vectorHistory.length > 50) vectorHistory.shift();
     vectorRedo = [];
     if (typeof vectorRefreshControls === 'function') vectorRefreshControls();
@@ -147,11 +168,11 @@
       if (typeof vectorMessage === 'function') vectorMessage('No hay más cambios para deshacer.');
       return;
     }
-    vectorRedo.push(vectorClone(state.dieline));
+    vectorRedo.push(captureUndoState());
     vectorDraft = null;
     vectorSelection = null;
     const prev = vectorHistory.pop();
-    displayVectorModel(prev);
+    restoreUndoState(prev);
     if (typeof vectorMessage === 'function') vectorMessage('Cambio deshecho (Ctrl + Z).');
   }
 
@@ -160,11 +181,11 @@
       if (typeof vectorMessage === 'function') vectorMessage('No hay más cambios para rehacer.');
       return;
     }
-    vectorHistory.push(vectorClone(state.dieline));
+    vectorHistory.push(captureUndoState());
     vectorDraft = null;
     vectorSelection = null;
     const next = vectorRedo.pop();
-    displayVectorModel(next);
+    restoreUndoState(next);
     if (typeof vectorMessage === 'function') vectorMessage('Cambio rehecho (Ctrl + Alt + Z).');
   }
 
@@ -179,7 +200,10 @@
   }
 
   window.addEventListener('keydown', (e) => {
-    const isInput = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT');
+    if (e.defaultPrevented) return;
+    const target = e.target;
+    const isInput = target && (target.isContentEditable || target.tagName === 'TEXTAREA' ||
+      (target.tagName === 'INPUT' && !['number', 'range', 'button', 'checkbox', 'radio'].includes(target.type || 'text')));
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
       if (isInput) return;
       e.preventDefault();
@@ -193,7 +217,7 @@
       e.preventDefault();
       handleRedo();
     }
-  });
+  }, {capture: true});
 
   // ============================================================================
   // INICIALIZACIÓN
@@ -620,6 +644,8 @@
   function applyParametricResizeRealTime(newL, newW, newH) {
     if (!state.baseDieline) return;
     if(state.dieline?.vector3DStale){document.getElementById('param-sync-status').textContent='Cierra el contorno antes de cambiar las medidas.';return;}
+    const incoming = [newL,newW,newH].map((v,i) => Math.max(15, Math.min(2000, Number(v) || [state.paramL,state.paramW,state.paramH][i])));
+    if (state.dieline && incoming.some((v,i) => v !== [state.paramL,state.paramW,state.paramH][i])) recordUndoState();
     state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
     state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
     state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
@@ -1593,6 +1619,7 @@
   // ============================================================================
   function applyPickedDimensionFace(dimKey, face) {
     if (!state.dieline || !face || !face.bounds) return;
+    recordUndoState();
     const b = face.bounds;
     let val = 0;
     if (dimKey === 'H') {
@@ -3468,6 +3495,7 @@
           vectorMessage('La cota es demasiado pequeña.');
           return;
         }
+        recordUndoState();
         const isMain = ['L', 'W', 'H'].includes(dimType);
         const newArrow = {
           id: 'user_dim_' + Date.now() + '_' + Math.random().toString(36).slice(2),
@@ -3881,7 +3909,7 @@
   }
   function commitVectorEdit(model) {
     model=VectorCAD.rebuild(model,DielineEngine);
-    vectorHistory.push(vectorClone(state.dieline));if(vectorHistory.length>30)vectorHistory.shift();vectorRedo=[];
+    recordUndoState();
     displayVectorModel(model);
     vectorMessage(model.vectorWarning||'Cambio aplicado. Exporta o guarda en la biblioteca.');
   }
@@ -4074,6 +4102,7 @@
           }
         }
       } else if (vectorSelection.type === 'dimension' && vectorSelection.arrow) {
+        recordUndoState();
         const targetArrow = vectorSelection.arrow;
         if (Array.isArray(state.dieline?.sizeArrowData)) {
           state.dieline.sizeArrowData = state.dieline.sizeArrowData.filter(a => a !== targetArrow && (targetArrow.id == null || a.id !== targetArrow.id));
@@ -4134,6 +4163,7 @@
         vectorMessage('Selecciona una cota primero.');
         return;
       }
+      recordUndoState();
       const arrow = vectorSelection.arrow;
       arrow.lineName = code;
       arrow.isMain = true;

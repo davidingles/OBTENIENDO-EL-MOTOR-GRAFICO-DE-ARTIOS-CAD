@@ -4,7 +4,7 @@ const fs = require('node:fs'), vm = require('node:vm');
 const engine = require('../dieline-engine'), UserLibrary = require('../library-models'), VectorCAD = require('../vector-cad');
 
 function setupEnvironment() {
-  const els = new Map(), storage = new Map();
+  const els = new Map(), storage = new Map(), keyHandlers = [];
   const el = id => {
     if (!els.has(id)) {
       els.set(id, {
@@ -46,7 +46,7 @@ function setupEnvironment() {
     performance,
     prompt: () => 'Test',
     window: {
-      addEventListener() {},
+      addEventListener(type, handler) { if (type === 'keydown') keyHandlers.push(handler); },
       localStorage: { getItem: k => storage.get(k) || null, setItem: (k, v) => storage.set(k, v) }
     },
     document: {
@@ -63,6 +63,7 @@ function setupEnvironment() {
       rebuild3DMesh=()=>{};setMasterFold=()=>{};buildHingeSlidersUI=()=>{};render2FDieline=()=>{};
       globalThis.api = {
         state,
+        recordUndoState,
         applyPickedDimensionFace,
         hitTestArrow,
         setVectorTool,
@@ -75,7 +76,7 @@ function setupEnvironment() {
       };
     })();`);
   vm.runInContext(source, ctx);
-  return { api: ctx.api, el };
+  return { api: ctx.api, el, keyHandlers };
 }
 
 function createSampleModel() {
@@ -282,4 +283,31 @@ test('reasignar una cota conserva las dimensiones de referencia para propagar el
   api.applyPickedDimensionFace('W',api.state.dieline.faces[1]);
   assert.equal(api.state.paramW,400);
   assert.equal(api.state.baseDieline.boxDimensionsMm.width,200);
+});
+
+
+test('Ctrl+Z y rehacer restauran geometría y parámetros con foco en números', () => {
+  const {api,el,keyHandlers}=setupEnvironment();
+  api.state.dieline=createSampleModel();
+  api.state.baseDieline=createSampleModel();
+  api.state.paramL=400; api.state.paramW=200; api.state.paramH=300;
+  api.state.openParamsValues={};
+  api.recordUndoState();
+  api.state.dieline.faces[0].bounds.width=150;
+  api.state.paramW=150;
+  const fire=(key,target,extra={})=>{
+    let prevented=false;
+    for(const handler of keyHandlers) handler({key,ctrlKey:true,target,preventDefault(){prevented=true;},...extra});
+    return prevented;
+  };
+  assert.equal(fire('z',{tagName:'INPUT',type:'number'}),true);
+  assert.equal(api.state.dieline.faces[0].bounds.width,200);
+  assert.equal(api.state.paramW,200);
+  assert.equal(el('input-width').value,200);
+  assert.equal(fire('z',{tagName:'INPUT',type:'number'},{shiftKey:true}),true);
+  assert.equal(api.state.dieline.faces[0].bounds.width,150);
+  assert.equal(api.state.paramW,150);
+  assert.equal(fire('z',{tagName:'TEXTAREA'}),false);
+  assert.equal(fire('z',{tagName:'DIV',isContentEditable:true}),false);
+  assert.equal(api.state.paramW,150);
 });
