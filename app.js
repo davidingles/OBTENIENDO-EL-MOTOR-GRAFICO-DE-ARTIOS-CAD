@@ -1993,8 +1993,14 @@
     // 5. Dibujar Flechas y Cotas (L, W, H) en Azul estilo Pacdora (Screenshot 1 & 2)
     if (state.showDimensions && state.view2D.showCota) {
       const showDetailDimensions = state.activeTab === 'details';
-      const availableArrows = (showDetailDimensions && Array.isArray(model.outsideArrowData) && model.outsideArrowData.length > 0)
-        ? model.outsideArrowData
+      if (showDetailDimensions && (!model.outsideArrowData || !model.outsideArrowData.length)) {
+        model.outsideArrowData = DielineEngine.generateOutsideArrowData(model);
+      }
+      if (!model.sizeArrowData || !model.sizeArrowData.length) {
+        model.sizeArrowData = DielineEngine.generateSizeArrowData(model);
+      }
+      const availableArrows = showDetailDimensions
+        ? (model.outsideArrowData && model.outsideArrowData.length ? model.outsideArrowData : (model.sizeArrowData || []))
         : (Array.isArray(model.sizeArrowData) ? model.sizeArrowData : []);
       const arrowList = showDetailDimensions
         ? availableArrows
@@ -2020,29 +2026,36 @@
 
           // Puntas de flecha
           const ang = Math.atan2(sy2 - sy1, sx2 - sx1);
-          const headLen = 6 * dpr;
-          const drawHead = (hx, hy, a) => {
-            ctx.beginPath();
-            ctx.moveTo(hx, hy);
-            ctx.lineTo(hx - headLen * Math.cos(a - Math.PI / 6), hy - headLen * Math.sin(a - Math.PI / 6));
-            ctx.lineTo(hx - headLen * Math.cos(a + Math.PI / 6), hy - headLen * Math.sin(a + Math.PI / 6));
-            ctx.closePath();
-            ctx.fill();
-          };
-          drawHead(sx1, sy1, ang + Math.PI);
-          drawHead(sx2, sy2, ang);
+          const len = Math.hypot(sx2 - sx1, sy2 - sy1);
+          const headLen = Math.min(6 * dpr, len * 0.25);
+          if (len > 10 * dpr) {
+            const drawHead = (hx, hy, a) => {
+              ctx.beginPath();
+              ctx.moveTo(hx, hy);
+              ctx.lineTo(hx - headLen * Math.cos(a - Math.PI / 6), hy - headLen * Math.sin(a - Math.PI / 6));
+              ctx.lineTo(hx - headLen * Math.cos(a + Math.PI / 6), hy - headLen * Math.sin(a + Math.PI / 6));
+              ctx.closePath();
+              ctx.fill();
+            };
+            drawHead(sx1, sy1, ang + Math.PI);
+            drawHead(sx2, sy2, ang);
+          }
 
-          // Texto de medida (mm o in)
+          // Texto de medida (mm)
           const mx = (sx1 + sx2) * 0.5;
           const my = (sy1 + sy2) * 0.5;
           const valNum = Number(sa.lineLength) || Math.hypot(sa.p2.x - sa.p1.x, sa.p2.y - sa.p1.y);
-          const valDisp = `${valNum.toFixed(1)} mm`;
+          const prefix = (!showDetailDimensions && ['L', 'W', 'H'].includes(sa.lineName)) ? `${sa.lineName}=` : '';
+          const valDisp = `${prefix}${valNum.toFixed(1)} mm`;
 
           ctx.font = `600 ${Math.round(10.5 * dpr)}px "Inter", system-ui, sans-serif`;
           const tw = ctx.measureText(valDisp).width;
           ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
           ctx.fillRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
-          ctx.fillStyle = '#38bdf8';
+          ctx.strokeStyle = '#0284c7';
+          ctx.lineWidth = 0.8 * dpr;
+          ctx.strokeRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
+          ctx.fillStyle = '#0284c7';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(valDisp, mx, my);

@@ -113,3 +113,30 @@ test('las exportaciones por defecto no incluyen sangrado', () => {
   assert.doesNotMatch(engine.exportDielineToDXF(base), /BLEED/);
   assert.doesNotMatch(engine.exportDielineToPDF(base), /0\.133 0\.773 0\.369 RG/);
 });
+
+test('un SVG nuevo sin cotas genera medidas principales (sizeArrowData L, W, H) y acota todas las áreas en outsideArrowData', () => {
+  const sampleSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" width="1000mm" height="600mm">
+      <rect x="0" y="0" width="1000" height="600" fill="none" stroke="#00a0e9" stroke-width="1" />
+      <line x1="300" y1="0" x2="300" y2="600" stroke="#e6007e" stroke-width="1" />
+      <line x1="500" y1="0" x2="500" y2="600" stroke="#e6007e" stroke-width="1" />
+      <line x1="800" y1="0" x2="800" y2="600" stroke="#e6007e" stroke-width="1" />
+    </svg>
+  `;
+  const m = engine.buildDielineModel(sampleSvg);
+
+  assert.ok(Array.isArray(m.sizeArrowData) && m.sizeArrowData.length >= 3, 'Debe generar cotas L, W, H');
+  const names = m.sizeArrowData.map(a => a.lineName);
+  assert.ok(names.includes('L'), 'Contiene cota de Largo L');
+  assert.ok(names.includes('W'), 'Contiene cota de Ancho W');
+  assert.ok(names.includes('H'), 'Contiene cota de Alto H');
+
+  assert.ok(Array.isArray(m.outsideArrowData) && m.outsideArrowData.length > 0, 'Debe generar cotas para la sección de Detalles');
+  // Cada una de las 4 áreas debe tener cotas de ancho y alto
+  for (const face of m.faces) {
+    const hasW = m.outsideArrowData.some(a => a.faceId === face.id && a.dimensionType === 'width');
+    const hasH = m.outsideArrowData.some(a => a.faceId === face.id && a.dimensionType === 'height');
+    assert.ok(hasW, `El área ${face.id} debe tener cota de ancho`);
+    assert.ok(hasH, `El área ${face.id} debe tener cota de alto`);
+  }
+});

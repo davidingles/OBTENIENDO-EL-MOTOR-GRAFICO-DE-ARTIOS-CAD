@@ -3096,6 +3096,217 @@
     b.colorHex = parseInt((b.outerColor || '#c69c6d').replace('#', '0x'), 16);
   }
 
+  function generateSizeArrowData(model) {
+    if (!model || !Array.isArray(model.faces) || !model.faces.length) return [];
+    let dims = model.boxDimensionsMm;
+    if (!dims || !Number.isFinite(dims.length) || !Number.isFinite(dims.width)) {
+      dims = dimensionsFromBase(model, model.rootFaceId) || { length: 200, width: 150, depth: 100 };
+    }
+    const L = +Number(dims.length || 200).toFixed(1);
+    const W = +Number(dims.width || 150).toFixed(1);
+    const H = +Number(dims.depth || 100).toFixed(1);
+
+    const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
+    const arrows = [];
+
+    if (bodyFaces.length >= 2) {
+      const fL = bodyFaces.find(f => Math.abs(f.bounds.width - L) < 3) || bodyFaces[0];
+      const fW = bodyFaces.find(f => Math.abs(f.bounds.width - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
+
+      // Flecha L (Largo)
+      const yL = fL.bounds.minY + fL.bounds.height * 0.5;
+      arrows.push({
+        lineName: 'L',
+        lineLength: L,
+        p1: { x: fL.bounds.minX, y: yL },
+        p2: { x: fL.bounds.maxX, y: yL },
+        tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
+      });
+
+      // Flecha W (Ancho)
+      const yW = fW.bounds.minY + fW.bounds.height * 0.5;
+      arrows.push({
+        lineName: 'W',
+        lineLength: W,
+        p1: { x: fW.bounds.minX, y: yW },
+        p2: { x: fW.bounds.maxX, y: yW },
+        tpointer: { x: (fW.bounds.minX + fW.bounds.maxX) * 0.5, y: yW, value: 'W=' + W }
+      });
+
+      // Flecha H (Alto)
+      const xH = fL.bounds.minX + Math.min(30, fL.bounds.width * 0.2);
+      arrows.push({
+        lineName: 'H',
+        lineLength: H,
+        p1: { x: xH, y: fL.bounds.minY },
+        p2: { x: xH, y: fL.bounds.maxY },
+        tpointer: { x: xH, y: (fL.bounds.minY + fL.bounds.maxY) * 0.5, value: 'H=' + H }
+      });
+    } else {
+      const baseFace = model.faces.find(f => f.id === model.rootFaceId) || model.faces[0];
+      const yL = baseFace.bounds.minY + baseFace.bounds.height * 0.5;
+      arrows.push({
+        lineName: 'L',
+        lineLength: L,
+        p1: { x: baseFace.bounds.minX, y: yL },
+        p2: { x: baseFace.bounds.maxX, y: yL },
+        tpointer: { x: (baseFace.bounds.minX + baseFace.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
+      });
+
+      const xW = baseFace.bounds.minX + baseFace.bounds.width * 0.5;
+      arrows.push({
+        lineName: 'W',
+        lineLength: W,
+        p1: { x: xW, y: baseFace.bounds.minY },
+        p2: { x: xW, y: baseFace.bounds.maxY },
+        tpointer: { x: xW, y: (baseFace.bounds.minY + baseFace.bounds.maxY) * 0.5, value: 'W=' + W }
+      });
+
+      let wallFace = null;
+      for (const h of model.hinges || []) {
+        if (h.parentFaceId === baseFace.id || h.childFaceId === baseFace.id) {
+          const otherId = h.parentFaceId === baseFace.id ? h.childFaceId : h.parentFaceId;
+          const other = model.faces.find(f => f.id === otherId);
+          if (other && (other.bounds.width > 5 || other.bounds.height > 5)) {
+            wallFace = other;
+            break;
+          }
+        }
+      }
+      if (wallFace) {
+        const isHorizWall = wallFace.bounds.width > wallFace.bounds.height;
+        if (isHorizWall) {
+          const xH = wallFace.bounds.minX + wallFace.bounds.width * 0.5;
+          arrows.push({
+            lineName: 'H',
+            lineLength: H,
+            p1: { x: xH, y: wallFace.bounds.minY },
+            p2: { x: xH, y: wallFace.bounds.maxY },
+            tpointer: { x: xH, y: (wallFace.bounds.minY + wallFace.bounds.maxY) * 0.5, value: 'H=' + H }
+          });
+        } else {
+          const yH = wallFace.bounds.minY + wallFace.bounds.height * 0.5;
+          arrows.push({
+            lineName: 'H',
+            lineLength: H,
+            p1: { x: wallFace.bounds.minX, y: yH },
+            p2: { x: wallFace.bounds.maxX, y: yH },
+            tpointer: { x: (wallFace.bounds.minX + wallFace.bounds.maxX) * 0.5, y: yH, value: 'H=' + H }
+          });
+        }
+      } else {
+        const xH = baseFace.bounds.maxX + 15;
+        arrows.push({
+          lineName: 'H',
+          lineLength: H,
+          p1: { x: xH, y: baseFace.bounds.minY },
+          p2: { x: xH, y: baseFace.bounds.minY + H },
+          tpointer: { x: xH, y: baseFace.bounds.minY + H * 0.5, value: 'H=' + H }
+        });
+      }
+    }
+    return arrows;
+  }
+
+  function generateOutsideArrowData(model) {
+    if (!model || !Array.isArray(model.faces) || !model.faces.length) return [];
+    const arrows = [];
+    for (const f of model.faces) {
+      if (!f.bounds || f.bounds.width < 1 || f.bounds.height < 1) continue;
+      const b = f.bounds;
+      const w = +b.width.toFixed(2);
+      const h = +b.height.toFixed(2);
+      const label = f.name || f.label || `Área ${f.id}`;
+
+      // Cota horizontal (Ancho del área)
+      const yW = b.height > 16 ? b.minY + b.height * 0.70 : (b.minY + b.maxY) * 0.5;
+      arrows.push({
+        faceId: f.id,
+        faceName: label,
+        dimensionType: 'width',
+        lineName: `${f.id}_W`,
+        lineLength: w,
+        p1: { x: b.minX, y: yW },
+        p2: { x: b.maxX, y: yW },
+        tpointer: { x: (b.minX + b.maxX) * 0.5, y: yW, value: `${w.toFixed(1)}` }
+      });
+
+      // Cota vertical (Alto del área)
+      const xH = b.width > 16 ? b.minX + b.width * 0.30 : (b.minX + b.maxX) * 0.5;
+      arrows.push({
+        faceId: f.id,
+        faceName: label,
+        dimensionType: 'height',
+        lineName: `${f.id}_H`,
+        lineLength: h,
+        p1: { x: xH, y: b.minY },
+        p2: { x: xH, y: b.maxY },
+        tpointer: { x: xH, y: (b.minY + b.maxY) * 0.5, value: `${h.toFixed(1)}` }
+      });
+
+      // Huecos y asas interiores
+      if (Array.isArray(f.holes) && f.holes.length) {
+        for (let hi = 0; hi < f.holes.length; hi++) {
+          const hole = f.holes[hi];
+          if (!hole || hole.length < 3) continue;
+          const xs = hole.map(p => p.x), ys = hole.map(p => p.y);
+          const hMinX = Math.min(...xs), hMaxX = Math.max(...xs);
+          const hMinY = Math.min(...ys), hMaxY = Math.max(...ys);
+          const hw = +(hMaxX - hMinX).toFixed(2), hh = +(hMaxY - hMinY).toFixed(2);
+          if (hw < 1 || hh < 1) continue;
+          const midY = (hMinY + hMaxY) * 0.5, midX = (hMinX + hMaxX) * 0.5;
+
+          arrows.push({
+            faceId: f.id,
+            holeIndex: hi,
+            dimensionType: 'hole_width',
+            lineName: `hole_${f.id}_${hi}_W`,
+            lineLength: hw,
+            p1: { x: hMinX, y: midY },
+            p2: { x: hMaxX, y: midY },
+            tpointer: { x: midX, y: midY, value: `${hw.toFixed(1)}` }
+          });
+
+          arrows.push({
+            faceId: f.id,
+            holeIndex: hi,
+            dimensionType: 'hole_height',
+            lineName: `hole_${f.id}_${hi}_H`,
+            lineLength: hh,
+            p1: { x: midX, y: hMinY },
+            p2: { x: midX, y: hMaxY },
+            tpointer: { x: midX, y: midY, value: `${hh.toFixed(1)}` }
+          });
+        }
+      }
+    }
+    return arrows;
+  }
+
+  function ensureDielineDimensions(model) {
+    if (!model) return model;
+    if (!model.boxDimensionsMm) {
+      const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
+      if (bodyFaces.length >= 2) {
+        const bodyWidths = bodyFaces.map(f => f.bounds.width);
+        const L = Math.max(...bodyWidths);
+        const W = Math.min(...bodyWidths);
+        const H = bodyFaces[0].bounds.height;
+        model.boxDimensionsMm = { length: +L.toFixed(2), width: +W.toFixed(2), depth: +H.toFixed(2) };
+      } else {
+        model.boxDimensionsMm = dimensionsFromBase(model, model.rootFaceId);
+      }
+    }
+
+    if (!Array.isArray(model.sizeArrowData) || !model.sizeArrowData.length) {
+      model.sizeArrowData = generateSizeArrowData(model);
+    }
+    if (!Array.isArray(model.outsideArrowData) || !model.outsideArrowData.length) {
+      model.outsideArrowData = generateOutsideArrowData(model);
+    }
+    return model;
+  }
+
   function buildDielineModel(svgText) {
     const parsed = parseSVGDieline(svgText);
     const sub = buildPlanarSubdivision(parsed);
@@ -3128,7 +3339,7 @@
       };
     });
 
-    return {
+    const model = {
       ...sub,
       isPacdoraModel: false,
       calibration: {
@@ -3150,6 +3361,8 @@
       hinges,
       rootFaceId: sub.rootFaceId
     };
+
+    return ensureDielineDimensions(enforceFlapLengthLimit(model));
   }
 
   return {
@@ -3167,6 +3380,9 @@
     findSymmetricFace,
     rerootDielineModel,
     dimensionsFromBase,
+    generateSizeArrowData,
+    generateOutsideArrowData,
+    ensureDielineDimensions,
     getOrBuildBleedSegments,
     exportDielineToSVG,
     exportDielineToDXF,
