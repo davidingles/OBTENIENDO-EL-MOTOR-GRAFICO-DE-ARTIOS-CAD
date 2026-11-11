@@ -12,9 +12,9 @@
 
   const kraftBoard = DielineEngine.ARTIOS_BOARDS.find(b => b.id === 'M-125B');
   const MATERIAL_FINISHES = [
-    {...kraftBoard, id: 'WHITE-WHITE', name: 'Blanco por fuera y por dentro', surfaceTex: 'WhiteBoard3.JPG', innerTex: 'WhiteBoard3.JPG', colorHex: 0xffffff, innerColorHex: 0xffffff},
-    {...kraftBoard, id: 'W-175B', name: 'Blanco por fuera y marrón por dentro', surfaceTex: 'WhiteBoard3.JPG', colorHex: 0xffffff, innerColorHex: 0xcfa778},
-    {...kraftBoard, name: 'Marrón por fuera y por dentro', innerColorHex: 0xcfa778}
+    {...kraftBoard, id: 'WHITE-WHITE', name: 'Blanco por fuera y por dentro', surfaceTex: null, innerTex: null, colorHex: 0xffffff, innerColorHex: 0xffffff},
+    {...kraftBoard, id: 'W-175B', name: 'Blanco por fuera y marrón por dentro', surfaceTex: null, innerTex: null, colorHex: 0xffffff, innerColorHex: 0xcfa778},
+    {...kraftBoard, id: 'M-125B', name: 'Marrón por fuera y por dentro', surfaceTex: null, innerTex: null, colorHex: 0xcfa778, innerColorHex: 0xcfa778}
   ];
 
   function resolveMaterialFinish(id) {
@@ -363,51 +363,49 @@
     if (state.artwork && artworkImage) refreshArtworkAtlas(state.dieline);
     const board = resolveMaterialFinish(state.boardId);
 
-    const surfaceTex = getArtiosTexture(board.surfaceTex, 1, 1);
-    const innerTex = getArtiosTexture(board.innerTex || board.surfaceTex, 1, 1);
-    const edgeTex = getArtiosTexture('corrugado.png', 1, 1);
-
-    // 1. Material Cara Exterior (con vertexColors activado para sombrear la fibra comprimida en el hendido)
+    // 1. Material Cara Exterior:
+    // Color liso (marrón liso o blanco liso) sin texturas. Si el usuario sube una imagen, se mapea la textura del arte.
     matOuterFace = new THREE.MeshStandardMaterial({
       name: 'Carton_Cara_Exterior',
-      map: state.customArtworkTex ? state.customArtworkTex : surfaceTex,
+      map: state.customArtworkTex ? state.customArtworkTex : null,
       color: state.customArtworkTex ? 0xffffff : board.colorHex,
-      vertexColors: true,
-      roughness: state.customArtworkTex ? 0.55 : 0.80,
-      metalness: 0.03,
+      vertexColors: false,
+      roughness: state.customArtworkTex ? 0.55 : 0.85,
+      metalness: 0.0,
       wireframe: state.showWireframe
     });
 
-    // 2. Material Cara Interior (con vertexColors activado para sombrear el canal chafado interior)
+    // 2. Material Cara Interior:
+    // Color liso (blanco o marrón) sin texturas
     matInnerFace = new THREE.MeshStandardMaterial({
       name: 'Carton_Cara_Interior',
-      map: innerTex,
+      map: null,
       color: board.innerColorHex,
-      vertexColors: true,
-      roughness: 0.84,
-      metalness: 0.02,
+      vertexColors: false,
+      roughness: 0.85,
+      metalness: 0.0,
       wireframe: state.showWireframe
     });
 
-    // 3. Material del Canto Cortado (Muestra las ondas/flautas reales del cartón corrugado)
+    // 3. Material del Canto Cortado (color liso, sin corrugado)
     matCutEdge = new THREE.MeshStandardMaterial({
-      name: 'Carton_Canto_Corrugado',
-      map: edgeTex,
-      color: 0xffffff,
-      vertexColors: true,
-      roughness: 0.78,
-      metalness: 0.02,
+      name: 'Carton_Canto_Cortado',
+      map: null,
+      color: board.innerColorHex || board.colorHex || 0xcfa778,
+      vertexColors: false,
+      roughness: 0.90,
+      metalness: 0.0,
       wireframe: state.showWireframe
     });
 
-    // 4. Material del Núcleo Comprimido de la Bisagra en z = 0
-    const baseCol = new THREE.Color(board.colorHex).multiplyScalar(0.76);
+    // 4. Material del Núcleo Comprimido de la Bisagra en z = 0 (color liso)
+    const baseCol = new THREE.Color(board.colorHex).multiplyScalar(0.85);
     matCreaseCore = new THREE.MeshStandardMaterial({
       name: 'Carton_Hendido_Nucleo',
-      map: surfaceTex,
+      map: null,
       color: baseCol,
-      roughness: 0.88,
-      metalness: 0.01,
+      roughness: 0.90,
+      metalness: 0.0,
       wireframe: state.showWireframe
     });
 
@@ -4901,14 +4899,11 @@
     const layout=state.artwork;
     ctx.translate(layout.centerX,layout.centerY);ctx.rotate(layout.rotation*Math.PI/180);ctx.scale(layout.mirrorX?-1:1,layout.mirrorY?-1:1);
     ctx.globalAlpha=layout.opacity??1;ctx.drawImage(artworkImage,-layout.width/2,-layout.height/2,layout.width,layout.height);ctx.restore();
-    const textureCtx=artworkTextureCanvas.getContext('2d'),board=resolveMaterialFinish(state.boardId);
-    textureCtx.fillStyle='#'+board.colorHex.toString(16).padStart(6,'0');textureCtx.fillRect(0,0,width,height);
-    const boardImage=getArtiosTexture(board.surfaceTex).image;
-    if(boardImage?.width&&boardImage?.height){
-      const tileX=130*width/bounds.width,tileY=130*height/bounds.height;
-      for(let y=0;y<height;y+=tileY)for(let x=0;x<width;x+=tileX)textureCtx.drawImage(boardImage,x,y,tileX,tileY);
-    }
-    textureCtx.drawImage(artworkCanvas,0,0);
+    const textureCtx = artworkTextureCanvas.getContext('2d'), board = resolveMaterialFinish(state.boardId);
+    textureCtx.fillStyle = '#' + board.colorHex.toString(16).padStart(6, '0');
+    textureCtx.fillRect(0, 0, width, height);
+    // Color liso de fondo sin texturas de cartón repetitivas; solo la imagen del arte encima
+    textureCtx.drawImage(artworkCanvas, 0, 0);
     if(!state.customArtworkTex){
       state.customArtworkTex=new THREE.CanvasTexture(artworkTextureCanvas);
       state.customArtworkTex.encoding=THREE.sRGBEncoding;
@@ -4994,7 +4989,7 @@
     const texEl = document.getElementById('board-tex-info');
     if (fluteEl) fluteEl.textContent = `Onda ${board.flute} (${board.grammage} g/m²)`;
     if (lossEl) lossEl.textContent = `-${board.insideLoss} / +${board.outsideGain} mm`;
-    if (texEl) texEl.textContent = `${board.surfaceTex} + ${board.edgeTex}`;
+    if (texEl) texEl.textContent = board.surfaceTex ? `${board.surfaceTex} + ${board.edgeTex}` : 'Color liso';
   }
 
   function updateDielineInfoUI(model) {

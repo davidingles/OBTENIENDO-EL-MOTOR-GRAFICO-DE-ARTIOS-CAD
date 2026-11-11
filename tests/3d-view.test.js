@@ -183,14 +183,28 @@ test('cada vista 3D de catálogo usa las caras y bisagras de su propio modelo', 
 test('hay tres acabados y el blanco interior conserva textura y color blancos', () => {
   const ui = app();
   assert.equal(ui.MATERIAL_FINISHES.length, 3);
-  const expected = [['WhiteBoard3.JPG', 'WhiteBoard3.JPG'], ['WhiteBoard3.JPG', 'boardbrown.jpg'], ['boardbrown.jpg', 'boardbrown.jpg']];
   ui.MATERIAL_FINISHES.forEach((finish, index) => {
     ui.state.boardId = finish.id;
     const materials = ui.realBuildBoardMaterials();
-    assert.equal(materials[0].map.name, expected[index][0]);
-    assert.equal(materials[1].map.name, expected[index][1]);
-    if (index === 0) assert.equal(materials[1].color.getHex(), 0xffffff);
+    // En 3D solo se usa marrón liso o blanco liso (sin texturas repetitivas como boardbrown o corrugado)
+    assert.equal(materials[0].map, null);
+    assert.equal(materials[1].map, null);
+    if (index === 0) {
+      assert.equal(materials[0].color.getHex(), 0xffffff);
+      assert.equal(materials[1].color.getHex(), 0xffffff);
+    } else if (index === 1) {
+      assert.equal(materials[0].color.getHex(), 0xffffff);
+      assert.equal(materials[1].color.getHex(), 0xcfa778);
+    } else {
+      assert.equal(materials[0].color.getHex(), 0xcfa778);
+      assert.equal(materials[1].color.getHex(), 0xcfa778);
+    }
   });
+  // Si el usuario usa una imagen, se aplica en la cara exterior
+  const fakeTex = new THREE.Texture();
+  ui.state.customArtworkTex = fakeTex;
+  const artMaterials = ui.realBuildBoardMaterials();
+  assert.equal(artMaterials[0].map, fakeTex);
   assert.equal(ui.resolveMaterialFinish('M-SBS-400').id, 'WHITE-WHITE');
   assert.equal(ui.resolveMaterialFinish('M-125E').id, 'M-125B');
 });
