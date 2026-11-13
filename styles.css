@@ -1549,6 +1549,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .btn-outline { background: #fff; border-color: #dce3eb; border-radius: 9px; padding: 8px 12px; }
 .btn-primary-blue { background: #0788c6; border-color: #0788c6; border-radius: 9px; box-shadow: 0 3px 10px rgba(0,120,180,.17); }
 .btn-primary-blue:hover { background: #0073ae; }
+.btn-primary-blue.btn-plotter-red { background: #dc2626; border-color: #dc2626; box-shadow: 0 3px 10px rgba(220,38,38,.2); }
+.btn-primary-blue.btn-plotter-red:hover { background: #b91c1c; border-color: #b91c1c; }
 .drawer-card { box-shadow: 5px 0 20px rgba(29,45,65,.045); }
 .rail-tab-btn:hover { background: #edf3f8; color: #145c84; }
 .rail-tab-btn.active { color: #007ebd; background: #e4f3fb; }
