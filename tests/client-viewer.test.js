@@ -30,8 +30,8 @@ function setup(outcome = 'ready', hasAnimations = false) {
     toggleAnimation() { this.isPlayingAnimation = !this.isPlayingAnimation; calls.push(['toggleAnim', this.isPlayingAnimation]); }
     dispose() { calls.push('dispose'); }
   }
-  const source = fs.readFileSync(require('node:path').join(__dirname, '../dist/client-viewer/js/main.js'), 'utf8')
-    .replace(/^import .*;\r?\n/gm, '').replace("import('./viewer.js')", 'Promise.resolve({ModelViewer})');
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../revision-publicacion/visor/main.js'), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '').replace(/import\('\.\/viewer\.js(?:\?[^']*)?'\)/, 'Promise.resolve({ModelViewer})');
   const ctx = { document, window: { addEventListener() {} }, modelFilename, CONFIG: {}, ModelViewer, HTMLInputElement: Element, HTMLButtonElement: Element, setTimeout, clearTimeout, Date, console };
   vm.runInNewContext(source, ctx);
   return { calls, elements, document, submit: () => document.getElementById('client-form').listeners.submit({ preventDefault() {} }) };

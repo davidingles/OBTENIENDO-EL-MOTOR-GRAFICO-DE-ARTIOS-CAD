@@ -1243,39 +1243,19 @@
 
   /**
    * Calcula el ángulo objetivo (en grados) de una bisagra para un valor maestro t en [0, 1].
-   * La pestaña de pegado (GLUE_FLAP) rota ligeramente más de 90° alrededor de su eje central (z = 0)
-   * para alojarse detrás de la Cara Cuerpo 4 usando rotación pura sobre el centro del espesor.
+   * Cada área móvil termina a 90° respecto a su padre, sin sobreplegado.
    */
   function computeHingeAngleAtProgress(hinge, childFace, progressT, sequenceMode) {
-    // Si el modelo proviene del catálogo FEFCO / Pacdora y tiene pasos de animación exactos (animSteps),
-    // reproducir su secuencia cinemática multicapa (incluyendo pliegues de 120° -> -30° en fondos automáticos)
+    // Preserve catalog timing and fold direction, but enforce a quarter turn.
     if (sequenceMode === 'phased' && hinge.animSteps && hinge.animSteps.length > 0) {
-      let angleSum = 0;
-      for (const st of hinge.animSteps) {
-        if (progressT <= st.start) continue;
-        if (progressT >= st.end) {
-          angleSum += st.deltaDeg;
-        } else {
-          const raw = (progressT - st.start) / Math.max(1e-5, st.end - st.start);
-          const clamped = Math.max(0, Math.min(1, raw));
-          const smooth = clamped * clamped * (3 - 2 * clamped);
-          angleSum += st.deltaDeg * smooth;
-        }
-      }
-      return +angleSum.toFixed(2);
+      const start = Math.min(...hinge.animSteps.map(step => step.start));
+      const end = Math.max(...hinge.animSteps.map(step => step.end));
+      const direction = Math.sign(hinge.animSteps.reduce((sum, step) => sum + step.deltaDeg, 0)) || Math.sign(hinge.defaultAngle) || 1;
+      const t = Math.max(0, Math.min(1, (progressT-start)/Math.max(1e-5, end-start)));
+      return +(direction*90*t*t*(3-2*t)).toFixed(2);
     }
 
-    let maxDeg = hinge.defaultAngle !== undefined ? hinge.defaultAngle : 90;
-    if (!state.dieline?.isPacdoraModel && childFace) {
-      if (childFace.role === 'GLUE_FLAP') {
-        const extraDeg = THREE.MathUtils.radToDeg(Math.atan2(state.caliper * 1.02, Math.max(8, childFace.bounds.width * 0.55)));
-        maxDeg = 90 + extraDeg;
-      } else if (childFace.role === 'FLAP_INNER_TOP' || childFace.role === 'FLAP_INNER_BOTTOM') {
-        const clearance = Math.max(0.25, state.caliper - 1.75);
-        const extraFlapDeg = THREE.MathUtils.radToDeg(Math.atan2(clearance, Math.max(20, childFace.bounds.height * 0.65)));
-        maxDeg = 90 + extraFlapDeg;
-      }
-    }
+    const maxDeg = (Math.sign(hinge.defaultAngle) || 1) * 90;
 
     let localT = progressT;
     if (sequenceMode === 'phased' && childFace) {
@@ -1442,6 +1422,128 @@
     return [clipFold, clipCycle];
   }
 
+  function buildSingleMeshExport() {
+    // One rigidly weighted mesh and a hierarchical bone for each fold axis.
+    // Bind in the flat rest pose, then animate local bone rotations only.
+    const source = dielineRootGroup.clone(true);
+    source.traverse(object => { if (object.userData?.isCADHelper) object.visible = false; });
+    const pivots = Array.from(pivotMap.values(), data => ({...data, object:source.getObjectByName(data.pivotGroup.name)}));
+    for (const data of pivots) data.object.quaternion.identity();
+    const baseBone = new THREE.Bone();
+    baseBone.name = 'Base_Troquel';
+    baseBone.position.copy(source.position).multiplyScalar(.001);
+    baseBone.quaternion.copy(source.quaternion);
+    baseBone.scale.copy(source.scale);
+    const bones = [baseBone], boneByPivot = new Map(), boneIndex = new Map([[baseBone, 0]]);
+    for (const data of pivots) {
+      const bone = new THREE.Bone();
+      bone.name = data.object.name;
+      bone.position.copy(data.object.position).multiplyScalar(.001);
+      boneByPivot.set(data.object, bone);
+      boneIndex.set(bone, bones.length);
+      bones.push(bone);
+    }
+    function parentBone(object) {
+      for (let parent=object.parent; parent && parent!==source; parent=parent.parent) {
+        if (boneByPivot.has(parent)) return boneByPivot.get(parent);
+      }
+      return baseBone;
+    }
+    for (const data of pivots) parentBone(data.object).add(boneByPivot.get(data.object));
+    source.updateMatrixWorld(true);
+    const parts = [], materials = [], materialIds = new Map();
+    let vertexCount = 0;
+    source.traverseVisible(object => {
+      if (!object.isMesh || !object.geometry?.attributes.position) return;
+      parts.push({object, offset: vertexCount});
+      vertexCount += object.geometry.attributes.position.count;
+    });
+    if (!vertexCount) throw new Error('El troquel no contiene una malla exportable.');
+    const positions = new Float32Array(vertexCount * 3);
+    const normals = new Float32Array(vertexCount * 3);
+    const uvs = new Float32Array(vertexCount * 2);
+    const colors = new Float32Array(vertexCount * 3);
+    const skinIndices = new Uint16Array(vertexCount * 4);
+    const skinWeights = new Float32Array(vertexCount * 4);
+    const materialIndices = [];
+    for (const {object, offset} of parts) {
+      const geometry = object.geometry, count = geometry.attributes.position.count;
+      const uv = geometry.attributes.uv, color = geometry.attributes.color;
+      for (let i = 0; i < count; i++) {
+        skinIndices[(offset+i)*4] = boneIndex.get(parentBone(object));
+        skinWeights[(offset+i)*4] = 1;
+        uvs[(offset+i)*2] = uv ? uv.getX(i) : 0;
+        uvs[(offset+i)*2+1] = uv ? uv.getY(i) : 0;
+        colors[(offset+i)*3] = color ? color.getX(i) : 1;
+        colors[(offset+i)*3+1] = color ? color.getY(i) : 1;
+        colors[(offset+i)*3+2] = color ? color.getZ(i) : 1;
+      }
+      const slots = Array.isArray(object.material) ? object.material : [object.material];
+      const groups = Array.isArray(object.material) ? geometry.groups : [{start:0, count:geometry.index?.count ?? count, materialIndex:0}];
+      for (const group of groups) {
+        const material = slots[group.materialIndex];
+        if (!material) continue;
+        if (!materialIds.has(material)) {
+          materialIds.set(material, materials.length);
+          const copy = material.clone();
+          copy.skinning = true;
+          materials.push(copy); materialIndices.push([]);
+        }
+        const indices = materialIndices[materialIds.get(material)];
+        for (let i = group.start; i < group.start + group.count; i++) {
+          indices.push(offset + (geometry.index ? geometry.index.getX(i) : i));
+        }
+      }
+    }
+    const point = new THREE.Vector3(), normalMatrix = new THREE.Matrix3();
+    function sampleGeometry(positionOutput, normalOutput) {
+      source.updateMatrixWorld(true);
+      for (const {object, offset} of parts) {
+        const attrs = object.geometry.attributes;
+        normalMatrix.getNormalMatrix(object.matrixWorld);
+        for (let i = 0; i < attrs.position.count; i++) {
+          const j = (offset+i)*3;
+          point.fromBufferAttribute(attrs.position, i).applyMatrix4(object.matrixWorld).multiplyScalar(0.001);
+          positionOutput[j] = point.x;
+          positionOutput[j+1] = point.y;
+          positionOutput[j+2] = point.z;
+          if (attrs.normal) point.fromBufferAttribute(attrs.normal, i).applyNormalMatrix(normalMatrix);
+          else point.set(0, 1, 0);
+          normalOutput[j] = point.x;
+          normalOutput[j+1] = point.y;
+          normalOutput[j+2] = point.z;
+        }
+      }
+    }
+    sampleGeometry(positions, normals);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('skinIndex', new THREE.BufferAttribute(skinIndices, 4));
+    geometry.setAttribute('skinWeight', new THREE.BufferAttribute(skinWeights, 4));
+    const indices = [];
+    for (let i = 0; i < materialIndices.length; i++) {
+      geometry.addGroup(indices.length, materialIndices[i].length, i);
+      for (const index of materialIndices[i]) indices.push(index);
+    }
+    geometry.setIndex(indices);
+    const root = new THREE.SkinnedMesh(geometry, materials);
+    root.name = 'Troquel_Malla_Unica';
+    root.add(baseBone);
+    root.updateMatrixWorld(true);
+    root.bind(new THREE.Skeleton(bones));
+    for (const data of pivots) {
+      const angle = Math.max(-90, Math.min(90, state.hingeAngles[data.hinge.id] || 0));
+      boneByPivot.get(data.object).setRotationFromAxisAngle(data.axis3d, THREE.MathUtils.degToRad(angle));
+    }
+    root.updateMatrixWorld(true);
+    root.skeleton.update();
+    root.userData = {units:'meters', boardCode:state.boardCode, thicknessMm:UserLibrary.boardThicknessMm[state.boardCode], dimensionsMm:{length:state.paramL, width:state.paramW, height:state.paramH}};
+    return {root, clips:buildBlenderAnimationClips()};
+  }
+
   function exportGLBForBlender() {
     if(state.dieline?.vector3DStale){alert('Cierra los contornos del plano antes de exportar el modelo 3D.');return;}
     if (!dielineRootGroup || !THREE.GLTFExporter) {
@@ -1449,14 +1551,7 @@
       return;
     }
 
-    // glTF uses metres. Export an independent hierarchy so the live viewer stays in mm.
-    const exportRoot=dielineRootGroup.clone(true);
-    exportRoot.traverse(obj=>{if(obj.userData?.isCADHelper)obj.visible=false;});
-    exportRoot.scale.multiplyScalar(0.001);
-    exportRoot.position.multiplyScalar(0.001);
-    exportRoot.userData={...exportRoot.userData,units:'meters',boardCode:state.boardCode,thicknessMm:UserLibrary.boardThicknessMm[state.boardCode],dimensionsMm:{length:state.paramL,width:state.paramW,height:state.paramH}};
-
-    const clips = buildBlenderAnimationClips();
+    const {root:exportRoot, clips} = buildSingleMeshExport();
     const exporter = new THREE.GLTFExporter();
 
     exporter.parse(
@@ -1484,13 +1579,8 @@
       return Promise.reject(new Error('Cierra los contornos y comprueba el modelo 3D antes de publicarlo.'));
     }
     if (!THREE.GLTFExporter) return Promise.reject(new Error('No está disponible el exportador GLB.'));
-    // Snapshot the current pose; publishing must not modify the editor or play fold animations.
-    const root = dielineRootGroup.clone(true);
-    root.traverse(object => { if (object.userData?.isCADHelper) object.visible = false; });
-    root.scale.multiplyScalar(0.001);
-    root.position.multiplyScalar(0.001);
-    root.userData = { ...root.userData, clientViewer: true, units: 'meters' };
-    const clips = buildBlenderAnimationClips();
+    const {root, clips} = buildSingleMeshExport();
+    root.userData.clientViewer = true;
     return new Promise((resolve, reject) => {
       try {
         new THREE.GLTFExporter().parse(root, result => {
@@ -1512,14 +1602,21 @@
     const resultPanel = document.getElementById('publish-client-result');
     const share = document.getElementById('publish-client-share');
     let publishing = false;
-    document.getElementById('btn-publish-client')?.addEventListener('click', () => {
-      if (!state.dieline || state.dieline.vector3DStale) { alert('Abre una caja y cierra sus contornos antes de publicarla.'); return; }
+    function openPublishingDialog() {
       status.textContent = '';
+      status.dataset.error = 'false';
       resultPanel.hidden = true;
       submit.disabled = false;
+      if (!state.dieline?.faces.length || state.dieline.vector3DStale) {
+        status.dataset.error = 'true';
+        status.textContent = 'Abre una caja y cierra sus contornos antes de publicarla.';
+        submit.disabled = true;
+      }
       dialog.showModal();
       input.focus();
-    });
+    }
+    document.getElementById('menu-publish-client')?.addEventListener('click', openPublishingDialog);
+    document.getElementById('btn-publish-client')?.addEventListener('click', openPublishingDialog);
     close.addEventListener('click', () => { if (!publishing) dialog.close(); });
     dialog.addEventListener('cancel', event => { if (publishing) event.preventDefault(); });
     document.getElementById('publish-client-copy').addEventListener('click', async () => {
@@ -1580,10 +1677,8 @@
     if(!dielineRootGroup || !state.dieline?.faces.length || state.dieline.vector3DStale){alert('Cierra los contornos antes de crear el archivo Blender.');return;}
     button.disabled=true;button.textContent='Creando escena en Blender…';
     try {
-      const root=dielineRootGroup.clone(true);
-      root.traverse(o=>{if(o.userData?.isCADHelper)o.visible=false;});
-      root.scale.multiplyScalar(.001);root.position.multiplyScalar(.001);
-      const clips=buildBlenderAnimationClips().filter(c=>c.name.startsWith('02_'));
+      const exported=buildSingleMeshExport(),root=exported.root;
+      const clips=exported.clips.filter(c=>c.name.startsWith('02_'));
       const result=await new Promise(resolve=>new THREE.GLTFExporter().parse(root,resolve,{binary:true,animations:clips,onlyVisible:true,embedImages:true}));
       if(!(result instanceof ArrayBuffer))throw Error('No se ha podido generar el modelo GLB.');
       const path=await window.__TAURI__.core.invoke('create_blend',{data:Array.from(new Uint8Array(result))});
@@ -2895,6 +2990,22 @@
     initDrawerCatalogUI();
   }
 
+  async function openDielineFile() {
+    if (!window.__TAURI__?.core?.invoke) {
+      document.getElementById('svg-file-input')?.click();
+      return;
+    }
+    try {
+      const file = await window.__TAURI__.core.invoke('open_dieline_file');
+      if (!file) return;
+      if (/\.dxf$/i.test(file.name)) openDxfImport(file.text, file.name);
+      else loadSVGString(file.text, file.name, true);
+    } catch (error) {
+      console.error('No se pudo abrir el troquel:', error);
+      alert('No se pudo abrir el troquel: ' + (error?.message || String(error)));
+    }
+  }
+
   function initHeaderDropdowns() {
     const openBtn = document.getElementById('btn-header-open');
     const openMenu = document.getElementById('header-open-menu');
@@ -2938,9 +3049,9 @@
       }
     });
 
-    document.getElementById('menu-open-file')?.addEventListener('click', () => {
+    document.getElementById('menu-open-file')?.addEventListener('click', async () => {
       closeAllDropdowns();
-      document.getElementById('svg-file-input')?.click();
+      await openDielineFile();
     });
 
     document.getElementById('menu-open-projects')?.addEventListener('click', () => {
@@ -2991,9 +3102,6 @@
 
     document.getElementById('menu-publish-client')?.addEventListener('click', () => {
       closeAllDropdowns();
-      const pubBtn = document.getElementById('btn-publish-client');
-      if (pubBtn) pubBtn.click();
-      else if (typeof setupClientPublishingClick === 'function') setupClientPublishingClick();
     });
 
     document.getElementById('menu-create-blend')?.addEventListener('click', () => {
@@ -4984,6 +5092,27 @@
     refreshArtworkAtlas(state.dieline);rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();
     document.getElementById('btn-art-settings').classList.remove('hidden');
   }
+  async function pasteArtworkFromClipboard(event) {
+    if (event.defaultPrevented) return;
+    const target = event.target || document.activeElement;
+    if (target?.isContentEditable || target?.closest?.('input, textarea, [role="textbox"]')) return;
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    let image = null;
+    for (const item of Array.from(clipboard.items || [])) {
+      if (item.kind === 'file' && /^image\//i.test(item.type)) {
+        image = item.getAsFile();
+        if (image) break;
+      }
+    }
+    if (!image) image = Array.from(clipboard.files || []).find(file => /^image\//i.test(file.type));
+    if (!image) return;
+    // Use the user-initiated paste event: no background clipboard reads or permissions.
+    event.preventDefault();
+    await applyCustomArtworkFile(image);
+  }
+  window.addEventListener('paste', pasteArtworkFromClipboard);
+
   async function applyCustomArtworkFile(file){
     try{
       const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});

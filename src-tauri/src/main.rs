@@ -200,6 +200,27 @@ mod tests {
 }
 
 #[tauri::command]
+async fn open_dieline_file(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<Option<Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let selected = app.dialog().file()
+            .set_parent(&window)
+            .set_title("Abrir troquel (SVG / DXF)")
+            .add_filter("Troqueles SVG y DXF", &["svg", "dxf"])
+            .blocking_pick_file();
+        let Some(selected) = selected else { return Ok(None); };
+        let path = selected.into_path().map_err(|e| e.to_string())?;
+        let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+        if !matches!(extension.as_str(), "svg" | "dxf") {
+            return Err("Selecciona un archivo SVG o DXF".into());
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("No se pudo leer el archivo: {}", e))?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        Ok(Some(json!({"name": name, "text": text})))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn save_export(
     app: tauri::AppHandle,
     filename: String,
@@ -306,6 +327,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             client_publishing::publish_client_model,
             open_browser_url,
+            open_dieline_file,
             save_export,
             create_blend,
             save_project,

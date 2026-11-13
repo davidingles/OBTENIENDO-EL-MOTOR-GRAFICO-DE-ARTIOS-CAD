@@ -360,9 +360,34 @@
     return attrs;
   }
 
-  function parseStyleStroke(attrs) {
+  function svgClassStyleRules(svgText) {
+    const rules = [];
+    for (const block of svgText.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
+      const css = block[1].replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const declarations = {};
+        for (const property of rule[2].matchAll(/(?:^|;)\s*(stroke|fill)\s*:\s*([^;]+)/gi)) {
+          declarations[property[1].toLowerCase()] = property[2].trim();
+        }
+        for (const selector of rule[1].split(',')) {
+          const classes = /^\.([\w-]+(?:\.[\w-]+)*)$/.exec(selector.trim());
+          if (classes) rules.push({classes: classes[1].split('.'), declarations});
+        }
+      }
+    }
+    // Higher specificity wins; equal specificity follows source order.
+    return rules.sort((a, b) => a.classes.length - b.classes.length);
+  }
+
+  function parseStyleStroke(attrs, classRules = []) {
     let stroke = attrs.stroke || null;
     let fill = attrs.fill || null;
+    const classes = new Set((attrs.class || '').split(/\s+/));
+    for (const rule of classRules) {
+      if (!rule.classes.every(name => classes.has(name))) continue;
+      if (rule.declarations.stroke !== undefined) stroke = rule.declarations.stroke;
+      if (rule.declarations.fill !== undefined) fill = rule.declarations.fill;
+    }
     if (attrs.style) {
       const sm = attrs.style.match(/stroke\s*:\s*([^;]+)/i);
       if (sm) stroke = sm[1].trim();
@@ -565,6 +590,7 @@
   // ============================================================================
 
   function parseSVGDieline(svgText) {
+    const classRules = svgClassStyleRules(svgText);
     let cotaMmValue = null;
     let cotaLabel = null;
 
@@ -583,7 +609,7 @@
     while ((match = tagRegex.exec(svgText)) !== null) {
       const tag = match[1].toLowerCase();
       const attrs = parseAttributes(match[2]);
-      const { stroke } = parseStyleStroke(attrs);
+      const { stroke } = parseStyleStroke(attrs, classRules);
       const role = classifyStrokeColor(stroke);
 
       if (role === 'IGNORE' || role === 'OTHER') continue;

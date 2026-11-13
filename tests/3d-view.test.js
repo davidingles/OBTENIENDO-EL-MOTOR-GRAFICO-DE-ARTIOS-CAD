@@ -21,7 +21,7 @@ function app() {
       state, createCrushedPanelGeometry, setMasterFold, updateSelectionHighlight, fitCameraToModel,
       MATERIAL_FINISHES, resolveMaterialFinish, getDetailGroups, realBuildBoardMaterials,
       get2DTransform, drawMiniDielinePreview, createCatalogPreviewGroup,
-      exportGLBForBlender,
+      exportGLBForBlender, buildSingleMeshExport, computeHingeAngleAtProgress,
       readFavoriteModels, toggleFavoriteModel, createFavoriteButton,
       setFavoritesStorage(storage) {window.localStorage=storage;favoriteModelIds=readFavoriteModels(storage);},
       setCreateElement(factory) {document.createElement=factory;},
@@ -94,7 +94,7 @@ test('si falla el guardado de preferidos, la selección no se muestra como guard
 
 
 
-test('GLB convierte milímetros a metros sin modificar el visor y conserva la animación', () => {
+test('GLB exporta una sola malla en metros, con materiales y plegado, sin modificar el visor', () => {
   const ui=app(),original=THREE.GLTFExporter;
   let exported,options;
   THREE.GLTFExporter=class {parse(root,callback,opts){exported=root;options=opts;}};
@@ -104,8 +104,11 @@ test('GLB convierte milímetros a metros sin modificar el visor y conserva la an
     const before=ui.root.position.clone();
     ui.exportGLBForBlender();
     assert.notEqual(exported,ui.root);
-    assert.equal(exported.scale.x,0.001);
-    assert.ok(exported.position.distanceTo(before.clone().multiplyScalar(0.001))<1e-9);
+    assert.equal(exported.scale.x,1);
+    assert.equal(exported.position.length(),0);
+    assert.equal(exported.isMesh,true);
+    assert.equal(exported.isSkinnedMesh,true);
+    assert.ok(exported.children.every(object=>object.isBone));
     assert.equal(ui.root.scale.x,1);
     assert.ok(ui.root.position.equals(before));
     assert.equal(exported.userData.units,'meters');
@@ -126,8 +129,88 @@ test('GLB convierte milímetros a metros sin modificar el visor y conserva la an
       }
       assert.equal(used.size,geometry.index.count);
     });
-    assert.ok(panels>0);
+    assert.equal(panels,1);
+    assert.deepEqual(Object.keys(exported.geometry.morphAttributes),[]);
+    assert.equal(exported.skeleton.bones.length,ui.state.dieline.hinges.length+1);
+    assert.ok(options.animations.every(clip=>clip.tracks.every(track=>track.name.endsWith('.quaternion'))));
   }finally{THREE.GLTFExporter=original;}
+});
+
+test('la malla única conserva UV y vértices y la armadura reproduce cada panel plegado sin shape keys', () => {
+  const ui=app();
+  ui.setup(engine.buildDielineModelFromPacdora(entry.knifeData,entry));
+  ui.setMasterFold(0.75);
+  const before=[];
+  ui.root.traverse(object=>before.push([object,object.matrixWorld.clone()]));
+  const {root,clips}=ui.buildSingleMeshExport();
+  for (const [object,matrix] of before) assert.deepEqual(object.matrixWorld.elements,matrix.elements);
+  const parts=[];
+  ui.root.traverseVisible(object=>{if(object.isMesh)parts.push(object);});
+  const p=new THREE.Vector3(),n=new THREE.Vector3(),nm=new THREE.Matrix3();
+  let offset=0;
+  const initialMixer=new THREE.AnimationMixer(root);
+  initialMixer.clipAction(clips[0]).play();
+  initialMixer.setTime(0);
+  root.updateMatrixWorld(true);root.skeleton.update();
+  ui.setMasterFold(0);
+  for(const part of parts){
+    const attrs=part.geometry.attributes;
+    nm.getNormalMatrix(part.matrixWorld);
+    for(let i=0;i<attrs.position.count;i++){
+      p.fromBufferAttribute(attrs.position,i).applyMatrix4(part.matrixWorld).multiplyScalar(.001);
+      assert.ok(p.distanceTo(new THREE.Vector3().fromBufferAttribute(root.geometry.attributes.position,offset+i))<1e-6);
+      if(attrs.uv){assert.equal(root.geometry.attributes.uv.getX(offset+i),attrs.uv.getX(i));assert.equal(root.geometry.attributes.uv.getY(offset+i),attrs.uv.getY(i));}
+    }
+    offset+=attrs.position.count;
+  }
+  assert.equal(root.geometry.attributes.position.count,offset);
+  // Match bone skinning against the editor's hierarchy throughout folding.
+  ui.state.foldSequenceMode='phased';
+  for(const k of [0,15,30,45,60]){
+    ui.setMasterFold(k/60);
+    initialMixer.setTime(k/60*5);
+    // AnimationMixer repeats by default; inspect the closed endpoint explicitly.
+    if(k===60){for(const bone of root.skeleton.bones.slice(1)){
+      const track=clips[0].tracks.find(track=>track.name===bone.name+'.quaternion');
+      bone.quaternion.fromArray(track.values,track.values.length-4);
+    }}
+    root.updateMatrixWorld(true);root.skeleton.update();
+    offset=0;
+    for(const part of parts){
+      nm.getNormalMatrix(part.matrixWorld);
+      for(let i=0;i<part.geometry.attributes.position.count;i+=11){
+        p.fromBufferAttribute(part.geometry.attributes.position,i).applyMatrix4(part.matrixWorld).multiplyScalar(.001);
+        const j=offset+i;
+        const baked=new THREE.Vector3().fromBufferAttribute(root.geometry.attributes.position,j);
+        root.boneTransform(j,baked);
+        assert.ok(p.distanceTo(baked)<1e-6,`muestra ${k}, vértice ${j}`);
+      }
+      offset+=part.geometry.attributes.position.count;
+    }
+  }
+  assert.equal(clips.length,2);
+  assert.equal(clips[1].duration,9);
+  for(const clip of clips)for(const track of clip.tracks){
+    for(let i=0;i<track.values.length;i+=4){
+      const q=new THREE.Quaternion().fromArray(track.values,i);
+      assert.ok(2*Math.acos(Math.min(1,Math.abs(q.w)))<=Math.PI/2+1e-6,'sin sobreplegado');
+    }
+    const endpoint=clip.name.startsWith('01_')?track.values.length-4:40*4;
+    const q=new THREE.Quaternion().fromArray(track.values,endpoint);
+    assert.ok(Math.abs(2*Math.acos(Math.abs(q.w))-Math.PI/2)<1e-6,'giro local final de 90 grados');
+  }
+});
+
+test('el plegado automático termina siempre a 90 grados incluso en cartones gruesos y secuencias antiguas',()=>{
+  const ui=app();ui.state.caliper=7;
+  for(const hinge of [{defaultAngle:110},{defaultAngle:-120},{animSteps:[{start:0,end:.4,deltaDeg:120},{start:.4,end:1,deltaDeg:-30}]}]){
+    const face={role:'GLUE_FLAP',bounds:{width:25,height:30}};
+    for(const mode of ['phased','simultaneous']){
+      assert.equal(Math.abs(ui.computeHingeAngleAtProgress(hinge,face,1,mode)),90);
+      assert.equal(Math.abs(ui.computeHingeAngleAtProgress(hinge,face,0,mode)),0);
+      for(let t=0;t<=1;t+=.01)assert.ok(Math.abs(ui.computeHingeAngleAtProgress(hinge,face,t,mode))<=90);
+    }
+  }
 });
 
 test('el encuadre inicial 2D respeta el 75 % del espacio libre con distintas pantallas y escalas', () => {

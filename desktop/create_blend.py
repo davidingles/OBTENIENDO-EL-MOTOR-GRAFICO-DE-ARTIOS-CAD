@@ -10,7 +10,7 @@ scene = bpy.context.scene
 scene.unit_settings.system = 'METRIC'
 scene.unit_settings.scale_length = 1
 scene.render.fps = 30
-bpy.ops.import_scene.gltf(filepath=source)
+bpy.ops.import_scene.gltf(filepath=source, disable_bone_shape=True)
 meshes = [o for o in scene.objects if o.type == 'MESH']
 if not meshes:
     raise RuntimeError('El archivo no contiene geometría 3D.')
@@ -28,35 +28,18 @@ for frame in range(0, 271, 3):
         points.extend(obj.matrix_world @ Vector(corner) for corner in obj.bound_box)
 from mathutils import Matrix
 scene.frame_set(0)
-initial = [o.matrix_world.copy() for o in meshes]
-baked = []
-for frame in range(271):
-    scene.frame_set(frame)
-    baked.append([o.matrix_world.copy() for o in meshes])
-scene.frame_set(0)
-imported = [o.name for o in scene.objects]
-rig = bpy.data.objects.new('Esqueleto_Plegado', bpy.data.armatures.new('Plegado'))
-scene.collection.objects.link(rig)
-bpy.context.view_layer.objects.active = rig
-rig.select_set(True)
-bpy.ops.object.mode_set(mode='EDIT')
-for i in range(len(meshes)):
-    bone = rig.data.edit_bones.new('Panel_%02d' % i)
-    bone.head = (0,0,0)
-    bone.tail = (0,.01,0)
-bpy.ops.object.mode_set(mode='OBJECT')
-for i, obj in enumerate(meshes):
-    obj.parent = None
-    obj.animation_data_clear()
-    obj.data.transform(initial[i])
-    obj.matrix_world = Matrix.Identity(4)
-    obj.vertex_groups.new(name='Panel_%02d' % i).add(list(range(len(obj.data.vertices))),1,'REPLACE')
-bpy.ops.object.select_all(action='DESELECT')
-for obj in meshes: obj.select_set(True)
-bpy.context.view_layer.objects.active = meshes[0]
-bpy.ops.object.join()
-troquel = bpy.context.object
+# The GLB already contains the final rig. Preserve its bone hierarchy and weights.
+rigs = [o for o in scene.objects if o.type == 'ARMATURE']
+assert len(meshes) == 1 and len(rigs) == 1, 'Se requiere una malla y una armadura'
+rig, troquel = rigs[0], meshes[0]
+assert troquel.data.shape_keys is None, 'No se permiten shape keys'
 troquel.name = 'Troquel_Malla_Unica'
+rig.name = 'Esqueleto_Plegado'
+cycle = next(a for a in bpy.data.actions if a.name.startswith('02_'))
+for track in rig.animation_data.nla_tracks:
+    track.mute = True
+rig.animation_data.action = cycle
+rig.animation_data.action_slot = cycle.slots[0]
 slots = list(troquel.data.materials)
 def category(mat):
     name = mat.name if mat else ''
@@ -131,29 +114,7 @@ troquel.data.uv_layers.active = troquel.data.uv_layers[original_uv_name]
 troquel.data.uv_layers[original_uv_name].active_render = True
 for poly in troquel.data.polygons:
     poly.select = False
-troquel.modifiers.new('Animacion_de_plegado','ARMATURE').object=rig
-troquel.parent=rig
-for frame, matrices in enumerate(baked):
-    scene.frame_set(frame)
-    for i, matrix in enumerate(matrices):
-        bone=rig.pose.bones['Panel_%02d'%i]
-        bone.rotation_mode='QUATERNION'
-        bone.matrix_basis=matrix @ initial[i].inverted()
-        for prop in ['location','rotation_quaternion','scale']: bone.keyframe_insert(prop,frame=frame)
-for frame in [0,60,120,210,270]:
-    scene.frame_set(frame)
-    evaluated=troquel.evaluated_get(bpy.context.evaluated_depsgraph_get())
-    data=evaluated.to_mesh()
-    for i in range(len(initial)):
-        group=troquel.vertex_groups['Panel_%02d'%i].index
-        vertex=next(v for v in troquel.data.vertices if any(g.group==group for g in v.groups))
-        expected=baked[frame][i] @ initial[i].inverted() @ vertex.co
-        actual=evaluated.matrix_world @ data.vertices[vertex.index].co
-        assert (actual-expected).length<1e-5, (frame,i,(actual-expected).length)
-    evaluated.to_mesh_clear()
-for name in imported:
-    obj=bpy.data.objects.get(name)
-    if obj is not None and obj!=troquel: bpy.data.objects.remove(obj,do_unlink=True)
+assert any(m.type == 'ARMATURE' and m.object == rig for m in troquel.modifiers)
 assert len(troquel.data.materials)==3
 assert troquel.data.uv_layers, 'Faltan las UV exteriores'
 low = Vector(tuple(min(p[i] for p in points) for i in range(3)))
