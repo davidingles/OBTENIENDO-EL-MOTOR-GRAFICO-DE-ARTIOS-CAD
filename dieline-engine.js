@@ -3449,8 +3449,8 @@
       const fL = bodyFaces.find(f => Math.abs(f.bounds.width - L) < 3) || bodyFaces[0];
       const fW = bodyFaces.find(f => Math.abs(f.bounds.width - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
 
-      // Flecha L (Largo)
-      const yL = fL.bounds.minY + fL.bounds.height * 0.5;
+      // Flecha L (Largo) - ligeramente ladeada entre el centro y el lateral
+      const yL = fL.bounds.minY + fL.bounds.height * 0.72;
       arrows.push({
         lineName: 'L',
         lineLength: L,
@@ -3459,8 +3459,8 @@
         tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
       });
 
-      // Flecha W (Ancho)
-      const yW = fW.bounds.minY + fW.bounds.height * 0.5;
+      // Flecha W (Ancho) - ligeramente ladeada entre el centro y el lateral
+      const yW = fW.bounds.minY + fW.bounds.height * 0.72;
       arrows.push({
         lineName: 'W',
         lineLength: W,
@@ -3480,7 +3480,7 @@
       });
     } else {
       const baseFace = model.faces.find(f => f.id === model.rootFaceId) || model.faces[0];
-      const yL = baseFace.bounds.minY + baseFace.bounds.height * 0.5;
+      const yL = baseFace.bounds.minY + baseFace.bounds.height * 0.72;
       arrows.push({
         lineName: 'L',
         lineLength: L,
@@ -3489,7 +3489,7 @@
         tpointer: { x: (baseFace.bounds.minX + baseFace.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
       });
 
-      const xW = baseFace.bounds.minX + baseFace.bounds.width * 0.5;
+      const xW = baseFace.bounds.minX + baseFace.bounds.width * 0.28;
       arrows.push({
         lineName: 'W',
         lineLength: W,
@@ -3512,7 +3512,7 @@
       if (wallFace) {
         const isHorizWall = wallFace.bounds.width > wallFace.bounds.height;
         if (isHorizWall) {
-          const xH = wallFace.bounds.minX + wallFace.bounds.width * 0.5;
+          const xH = wallFace.bounds.minX + wallFace.bounds.width * 0.28;
           arrows.push({
             lineName: 'H',
             lineLength: H,
@@ -3521,7 +3521,7 @@
             tpointer: { x: xH, y: (wallFace.bounds.minY + wallFace.bounds.maxY) * 0.5, value: 'H=' + H }
           });
         } else {
-          const yH = wallFace.bounds.minY + wallFace.bounds.height * 0.5;
+          const yH = wallFace.bounds.minY + wallFace.bounds.height * 0.72;
           arrows.push({
             lineName: 'H',
             lineLength: H,
@@ -3556,7 +3556,7 @@
       const label = f.name || f.label || `Área ${f.id}`;
 
       // Cota horizontal (Ancho del área)
-      const yW = b.height > 16 ? b.minY + b.height * 0.70 : (b.minY + b.maxY) * 0.5;
+      const yW = b.height > 8 ? b.minY + b.height * 0.72 : (b.minY + b.maxY) * 0.5;
       arrows.push({
         faceId: f.id,
         faceName: label,
@@ -3569,7 +3569,7 @@
       });
 
       // Cota vertical (Alto del área)
-      const xH = b.width > 16 ? b.minX + b.width * 0.30 : (b.minX + b.maxX) * 0.5;
+      const xH = b.width > 8 ? b.minX + b.width * 0.28 : (b.minX + b.maxX) * 0.5;
       arrows.push({
         faceId: f.id,
         faceName: label,
@@ -3699,7 +3699,19 @@
       rootFaceId: sub.rootFaceId
     };
 
-    return ensureDielineDimensions(enforceFlapLengthLimit(model));
+    const built = ensureDielineDimensions(enforceFlapLengthLimit(model));
+    const byName = name => (built.sizeArrowData || []).find(a => a.lineName === name && a.p1 && a.p2);
+    const mL = byName('L') ? measureDimensionArrow(byName('L')) : null;
+    const mW = byName('W') ? measureDimensionArrow(byName('W')) : null;
+    const mH = byName('H') ? measureDimensionArrow(byName('H')) : null;
+    if (built.boxDimensionsMm && (mL || mW || mH)) {
+      built.boxDimensionsMm = {
+        length: +(mL || built.boxDimensionsMm.length).toFixed(2),
+        width: +(mW || built.boxDimensionsMm.width).toFixed(2),
+        depth: +(mH || built.boxDimensionsMm.depth).toFixed(2)
+      };
+    }
+    return reconcileDimensionMeasurements(built);
   }
 
   return {

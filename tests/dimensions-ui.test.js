@@ -311,3 +311,41 @@ test('Ctrl+Z y rehacer restauran geometría y parámetros con foco en números',
   assert.equal(fire('z',{tagName:'DIV',isContentEditable:true}),false);
   assert.equal(api.state.paramW,150);
 });
+
+test('UI del canvas (añadir troquel, Doblaje, sliders) y cotas SVG descentradas', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+
+  const headerSection = html.split('</header>')[0];
+  assert.equal(headerSection.includes('btn-header-add-die'), false, 'Añadir troquel ya no está en la cabecera');
+  assert.equal(headerSection.includes('menu-open-projects'), false, 'Abrir proyecto guardado eliminado del menú Abrir');
+  assert.equal(headerSection.includes('menu-open-artwork'), false, 'Cargar diseño / Arte ya no está en la cabecera');
+  assert.match(html, /class="vector-editor"[\s\S]*?id="vector-toggle"[\s\S]*?id="btn-header-add-die"[^>]*title="Añade troquel a la biblioteca"[\s\S]*?id="menu-open-artwork"[^>]*title="Cargar diseño \/ Arte · Ctrl \+ V"/);
+  assert.match(html, /data-drawer-tab="more"[\s\S]*?<span>Doblaje<\/span>/);
+  assert.match(html, /id="dimension-mode-switch"[\s\S]*?id="slider-dimension-size"/);
+  assert.match(html, /id="btn-toggle-area-names"[\s\S]*?id="slider-area-name-size"/);
+
+  const appJs = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.match(appJs, /slider-dimension-size[\s\S]*?dimensionLabelScale/);
+  assert.match(appJs, /slider-area-name-size[\s\S]*?areaLabelScale/);
+
+  const svg = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">',
+    '  <path d="M20,20 L220,20 L220,160 L20,160 Z" stroke="#0000ff" fill="none"/>',
+    '  <line x1="20" y1="70" x2="220" y2="70" stroke="#ff0000"/>',
+    '</svg>'
+  ].join('\n');
+  const model = engine.buildDielineModel(svg);
+  const arrowL = model.sizeArrowData.find(a => a.lineName === 'L');
+  const arrowW = model.sizeArrowData.find(a => a.lineName === 'W');
+  const arrowH = model.sizeArrowData.find(a => a.lineName === 'H');
+  assert.ok(arrowL && arrowW && arrowH, 'SVG nuevo genera cotas L, W y H');
+
+  const base = model.faces.find(f => f.id === model.rootFaceId);
+  assert.ok(Math.abs(arrowL.p1.y - (base.bounds.minY + base.bounds.height * 0.5)) > 1, 'Cota L no pasa por el centro vertical');
+  assert.ok(Math.abs(arrowW.p1.x - (base.bounds.minX + base.bounds.width * 0.5)) > 1, 'Cota W no pasa por el centro horizontal');
+  assert.equal(+model.boxDimensionsMm.length.toFixed(1), +arrowL.lineLength.toFixed(1));
+  assert.equal(+model.boxDimensionsMm.width.toFixed(1), +arrowW.lineLength.toFixed(1));
+  assert.equal(+model.boxDimensionsMm.depth.toFixed(1), +arrowH.lineLength.toFixed(1));
+});

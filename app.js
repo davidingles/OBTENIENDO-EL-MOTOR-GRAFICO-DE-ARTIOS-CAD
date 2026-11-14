@@ -56,6 +56,8 @@
     showDimensions: true,   // Cotas 2D
     dimensionDisplayMode: 'main', // 'none' | 'main' | 'all' (3 estados solicitados)
     showAreaLabels: true,   // Mostrar / ocultar nombres de las áreas
+    dimensionLabelScale: 1, // Escala del tamaño de texto de cotas en canvas
+    areaLabelScale: 1,      // Escala del tamaño de texto de nombres de áreas
     pickingDimensionArea: null, // 'L' | 'W' | 'H' cuando se pulsa el icono de la diana
     activeDimType: 'L',     // 'L' | 'W' | 'H' | 'Libre' tipo de cota activo en herramienta acotar
     symmetryLinks: {},
@@ -2332,13 +2334,16 @@
           const prefix = (['L', 'W', 'H'].includes(sa.lineName)) ? `${sa.lineName}=` : '';
           const valDisp = `${prefix}${valNum.toFixed(1)} mm`;
 
-          ctx.font = `600 ${Math.round(10.5 * dpr)}px "Inter", system-ui, sans-serif`;
+          const dimScale = state.dimensionLabelScale || 1;
+          ctx.font = `600 ${Math.round(10.5 * dimScale * dpr)}px "Inter", system-ui, sans-serif`;
           const tw = ctx.measureText(valDisp).width;
+          const padX = 3 * dimScale * dpr;
+          const boxH = 14 * dimScale * dpr;
           ctx.fillStyle = isSelectedDim ? '#f0fdff' : 'rgba(255, 255, 255, 0.94)';
-          ctx.fillRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
+          ctx.fillRect(mx - tw * 0.5 - padX, my - boxH * 0.5, tw + padX * 2, boxH);
           ctx.strokeStyle = isSelectedDim ? '#00cce5' : '#0284c7';
           ctx.lineWidth = (isSelectedDim ? 1.4 : 0.8) * dpr;
-          ctx.strokeRect(mx - tw * 0.5 - 3 * dpr, my - 7 * dpr, tw + 6 * dpr, 14 * dpr);
+          ctx.strokeRect(mx - tw * 0.5 - padX, my - boxH * 0.5, tw + padX * 2, boxH);
           ctx.fillStyle = isSelectedDim ? '#0891b2' : '#0284c7';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
@@ -2364,12 +2369,13 @@
           ctx.rotate(-Math.PI / 2);
         }
 
-        ctx.font = `600 ${Math.round(9.5 * dpr)}px "Inter", system-ui, sans-serif`;
+        const areaScale = state.areaLabelScale || 1;
+        ctx.font = `600 ${Math.round(9.5 * areaScale * dpr)}px "Inter", system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillStyle = face.id === state.selectedFaceId ? '#006ca8' : '#39475a';
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
-        ctx.fillText(shortName, 0, -6 * dpr);
+        ctx.fillText(shortName, 0, -6 * areaScale * dpr);
         ctx.restore();
       }
     }
@@ -2695,6 +2701,31 @@
         state.showAreaLabels = !state.showAreaLabels;
         btnToggleAreas.classList.toggle('active', state.showAreaLabels);
         render2FDieline();
+      };
+    }
+
+    // Sliders de tamaño de cotas y nombres de áreas en el canvas
+    const sliderDimSize = document.getElementById('slider-dimension-size');
+    if (sliderDimSize) {
+      sliderDimSize.value = String(state.dimensionLabelScale || 1);
+      sliderDimSize.oninput = (e) => {
+        const val = parseFloat(e.target.value);
+        if (Number.isFinite(val)) {
+          state.dimensionLabelScale = val;
+          render2FDieline();
+        }
+      };
+    }
+
+    const sliderAreaSize = document.getElementById('slider-area-name-size');
+    if (sliderAreaSize) {
+      sliderAreaSize.value = String(state.areaLabelScale || 1);
+      sliderAreaSize.oninput = (e) => {
+        const val = parseFloat(e.target.value);
+        if (Number.isFinite(val)) {
+          state.areaLabelScale = val;
+          render2FDieline();
+        }
       };
     }
 
