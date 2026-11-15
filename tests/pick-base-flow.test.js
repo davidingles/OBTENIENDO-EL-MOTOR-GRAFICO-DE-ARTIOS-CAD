@@ -133,6 +133,7 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
   const walls = app.state.dieline.faces.filter(f => f.id !== app.state.dieline.rootFaceId);
   const wallA = walls[0];
   const wallB = walls[1];
+  const wallC = walls[2];
   const tf = app.get2DTransform(makeEl('canvas-2d'), app.state.dieline.bounds);
 
   // Paso 1 (+)
@@ -159,6 +160,7 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
 
   const hingeA = app.state.dieline.hinges.find(h => h.childFaceId === wallA.id);
   const hingeB = app.state.dieline.hinges.find(h => h.childFaceId === wallB.id);
+  const hingeC = app.state.dieline.hinges.find(h => h.childFaceId === wallC.id);
 
   // A mitad del progreso (t = 0.5): paso 1 ya rotó 90°, paso 2 aún está en 0°
   const angleA_mid = Math.abs(app.computeHingeAngleAtProgress(hingeA, wallA, 0.5, 'phased'));
@@ -166,9 +168,11 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
   assert.equal(angleA_mid, 90);
   assert.equal(angleB_mid, 0);
 
-  // Al final (t = 1): ambos en 90°
+  // Al final (t = 1): las asignadas están en 90°, pero wallC (no señalada) permanece en 0°
   const angleB_end = Math.abs(app.computeHingeAngleAtProgress(hingeB, wallB, 1, 'phased'));
+  const angleC_end = Math.abs(app.computeHingeAngleAtProgress(hingeC, wallC, 1, 'phased'));
   assert.equal(angleB_end, 90);
+  assert.equal(angleC_end, 0);
 
   // Borrar paso 1 renumera el paso 2 a paso 1
   app.deleteFoldOrderStep(1);
@@ -176,10 +180,13 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
   assert.equal(app.state.customFoldOrder[wallA.id], undefined);
   assert.equal(app.state.customFoldOrder[wallB.id], 1);
 
-  // Botón Reset limpia toda la animación y deja masterFold en 0
+  // Botón Reset limpia toda la animación y deja masterFold en 0; ninguna cara rota incluso en t=1
   elements.get('btn-reset-fold-order').listeners.click[0]();
   assert.equal(app.state.foldOrderSteps, 0);
   assert.equal(app.state.activeFoldOrderStep, null);
   assert.equal(Object.keys(app.state.customFoldOrder).length, 0);
   assert.equal(app.state.masterFold, 0);
+  assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeA, wallA, 1, 'phased')), 0);
+  assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeB, wallB, 1, 'phased')), 0);
+  assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeC, wallC, 1, 'phased')), 0);
 });

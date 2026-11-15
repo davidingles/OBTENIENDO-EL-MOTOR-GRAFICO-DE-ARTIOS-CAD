@@ -162,6 +162,7 @@
     foldOrderSteps: 0,
     activeFoldOrderStep: null,
     customFoldOrder: {},
+    customFoldOrderCleared: false,
     foldSequenceMode: 'phased',
     view2D: {
       zoom: 1,
@@ -557,6 +558,7 @@
     state.foldOrderSteps = 0;
     state.activeFoldOrderStep = null;
     state.customFoldOrder = {};
+    state.customFoldOrderCleared = true;
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = '';
     renderFoldOrderUI();
@@ -671,6 +673,7 @@
     state.foldOrderSteps = 0;
     state.activeFoldOrderStep = null;
     state.customFoldOrder = {};
+    state.customFoldOrderCleared = false;
     if (typeof renderFoldOrderUI === 'function') renderFoldOrderUI();
 
     syncParametricInputsUI(model);
@@ -1427,10 +1430,14 @@
    * Cada área móvil termina a 90° respecto a su padre, sin sobreplegado.
    */
   function computeHingeAngleAtProgress(hinge, childFace, progressT, sequenceMode) {
-    // Orden de plegado personalizado por pasos (1, 2, 3...)
-    if (sequenceMode === 'phased' && state.foldOrderSteps > 0 && childFace && Object.keys(state.customFoldOrder || {}).length > 0) {
+    // Orden de plegado personalizado por pasos (1, 2, 3...) o reseteado por el usuario
+    const hasCustomOrder = state.foldOrderSteps > 0 || state.customFoldOrderCleared;
+    if (sequenceMode === 'phased' && hasCustomOrder) {
+      if (!childFace || !state.customFoldOrder || !state.customFoldOrder[childFace.id]) {
+        return 0;
+      }
       const totalSteps = Math.max(1, state.foldOrderSteps);
-      const step = state.customFoldOrder[childFace.id] || totalSteps;
+      const step = state.customFoldOrder[childFace.id];
       const start = (step - 1) / totalSteps;
       const end = step / totalSteps;
       const t = Math.max(0, Math.min(1, (progressT - start) / Math.max(1e-5, end - start)));
