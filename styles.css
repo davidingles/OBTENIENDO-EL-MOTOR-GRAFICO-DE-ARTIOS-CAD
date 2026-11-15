@@ -1708,3 +1708,175 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 #publish-client-status[data-error="true"] { color: #b42318; }
 #publish-client-submit { margin-top: 12px; }
 
+
+/* Indicador de archivo externo abierto en barra superior */
+.header-open-file-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 460px;
+  padding: 4px 10px;
+  margin-left: 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+}
+.header-open-file-info.hidden {
+  display: none;
+}
+.header-file-name {
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.header-file-path {
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Botón Elegir base debajo de Editar vectores */
+.vector-editor-subrow {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+}
+.btn-pick-base-under-vector {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: #ffffff;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.btn-pick-base-under-vector:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+.btn-pick-base-under-vector.active {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #0369a1;
+}
+
+.canvas-left-stack {
+  position: absolute;
+  top: 92px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 5;
+}
+
+.canvas-left-stack .canvas-view-controls {
+  position: static;
+}
+
+.fold-order-controls {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+  border: 1px solid #e1e7ee;
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 245px;
+  box-shadow: 0 4px 16px rgba(32, 48, 70, 0.08);
+  user-select: none;
+}
+
+.fold-order-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fold-order-steps-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.fold-order-steps {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.btn-fold-step {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-fold-step.active {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+}
+
+.btn-fold-order-add {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px dashed #0284c7;
+  background: #f0f9ff;
+  color: #0284c7;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-fold-order-add:hover {
+  background: #e0f2fe;
+}
+
+.btn-fold-order-clear {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.btn-fold-order-clear:hover {
+  color: #dc2626;
+}
+
+.btn-fold-order-clear.hidden {
+  display: none;
+}

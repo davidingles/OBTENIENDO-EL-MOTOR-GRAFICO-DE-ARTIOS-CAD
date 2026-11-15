@@ -33,7 +33,10 @@
         </svg>
       </button>
 
-
+      <div id="header-open-file-info" class="header-open-file-info hidden" title="">
+        <span class="header-file-name" id="header-file-name"></span>
+        <span class="header-file-path" id="header-file-path"></span>
+      </div>
     </div>
 
     <div class="header-right">
@@ -46,25 +49,13 @@
         </svg>
       </button>
 
-      <!-- Botón Abrir con Dropdown -->
-      <div class="header-dropdown-container">
-        <button id="btn-header-open" class="btn-outline" type="button" aria-haspopup="true" aria-expanded="false" title="Opciones para abrir">
-          <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-          </svg>
-          <span>Abrir</span>
-          <span class="dropdown-caret">▾</span>
-        </button>
-        <div id="header-open-menu" class="header-dropdown-menu hidden" role="menu">
-          <button type="button" class="dropdown-item" id="menu-open-file">
-            <span class="dropdown-icon">📂</span>
-            <div>
-              <div class="item-title">Abrir troquel (SVG / DXF)</div>
-              <div class="item-sub">Importa un plano vectorial 1:1</div>
-            </div>
-          </button>
-        </div>
-      </div>
+      <!-- Botón Abrir directo (sin dropdown redundante) -->
+      <button id="btn-header-open" class="btn-outline" type="button" title="Abrir troquel (SVG / DXF)">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+        </svg>
+        <span>Abrir</span>
+      </button>
 
       <!-- Botón Guardar con Dropdown -->
       <div class="header-dropdown-container">
@@ -262,7 +253,7 @@
             <span class="field-label">Largo</span>
             <div class="field-input-and-target">
               <div class="field-input-box">
-                <input type="number" id="input-length" min="10" max="2500" step="1" value="315" />
+                <input type="text" inputmode="decimal" id="input-length" value="315" />
                 <span class="field-unit-label">mm</span>
               </div>
               <button type="button" class="btn-pick-dim" id="btn-pick-dim-l" data-dim="L" title="seleccionar el área" aria-label="seleccionar el área">
@@ -283,7 +274,7 @@
             <span class="field-label">Ancho</span>
             <div class="field-input-and-target">
               <div class="field-input-box">
-                <input type="number" id="input-width" min="10" max="2500" step="1" value="202" />
+                <input type="text" inputmode="decimal" id="input-width" value="202" />
                 <span class="field-unit-label">mm</span>
               </div>
               <button type="button" class="btn-pick-dim" id="btn-pick-dim-w" data-dim="W" title="seleccionar el área" aria-label="seleccionar el área">
@@ -304,7 +295,7 @@
             <span class="field-label">Alto</span>
             <div class="field-input-and-target">
               <div class="field-input-box">
-                <input type="number" id="input-height" min="10" max="2500" step="1" value="62" />
+                <input type="text" inputmode="decimal" id="input-height" value="62" />
                 <span class="field-unit-label">mm</span>
               </div>
               <button type="button" class="btn-pick-dim" id="btn-pick-dim-h" data-dim="H" title="seleccionar el área" aria-label="seleccionar el área">
@@ -596,22 +587,35 @@
       </div>
 
       <!-- Controles flotantes bajo la leyenda (Foto 2): Switch 3 estados de cotas y toggle de nombres de área -->
-      <div class="canvas-view-controls">
-        <div class="canvas-control-row">
-          <div class="control-label-micro">Cotas</div>
-          <div class="segmented-control-3" id="dimension-mode-switch" role="radiogroup" aria-label="Visualización de cotas">
-            <button type="button" class="seg-btn-3" data-mode="none" title="No mostrar cotas">Ocultas</button>
-            <button type="button" class="seg-btn-3 active" data-mode="main" title="Mostrar las 3 cotas principales (L, W, H)">Principales</button>
-            <button type="button" class="seg-btn-3" data-mode="all" title="Mostrar todas las cotas del troquel">Todas</button>
+      <div class="canvas-left-stack">
+        <div class="canvas-view-controls">
+          <div class="canvas-control-row">
+            <div class="control-label-micro">Cotas</div>
+            <div class="segmented-control-3" id="dimension-mode-switch" role="radiogroup" aria-label="Visualización de cotas">
+              <button type="button" class="seg-btn-3" data-mode="none" title="No mostrar cotas">Ocultas</button>
+              <button type="button" class="seg-btn-3 active" data-mode="main" title="Mostrar las 3 cotas principales (L, W, H)">Principales</button>
+              <button type="button" class="seg-btn-3" data-mode="all" title="Mostrar todas las cotas del troquel">Todas</button>
+            </div>
+            <input type="range" id="slider-dimension-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de las cotas" aria-label="Tamaño de las cotas" />
           </div>
-          <input type="range" id="slider-dimension-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de las cotas" aria-label="Tamaño de las cotas" />
+          <div class="canvas-control-row">
+            <button type="button" class="btn-toggle-areas active" id="btn-toggle-area-names" title="Mostrar u ocultar los nombres de cada área">
+              <span class="btn-toggle-dot"></span>
+              <span class="btn-toggle-text">Nombres de áreas</span>
+            </button>
+            <input type="range" id="slider-area-name-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de los nombres de áreas" aria-label="Tamaño de los nombres de áreas" />
+          </div>
         </div>
-        <div class="canvas-control-row">
-          <button type="button" class="btn-toggle-areas active" id="btn-toggle-area-names" title="Mostrar u ocultar los nombres de cada área">
-            <span class="btn-toggle-dot"></span>
-            <span class="btn-toggle-text">Nombres de áreas</span>
-          </button>
-          <input type="range" id="slider-area-name-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de los nombres de áreas" aria-label="Tamaño de los nombres de áreas" />
+
+        <div class="fold-order-controls" id="fold-order-controls">
+          <div class="fold-order-header">
+            <span class="control-label-micro">Establecer orden de plegado</span>
+            <button type="button" id="btn-clear-fold-order" class="btn-fold-order-clear hidden" title="Reiniciar orden de plegado">Limpiar</button>
+          </div>
+          <div class="fold-order-steps-row">
+            <div id="fold-order-steps" class="fold-order-steps"></div>
+            <button type="button" id="btn-add-fold-step" class="btn-fold-order-add" title="Añadir paso de plegado (+)">+</button>
+          </div>
         </div>
       </div>
 
@@ -632,6 +636,16 @@
             </svg>
           </button>
         </div>
+        <div class="vector-editor-subrow">
+          <button id="tool-pick-base" class="btn-pick-base-under-vector" type="button" title="Elegir cuál es la base del troquel (apoyada en la superficie 3D)">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <rect x="4" y="14" width="16" height="5" rx="1"></rect>
+              <path d="M12 3v8"></path>
+              <polyline points="8 7 12 11 16 7"></polyline>
+            </svg>
+            <span>Elegir base</span>
+          </button>
+        </div>
         <div id="vector-controls" hidden>
           <div class="vector-panel-heading">Herramientas 2D <button id="vector-close" type="button" aria-label="Cerrar editor">×</button></div>
           <div class="vector-tools" role="group" aria-label="Herramientas de vectores">
@@ -644,15 +658,16 @@
             <button id="vector-tool-trim" type="button">↙ Contraer</button>
             <button id="vector-tool-chamfer" type="button">⌁ Chaflán</button>
             <button id="vector-tool-fillet" type="button">◜ Radio</button>
+            <button id="vector-tool-scale" type="button">⤢ Escalar</button>
           </div>
           <label>Tipo de trazo <select id="vector-kind"><option value="cut">Azul · Corte</option><option value="fold">Rojo · Hendido</option></select></label>
           <div id="vector-color-controls" hidden><button id="vector-apply-kind" type="button">Aplicar tipo a la selección</button></div>
-          <label id="vector-value-label">Radio / chaflán (mm) <input id="vector-value" type="number" min="0.1" step="0.1" value="5"></label>
+          <label id="vector-value-label">Radio / chaflán (mm) <input id="vector-value" type="text" inputmode="decimal" value="5"></label>
           <p id="vector-help">Selecciona un trazo o el interior de un agujero. Mayús para desplazar. Esc cancela.</p>
           <div id="vector-selection">Sin selección</div>
           <div id="vector-hole-controls" hidden>
-            <label>Ancho (mm) <input id="vector-hole-width" type="number" min="0.1" step="0.1"></label>
-            <label>Alto (mm) <input id="vector-hole-height" type="number" min="0.1" step="0.1"></label>
+            <label>Ancho (mm) <input id="vector-hole-width" type="text" inputmode="decimal"></label>
+            <label>Alto (mm) <input id="vector-hole-height" type="text" inputmode="decimal"></label>
             <button id="vector-apply-hole" type="button">Cambiar tamaño del agujero</button>
           </div>
 
@@ -670,7 +685,7 @@
           <!-- Campos de Línea -->
           <div id="vector-modal-line-fields" class="vector-modal-fields" hidden>
             <label>Longitud fija (mm)
-              <input id="vector-line-len" type="number" min="0.1" step="0.5" placeholder="Libre">
+              <input id="vector-line-len" type="text" inputmode="decimal" placeholder="Libre">
             </label>
             <p class="vector-modal-hint">💡 <strong>Shift (Mayús)</strong>: fuerza trazo ortogonal en los ejes. Se pega a los vectores como un imán.</p>
           </div>
@@ -678,10 +693,10 @@
           <!-- Campos de Círculo -->
           <div id="vector-modal-circle-fields" class="vector-modal-fields" hidden>
             <label>Radio (mm)
-              <input id="vector-circle-radius" type="number" min="0.5" step="0.5" value="12">
+              <input id="vector-circle-radius" type="text" inputmode="decimal" value="12">
             </label>
             <label>Diámetro (mm)
-              <input id="vector-circle-diam" type="number" min="1" step="1" value="24">
+              <input id="vector-circle-diam" type="text" inputmode="decimal" value="24">
             </label>
             <p class="vector-modal-hint">Haz clic en el lienzo para colocar el círculo con medidas exactas. El imán se pega a extremos y puntos medios.</p>
           </div>
@@ -689,13 +704,13 @@
           <!-- Campos de Asa -->
           <div id="vector-modal-handle-fields" class="vector-modal-fields" hidden>
             <label>Ancho del asa (mm)
-              <input id="vector-handle-width" type="number" min="5" step="1" value="80">
+              <input id="vector-handle-width" type="text" inputmode="decimal" value="80">
             </label>
             <label>Alto del asa (mm)
-              <input id="vector-handle-height" type="number" min="4" step="1" value="25">
+              <input id="vector-handle-height" type="text" inputmode="decimal" value="25">
             </label>
             <label>Radio esquinas (mm)
-              <input id="vector-handle-radius" type="number" min="0" step="0.5" value="8">
+              <input id="vector-handle-radius" type="text" inputmode="decimal" value="8">
             </label>
             <p class="vector-modal-hint">Haz clic en el lienzo para colocar el asa centrada en el cursor. Se imanta al troquel.</p>
           </div>
@@ -703,12 +718,12 @@
           <!-- Campos de Agujero / Asa seleccionada (Mover, Copiar, Medidas) -->
           <div id="vector-modal-hole-fields" class="vector-modal-fields" hidden>
             <div class="vector-modal-row">
-              <label>Ancho (mm) <input id="vector-modal-hole-w" type="number" min="0.1" step="0.5"></label>
-              <label>Alto (mm) <input id="vector-modal-hole-h" type="number" min="0.1" step="0.5"></label>
+              <label>Ancho (mm) <input id="vector-modal-hole-w" type="text" inputmode="decimal"></label>
+              <label>Alto (mm) <input id="vector-modal-hole-h" type="text" inputmode="decimal"></label>
             </div>
             <div class="vector-modal-row">
-              <label>Desplazamiento ΔX (mm) <input id="vector-hole-dx" type="number" step="1" value="0"></label>
-              <label>Desplazamiento ΔY (mm) <input id="vector-hole-dy" type="number" step="1" value="0"></label>
+              <label>Desplazamiento ΔX (mm) <input id="vector-hole-dx" type="text" inputmode="decimal" value="0"></label>
+              <label>Desplazamiento ΔY (mm) <input id="vector-hole-dy" type="text" inputmode="decimal" value="0"></label>
             </div>
             <div class="vector-modal-actions">
               <button id="vector-btn-move-hole" type="button" class="btn-primary-blue">Mover</button>
@@ -751,65 +766,28 @@
             </div>
             <p id="vector-dim-hint" class="vector-modal-hint" style="margin-top:8px;">Pulsa 'Añadir cota' y marca 2 puntos en el lienzo para trazar la cota.</p>
           </div>
+
+          <!-- Campos de Escalar -->
+          <div id="vector-modal-scale-fields" class="vector-modal-fields" hidden>
+            <label>Origen (x , y)
+              <div style="display:flex;gap:4px;align-items:center;">
+                <input id="vector-scale-origin" type="text" placeholder="Centro del diseño" style="width:130px;font-size:12px;padding:5px;border:1px solid #d5dce5;border-radius:4px;">
+                <button id="vector-btn-scale-reset-origin" type="button" class="btn-outline" title="Usar centro del diseño" style="padding:4px 7px;font-size:11px;">Centro</button>
+              </div>
+            </label>
+            <label>Factor de multiplicación
+              <input id="vector-scale-factor" type="text" inputmode="decimal" value="1" placeholder="Ej: 10 o 9,6 * 10">
+            </label>
+            <div class="vector-modal-actions">
+              <button id="vector-btn-apply-scale" type="button" class="btn-primary-blue">Aplicar escala</button>
+              <button id="vector-btn-cancel-scale" type="button" class="btn-outline">Cerrar</button>
+            </div>
+            <p class="vector-modal-hint">Haz clic en el lienzo para elegir el origen (con imán). Si no eliges ninguno, se usa el centro del diseño.</p>
+          </div>
         </div>
       </div>
       <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
       <canvas id="canvas-2d"></canvas>
-
-      <!-- Barra de herramientas flotante inferior idéntica a la imagen -->
-      <div class="canvas-bottom-toolbar">
-        <button id="tool-select" class="tool-pill-btn active" title="Herramienta de selección">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M4 3l12 11.5-5 1.5 3 6-2.5 1.2-3-6-4.5 4.5z"/>
-          </svg>
-        </button>
-
-        <button id="tool-pan" class="tool-pill-btn" title="Desplazar plano con la mano">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M18 11V6a2 2 0 0 0-4 0v5"></path>
-            <path d="M14 10V4a2 2 0 0 0-4 0v7"></path>
-            <path d="M10 10.5V6a2 2 0 0 0-4 0v8"></path>
-            <path d="M18 8a2 2 0 0 1 4 4v5a7 7 0 0 1-7 7h-2c-3.87 0-7-3.13-7-7v-3.5"></path>
-          </svg>
-        </button>
-
-        <span class="tool-divider"></span>
-
-        <button id="tool-zoom-in" class="tool-pill-btn" title="Acercar (+)">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-            <line x1="12" y1="5" x2="12" y2="19"></line>
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-
-        <button id="tool-zoom-out" class="tool-pill-btn" title="Alejar (-)">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-            <line x1="5" y1="12" x2="19" y2="12"></line>
-          </svg>
-        </button>
-
-        <button id="tool-fit-view" class="tool-pill-btn" title="Centrar troquel 1:1">
-          <span style="font-size:11px; font-weight:700;">1:1</span>
-        </button>
-
-        <span class="tool-divider"></span>
-
-        <button id="tool-toggle-dims" class="tool-pill-btn active" title="Mostrar/ocultar cotas de medidas">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-            <line x1="4" y1="20" x2="20" y2="4"></line>
-            <polyline points="14 4 20 4 20 10"></polyline>
-          </svg>
-        </button>
-
-        <button id="tool-toggle-grid" class="tool-pill-btn active" title="Mostrar/ocultar cuadrícula milimétrica">
-          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none">
-            <line x1="4" y1="9" x2="20" y2="9"></line>
-            <line x1="4" y1="15" x2="20" y2="15"></line>
-            <line x1="10" y1="3" x2="10" y2="21"></line>
-            <line x1="16" y1="3" x2="16" y2="21"></line>
-          </svg>
-        </button>
-      </div>
 
     </section>
 

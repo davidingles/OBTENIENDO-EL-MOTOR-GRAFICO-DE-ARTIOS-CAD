@@ -277,7 +277,7 @@
   /**
    * Tessellates an SVG elliptical arc from (x1, y1) to (x2, y2) into linear points.
    */
-  function sampleSvgArc(x1, y1, rxIn, ryIn, phiDeg, largeArcFlag, sweepFlag, x2, y2, steps = 10) {
+  function sampleSvgArc(x1, y1, rxIn, ryIn, phiDeg, largeArcFlag, sweepFlag, x2, y2, steps = 28) {
     const dx2 = (x1 - x2) / 2.0;
     const dy2 = (y1 - y2) / 2.0;
     if (Math.hypot(dx2, dy2) < 1e-5) return [{ x: x2, y: y2 }];
@@ -338,7 +338,7 @@
     else if (fs && dTheta < 0) dTheta += 2 * Math.PI;
 
     const arcLenApprox = Math.abs(dTheta) * Math.max(rx, ry);
-    const nSteps = Math.max(3, Math.min(steps, Math.ceil(arcLenApprox / 2.2)));
+    const nSteps = Math.max(12, Math.min(steps, Math.ceil(Math.max(arcLenApprox, 1) / 0.5)));
     const pts = [];
     for (let i = 1; i <= nSteps; i++) {
       const t = i / nSteps;
@@ -485,7 +485,7 @@
             const y2 = nextNum() + (isRel ? cy : 0);
             const x = nextNum() + (isRel ? cx : 0);
             const y = nextNum() + (isRel ? cy : 0);
-            const steps = 10;
+            const steps = 24;
             for (let s = 1; s <= steps; s++) {
               const t = s / steps;
               const mt = 1 - t;
@@ -506,7 +506,7 @@
             const y1 = nextNum() + (isRel ? cy : 0);
             const x = nextNum() + (isRel ? cx : 0);
             const y = nextNum() + (isRel ? cy : 0);
-            const steps = 8;
+            const steps = 20;
             for (let s = 1; s <= steps; s++) {
               const t = s / steps;
               const mt = 1 - t;
@@ -735,7 +735,8 @@
         x: (p.x - minX) * mmPerUnit,
         y: (p.y - minY) * mmPerUnit
       }));
-      const simplified = scaled.length > 4 ? simplifyPolyline(scaled, 0.04) : scaled;
+      const simplifyEps = Math.min(0.01, Math.max(0.0005, (rawWidth * mmPerUnit) * 0.0002));
+      const simplified = scaled.length > 4 ? simplifyPolyline(scaled, simplifyEps) : scaled;
       for (let i = 0; i < simplified.length - 1; i++) {
         const a = simplified[i];
         const b = simplified[i + 1];
@@ -1008,8 +1009,27 @@
     }
 
     if (!rawFaces.length) throw new Error('No hay paneles cerrados. Comprueba que los cortes forman un contorno cerrado.');
+
+    // Cualquier área rodeada exclusivamente por líneas de corte (sin ningún hendido) es un hueco/vacío
+    if (rawFaces.length > 1) {
+      const faceHasFold = new Set();
+      for (const he of halfEdges) {
+        if (he.type === 'FOLD' && he.faceId >= 0) {
+          faceHasFold.add(he.faceId);
+        }
+      }
+      if (faceHasFold.size > 0) {
+        for (const face of rawFaces) {
+          if (!faceHasFold.has(face.id)) {
+            face.isHole = true;
+            face.role = 'HOLE';
+          }
+        }
+      }
+    }
+
     for (const face of rawFaces) {
-      const host = rawFaces.filter(other => other.id !== face.id && other.areaMm2 > face.areaMm2 && face.points.every(p => pointInPolygon(p, other.points)))
+      const host = rawFaces.filter(other => !other.isHole && other.id !== face.id && other.areaMm2 > face.areaMm2 && face.points.every(p => pointInPolygon(p, other.points)))
         .sort((a,b) => a.areaMm2-b.areaMm2)[0];
       if (host) {face.isHole=true;face.role='HOLE';host.holes.push(face.points);}
     }
@@ -1064,68 +1084,184 @@
     }
 
     const midY = blankHeightMm * 0.5;
-    const bodyFaces = rawFaces
+    const midX = blankWidthMm * 0.5;
+
+    // Detectar si existe un panel base claro (conectado por hendidos en ambos ejes ortogonales)
+    const hingeAxesByFace = new Map();
+    for (const h of hinges) {
+      const isVert = h.orientation === 'VERTICAL';
+      for (const fid of [h.faceA, h.faceB]) {
+        if (!hingeAxesByFace.has(fid)) hingeAxesByFace.set(fid, { h: 0, v: 0 });
+        const entry = hingeAxesByFace.get(fid);
+        if (isVert) entry.v++; else entry.h++;
+      }
+    }
+
+    const orthogonalBaseCandidates = rawFaces
+      .filter(f => !f.isHole)
+      .filter(f => {
+        const ax = hingeAxesByFace.get(f.id);
+        return ax && ax.h > 0 && ax.v > 0;
+      })
+      .sort((a, b) => {
+        const axA = hingeAxesByFace.get(a.id), axB = hingeAxesByFace.get(b.id);
+        const degDiff = (axB.h + axB.v) - (axA.h + axA.v);
+        if (degDiff !== 0) return degDiff;
+        return (b.areaMm2 || 0) - (a.areaMm2 || 0);
+      });
+
+    const horizBodyFaces = rawFaces
       .filter(f => !f.isHole && f.bbox.minY < midY && f.bbox.maxY > midY)
       .sort((a, b) => a.centroid.x - b.centroid.x);
+    const vertBodyFaces = rawFaces
+      .filter(f => !f.isHole && f.bbox.minX < midX && f.bbox.maxX > midX)
+      .sort((a, b) => a.centroid.y - b.centroid.y);
 
-    let bodyCounter = 1;
-    const bodyDimensions = [];
-    for (const bf of bodyFaces) {
-      if (bf.bbox.width < 45 && (bf === bodyFaces[0] || bf === bodyFaces[bodyFaces.length - 1])) {
-        bf.role = 'GLUE_FLAP';
-        bf.name = 'Pestaña de Pegado';
-        bf.shortName = 'Pegado';
-        bf.defaultAngle = 90;
-        bf.foldOrder = 0.15;
-      } else {
-        bf.role = 'BODY';
-        bf.bodyIndex = bodyCounter;
-        bf.name = `Cara Cuerpo ${bodyCounter}`;
-        bf.shortName = `Cara ${bodyCounter}`;
-        bf.defaultAngle = 90;
-        bf.foldOrder = 0.0;
-        bodyDimensions.push(bf);
-        bodyCounter++;
+    const isVerticalStrip = vertBodyFaces.length > horizBodyFaces.length && vertBodyFaces.length >= 4;
+    const stripBodyFaces = isVerticalStrip ? vertBodyFaces : horizBodyFaces;
+
+    let rootFace = null;
+    let bodyDimensions = [];
+    let mainBodyCandidates = [];
+    let boxLengthMm = 200;
+    let boxWidthMm = 150;
+    let boxDepthMm = 100;
+
+    // Si hay un panel base con paredes en ambos ejes y NO es una tira americana estándar de 4 caras iguales,
+    // tratamos el troquel como bandeja/estuche con base central.
+    const topBase = orthogonalBaseCandidates[0];
+    const otherMaxArea = topBase
+      ? rawFaces.filter(f => !f.isHole && f.id !== topBase.id).reduce((mx, f) => Math.max(mx, f.areaMm2 || 0), 0)
+      : 0;
+    const isDominantTrayBase = Boolean(topBase && otherMaxArea > 0 && (topBase.areaMm2 || 0) >= otherMaxArea * 1.8);
+    if (orthogonalBaseCandidates.length > 0 && (stripBodyFaces.length < 4 || isDominantTrayBase)) {
+      rootFace = orthogonalBaseCandidates[0];
+      rootFace.role = 'BODY';
+      rootFace.bodyIndex = 1;
+      rootFace.name = 'Base del Troquel';
+      rootFace.shortName = 'Base';
+      rootFace.defaultAngle = 0;
+      rootFace.foldOrder = 0.0;
+      mainBodyCandidates = [rootFace];
+
+      const wallDepths = [];
+      for (const h of hinges) {
+        const otherId = h.faceA === rootFace.id ? h.faceB : h.faceB === rootFace.id ? h.faceA : -1;
+        if (otherId < 0) continue;
+        const other = rawFaces[otherId];
+        if (!other || other.isHole) continue;
+        const dx = h.p2.x - h.p1.x, dy = h.p2.y - h.p1.y, len = Math.hypot(dx, dy) || 1;
+        const depth = Math.max(...other.points.map(p => Math.abs((p.x - h.p1.x) * dy - (p.y - h.p1.y) * dx) / len));
+        if (depth > 1) wallDepths.push(depth);
+        if (!other.role) {
+          other.role = depth < 25 ? 'GLUE_FLAP' : 'WALL';
+          other.name = depth < 25 ? 'Pestaña' : 'Pared';
+          other.shortName = depth < 25 ? 'Pestaña' : 'Pared';
+          other.defaultAngle = 90;
+          other.foldOrder = 0.3;
+        }
+      }
+      for (const f of rawFaces) {
+        if (f.isHole || f.role) continue;
+        f.role = 'FLAP';
+        f.name = `Solapa ${f.id}`;
+        f.shortName = `Sol. ${f.id}`;
+        f.defaultAngle = 90;
+        f.foldOrder = 0.6;
+      }
+
+      wallDepths.sort((a, b) => a - b);
+      boxLengthMm = +Math.max(rootFace.bbox.width, rootFace.bbox.height).toFixed(1);
+      boxWidthMm = +Math.min(rootFace.bbox.width, rootFace.bbox.height).toFixed(1);
+      boxDepthMm = +(wallDepths.length ? wallDepths[Math.floor(wallDepths.length / 2)] : Math.min(rootFace.bbox.width, rootFace.bbox.height) * 0.5).toFixed(1);
+    } else {
+      let bodyCounter = 1;
+      const maxCrossSpan = stripBodyFaces.reduce((mx, bf) => Math.max(mx, isVerticalStrip ? bf.bbox.width : bf.bbox.height), 0);
+      for (const bf of stripBodyFaces) {
+        const spanAlongStrip = isVerticalStrip ? bf.bbox.height : bf.bbox.width;
+        const crossSpan = isVerticalStrip ? bf.bbox.width : bf.bbox.height;
+        const isSmallTab = maxCrossSpan > 0 && crossSpan < maxCrossSpan * 0.6;
+        if (isSmallTab) {
+          bf.role = 'FLAP';
+          bf.name = `Lengüeta ${bf.id}`;
+          bf.shortName = `Leng. ${bf.id}`;
+          bf.defaultAngle = 90;
+          bf.foldOrder = 0.6;
+        } else if (spanAlongStrip < 45 && (bf === stripBodyFaces[0] || bf === stripBodyFaces[stripBodyFaces.length - 1]) && stripBodyFaces.length >= 4) {
+          bf.role = 'GLUE_FLAP';
+          bf.name = 'Pestaña de Pegado';
+          bf.shortName = 'Pegado';
+          bf.defaultAngle = 90;
+          bf.foldOrder = 0.15;
+        } else {
+          bf.role = 'BODY';
+          bf.bodyIndex = bodyCounter;
+          bf.name = `Cara Cuerpo ${bodyCounter}`;
+          bf.shortName = `Cara ${bodyCounter}`;
+          bf.defaultAngle = 90;
+          bf.foldOrder = 0.0;
+          bodyDimensions.push(bf);
+          bodyCounter++;
+        }
+      }
+
+      for (const f of rawFaces) {
+        if (f.isHole || f.role) continue;
+        const connectedHinge = hinges.find(h => h.faceA === f.id || h.faceB === f.id);
+        const parentId = connectedHinge ? (connectedHinge.faceA === f.id ? connectedHinge.faceB : connectedHinge.faceA) : -1;
+        const parentFace = rawFaces[parentId];
+        const idxLabel = parentFace && parentFace.bodyIndex ? parentFace.bodyIndex : f.id;
+        const isInnerFlap = parentFace && parentFace.bodyIndex ? (parentFace.bodyIndex % 2 === 1) : false;
+
+        const isTopOrLeft = isVerticalStrip ? (f.centroid.x < midX) : (f.centroid.y < midY);
+        if (isTopOrLeft) {
+          f.role = isInnerFlap ? 'TOP_FLAP_INNER' : 'TOP_FLAP_OUTER';
+          f.name = `Solapa Sup. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
+          f.shortName = `Sup. ${idxLabel}`;
+          f.defaultAngle = 90;
+          f.foldOrder = isInnerFlap ? 0.55 : 0.75;
+        } else {
+          f.role = isInnerFlap ? 'BOTTOM_FLAP_INNER' : 'BOTTOM_FLAP_OUTER';
+          f.name = `Solapa Inf. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
+          f.shortName = `Inf. ${idxLabel}`;
+          f.defaultAngle = 90;
+          f.foldOrder = isInnerFlap ? 0.25 : 0.40;
+        }
+      }
+
+      mainBodyCandidates = stripBodyFaces.filter(f => f.role === 'BODY');
+      rootFace = mainBodyCandidates.length >= 2
+        ? mainBodyCandidates[1]
+        : (mainBodyCandidates[0] || rawFaces.find(f => !f.isHole));
+
+      if (mainBodyCandidates.length >= 2) {
+        const spans = mainBodyCandidates.map(f => isVerticalStrip ? f.bbox.height : f.bbox.width);
+        const heights = mainBodyCandidates.map(f => isVerticalStrip ? f.bbox.width : f.bbox.height).sort((a, b) => a - b);
+        boxLengthMm = +Math.max(...spans).toFixed(1);
+        boxWidthMm = +Math.min(...spans).toFixed(1);
+        boxDepthMm = +(heights[Math.floor(heights.length / 2)]).toFixed(1);
+      } else if (rootFace) {
+        boxLengthMm = +Math.max(rootFace.bbox.width, rootFace.bbox.height).toFixed(1);
+        boxWidthMm = +Math.min(rootFace.bbox.width, rootFace.bbox.height).toFixed(1);
+        boxDepthMm = +(boxWidthMm * 0.5).toFixed(1);
       }
     }
-
-    for (const f of rawFaces) {
-      if (f.role) continue;
-      const connectedHinge = hinges.find(h => h.faceA === f.id || h.faceB === f.id);
-      const parentId = connectedHinge ? (connectedHinge.faceA === f.id ? connectedHinge.faceB : connectedHinge.faceA) : -1;
-      const parentFace = rawFaces[parentId];
-      const idxLabel = parentFace && parentFace.bodyIndex ? parentFace.bodyIndex : f.id;
-      const isInnerFlap = parentFace && parentFace.bodyIndex ? (parentFace.bodyIndex % 2 === 1) : false;
-
-      if (f.centroid.y < midY) {
-        f.role = isInnerFlap ? 'TOP_FLAP_INNER' : 'TOP_FLAP_OUTER';
-        f.name = `Solapa Sup. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
-        f.shortName = `Sup. ${idxLabel}`;
-        f.defaultAngle = 90;
-        f.foldOrder = isInnerFlap ? 0.55 : 0.75;
-      } else {
-        f.role = isInnerFlap ? 'BOTTOM_FLAP_INNER' : 'BOTTOM_FLAP_OUTER';
-        f.name = `Solapa Inf. ${idxLabel} (${isInnerFlap ? 'Int.' : 'Ext.'})`;
-        f.shortName = `Inf. ${idxLabel}`;
-        f.defaultAngle = 90;
-        f.foldOrder = isInnerFlap ? 0.25 : 0.40;
-      }
-    }
-
-    const mainBodyCandidates = bodyFaces.filter(f => f.role === 'BODY');
-    const rootFace = mainBodyCandidates.length >= 2
-      ? mainBodyCandidates[1]
-      : (mainBodyCandidates[0] || rawFaces.find(f=>!f.isHole));
     rootFace.isRoot = true;
     rootFace.defaultAngle = 0;
 
     const visitedFaces = new Set([rootFace.id]);
     const queue = [rootFace.id];
     const treeHinges = [];
+    const orderedHinges = [...hinges].sort((a, b) => {
+      const orthA = Math.abs(a.p1.x - a.p2.x) < 1 || Math.abs(a.p1.y - a.p2.y) < 1 ? 0 : 1;
+      const orthB = Math.abs(b.p1.x - b.p2.x) < 1 || Math.abs(b.p1.y - b.p2.y) < 1 ? 0 : 1;
+      if (orthA !== orthB) return orthA - orthB;
+      return (b.lengthMm || 0) - (a.lengthMm || 0);
+    });
 
     while (queue.length > 0) {
       const currId = queue.shift();
-      for (const h of hinges) {
+      for (const h of orderedHinges) {
         let childId = -1;
         if (h.faceA === currId && !visitedFaces.has(h.faceB)) {
           childId = h.faceB;
@@ -1162,9 +1298,43 @@
       }
     }
 
-    const boxLengthMm = +(rootFace.bbox.width).toFixed(1);
-    const boxWidthMm = +(mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.width : rootFace.bbox.width).toFixed(1);
-    const boxDepthMm = +(mainBodyCandidates[0] ? mainBodyCandidates[0].bbox.height : rootFace.bbox.height).toFixed(1);
+    // Conectar caras pequeñas huérfanas al panel visitado más cercano para evitar piezas sueltas en 3D
+    for (const orphan of rawFaces) {
+      if (orphan.isHole || visitedFaces.has(orphan.id)) continue;
+      let bestParent = null;
+      let bestDist = Infinity;
+      for (const f of rawFaces) {
+        if (f.isHole || !visitedFaces.has(f.id)) continue;
+        const dx = Math.max(0, Math.max(f.bbox.minX - orphan.bbox.maxX, orphan.bbox.minX - f.bbox.maxX));
+        const dy = Math.max(0, Math.max(f.bbox.minY - orphan.bbox.maxY, orphan.bbox.minY - f.bbox.maxY));
+        const gap = Math.hypot(dx, dy);
+        if (gap < bestDist) {
+          bestDist = gap;
+          bestParent = f;
+        }
+      }
+      if (bestParent && bestDist < 10) {
+        visitedFaces.add(orphan.id);
+        orphan.parentId = bestParent.id;
+        orphan.defaultAngle = 0;
+        const hId = `hinge_${bestParent.id}_${orphan.id}`;
+        orphan.hingeId = hId;
+        const mx = (Math.max(bestParent.bbox.minX, orphan.bbox.minX) + Math.min(bestParent.bbox.maxX, orphan.bbox.maxX)) * 0.5 || orphan.centroid.x;
+        const my = (Math.max(bestParent.bbox.minY, orphan.bbox.minY) + Math.min(bestParent.bbox.maxY, orphan.bbox.maxY)) * 0.5 || orphan.centroid.y;
+        treeHinges.push({
+          id: hId,
+          faceA: bestParent.id,
+          faceB: orphan.id,
+          parentId: bestParent.id,
+          childId: orphan.id,
+          p1: { x: mx - 1, y: my },
+          p2: { x: mx + 1, y: my },
+          midpoint: { x: mx, y: my },
+          lengthMm: 2,
+          orientation: 'HORIZONTAL'
+        });
+      }
+    }
 
     return {
       ...parsedDieline,
@@ -2540,10 +2710,12 @@
       const child=model.faces.find(f=>f.id===childId);if(!child)continue;
       const dx=h.p2.x-h.p1.x,dy=h.p2.y-h.p1.y,length=Math.hypot(dx,dy)||1;
       const depth=Math.max(...child.polygon.map(p=>Math.abs((p.x-h.p1.x)*dy-(p.y-h.p1.y)*dx)/length));
-      if(depth>1)depths.push(depth);
+      if(depth>1)depths.push({depth,role:child.role});
     }
-    depths.sort((a,b)=>a-b);
-    return {length:+base.bounds.width.toFixed(3),width:+base.bounds.height.toFixed(3),depth:+(depths.length?depths[Math.floor(depths.length/2)]:(model.boxDimensionsMm?.depth||40)).toFixed(3)};
+    const wallDepths=depths.filter(d=>d.role!=='GLUE_FLAP').map(d=>d.depth);
+    const candidates=(wallDepths.length?wallDepths:depths.map(d=>d.depth)).sort((a,b)=>a-b);
+    const bw=base.bounds.width, bh=base.bounds.height;
+    return {length:+Math.max(bw,bh).toFixed(3),width:+Math.min(bw,bh).toFixed(3),depth:+(candidates.length?candidates[Math.floor(candidates.length/2)]:(model.boxDimensionsMm?.depth||40)).toFixed(3)};
   }
 
   function rerootDielineModel(model, rootFaceId) {
@@ -2558,7 +2730,9 @@
       hinges.push({...h,parentFaceId:parent,childFaceId:child,parentId:parent,childId:child,defaultAngle:(h.defaultAngle??90)*(reverse?-1:1),animSteps:h.animSteps?.map(s=>({...s,deltaDeg:s.deltaDeg*(reverse?-1:1)}))});
     }}
     if(visited.size!==faces.length)throw new Error('Hay paneles sin unión de hendido. Revisa la clasificación de las capas.');
-    return {...model,faces,hinges,rootFaceId,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
+    const nextModel={...model,faces,hinges,rootFaceId,hasExplicitBase:true,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
+    nextModel.sizeArrowData=generateSizeArrowData(nextModel);
+    return reconcileDimensionMeasurements(nextModel);
   }
 
   function findPrimaryLidFlapFace(model) {
@@ -3445,98 +3619,127 @@
     const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
     const arrows = [];
 
-    if (bodyFaces.length >= 2) {
-      const fL = bodyFaces.find(f => Math.abs(f.bounds.width - L) < 3) || bodyFaces[0];
-      const fW = bodyFaces.find(f => Math.abs(f.bounds.width - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
+    if (!model.hasExplicitBase && bodyFaces.length >= 2) {
+      const xs = bodyFaces.map(f => (f.bounds.minX + f.bounds.maxX) * 0.5);
+      const ys = bodyFaces.map(f => (f.bounds.minY + f.bounds.maxY) * 0.5);
+      const spanX = Math.max(...xs) - Math.min(...xs);
+      const spanY = Math.max(...ys) - Math.min(...ys);
+      const isVerticalStrip = spanY > spanX;
 
-      // Flecha L (Largo) - ligeramente ladeada entre el centro y el lateral
-      const yL = fL.bounds.minY + fL.bounds.height * 0.72;
-      arrows.push({
-        lineName: 'L',
-        lineLength: L,
-        p1: { x: fL.bounds.minX, y: yL },
-        p2: { x: fL.bounds.maxX, y: yL },
-        tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
-      });
+      const spanOf = f => isVerticalStrip ? f.bounds.height : f.bounds.width;
+      const fL = bodyFaces.find(f => Math.abs(spanOf(f) - L) < 3) || bodyFaces[0];
+      const fW = bodyFaces.find(f => Math.abs(spanOf(f) - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
 
-      // Flecha W (Ancho) - ligeramente ladeada entre el centro y el lateral
-      const yW = fW.bounds.minY + fW.bounds.height * 0.72;
-      arrows.push({
-        lineName: 'W',
-        lineLength: W,
-        p1: { x: fW.bounds.minX, y: yW },
-        p2: { x: fW.bounds.maxX, y: yW },
-        tpointer: { x: (fW.bounds.minX + fW.bounds.maxX) * 0.5, y: yW, value: 'W=' + W }
-      });
-
-      // Flecha H (Alto)
-      const xH = fL.bounds.minX + Math.min(30, fL.bounds.width * 0.2);
-      arrows.push({
-        lineName: 'H',
-        lineLength: H,
-        p1: { x: xH, y: fL.bounds.minY },
-        p2: { x: xH, y: fL.bounds.maxY },
-        tpointer: { x: xH, y: (fL.bounds.minY + fL.bounds.maxY) * 0.5, value: 'H=' + H }
-      });
+      if (isVerticalStrip) {
+        const xL = fL.bounds.minX + fL.bounds.width * 0.72;
+        arrows.push({
+          lineName: 'L', lineLength: L,
+          p1: { x: xL, y: fL.bounds.minY }, p2: { x: xL, y: fL.bounds.maxY },
+          tpointer: { x: xL, y: (fL.bounds.minY + fL.bounds.maxY) * 0.5, value: 'L=' + L }
+        });
+        const xW = fW.bounds.minX + fW.bounds.width * 0.72;
+        arrows.push({
+          lineName: 'W', lineLength: W,
+          p1: { x: xW, y: fW.bounds.minY }, p2: { x: xW, y: fW.bounds.maxY },
+          tpointer: { x: xW, y: (fW.bounds.minY + fW.bounds.maxY) * 0.5, value: 'W=' + W }
+        });
+        const yH = fL.bounds.minY + Math.min(30, fL.bounds.height * 0.2);
+        arrows.push({
+          lineName: 'H', lineLength: H,
+          p1: { x: fL.bounds.minX, y: yH }, p2: { x: fL.bounds.maxX, y: yH },
+          tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yH, value: 'H=' + H }
+        });
+      } else {
+        // Flecha L (Largo) - ligeramente ladeada entre el centro y el lateral
+        const yL = fL.bounds.minY + fL.bounds.height * 0.72;
+        arrows.push({
+          lineName: 'L', lineLength: L,
+          p1: { x: fL.bounds.minX, y: yL }, p2: { x: fL.bounds.maxX, y: yL },
+          tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
+        });
+        // Flecha W (Ancho) - ligeramente ladeada entre el centro y el lateral
+        const yW = fW.bounds.minY + fW.bounds.height * 0.72;
+        arrows.push({
+          lineName: 'W', lineLength: W,
+          p1: { x: fW.bounds.minX, y: yW }, p2: { x: fW.bounds.maxX, y: yW },
+          tpointer: { x: (fW.bounds.minX + fW.bounds.maxX) * 0.5, y: yW, value: 'W=' + W }
+        });
+        // Flecha H (Alto)
+        const xH = fL.bounds.minX + Math.min(30, fL.bounds.width * 0.2);
+        arrows.push({
+          lineName: 'H', lineLength: H,
+          p1: { x: xH, y: fL.bounds.minY }, p2: { x: xH, y: fL.bounds.maxY },
+          tpointer: { x: xH, y: (fL.bounds.minY + fL.bounds.maxY) * 0.5, value: 'H=' + H }
+        });
+      }
     } else {
       const baseFace = model.faces.find(f => f.id === model.rootFaceId) || model.faces[0];
-      const yL = baseFace.bounds.minY + baseFace.bounds.height * 0.72;
-      arrows.push({
-        lineName: 'L',
-        lineLength: L,
-        p1: { x: baseFace.bounds.minX, y: yL },
-        p2: { x: baseFace.bounds.maxX, y: yL },
-        tpointer: { x: (baseFace.bounds.minX + baseFace.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
-      });
+      const baseIsHorizontal = baseFace.bounds.width >= baseFace.bounds.height;
 
-      const xW = baseFace.bounds.minX + baseFace.bounds.width * 0.28;
-      arrows.push({
-        lineName: 'W',
-        lineLength: W,
-        p1: { x: xW, y: baseFace.bounds.minY },
-        p2: { x: xW, y: baseFace.bounds.maxY },
-        tpointer: { x: xW, y: (baseFace.bounds.minY + baseFace.bounds.maxY) * 0.5, value: 'W=' + W }
-      });
+      if (baseIsHorizontal) {
+        const yL = baseFace.bounds.minY + baseFace.bounds.height * 0.72;
+        arrows.push({
+          lineName: 'L', lineLength: L,
+          p1: { x: baseFace.bounds.minX, y: yL }, p2: { x: baseFace.bounds.maxX, y: yL },
+          tpointer: { x: (baseFace.bounds.minX + baseFace.bounds.maxX) * 0.5, y: yL, value: 'L=' + L }
+        });
+        const xW = baseFace.bounds.minX + baseFace.bounds.width * 0.28;
+        arrows.push({
+          lineName: 'W', lineLength: W,
+          p1: { x: xW, y: baseFace.bounds.minY }, p2: { x: xW, y: baseFace.bounds.maxY },
+          tpointer: { x: xW, y: (baseFace.bounds.minY + baseFace.bounds.maxY) * 0.5, value: 'W=' + W }
+        });
+      } else {
+        const xL = baseFace.bounds.minX + baseFace.bounds.width * 0.28;
+        arrows.push({
+          lineName: 'L', lineLength: L,
+          p1: { x: xL, y: baseFace.bounds.minY }, p2: { x: xL, y: baseFace.bounds.maxY },
+          tpointer: { x: xL, y: (baseFace.bounds.minY + baseFace.bounds.maxY) * 0.5, value: 'L=' + L }
+        });
+        const yW = baseFace.bounds.minY + baseFace.bounds.height * 0.72;
+        arrows.push({
+          lineName: 'W', lineLength: W,
+          p1: { x: baseFace.bounds.minX, y: yW }, p2: { x: baseFace.bounds.maxX, y: yW },
+          tpointer: { x: (baseFace.bounds.minX + baseFace.bounds.maxX) * 0.5, y: yW, value: 'W=' + W }
+        });
+      }
 
       let wallFace = null;
+      let wallHinge = null;
       for (const h of model.hinges || []) {
         if (h.parentFaceId === baseFace.id || h.childFaceId === baseFace.id) {
           const otherId = h.parentFaceId === baseFace.id ? h.childFaceId : h.parentFaceId;
           const other = model.faces.find(f => f.id === otherId);
-          if (other && (other.bounds.width > 5 || other.bounds.height > 5)) {
-            wallFace = other;
-            break;
+          if (other && other.role !== 'GLUE_FLAP' && (other.bounds.width > 5 || other.bounds.height > 5)) {
+            if (!wallFace || (other.area || 0) > (wallFace.area || 0)) {
+              wallFace = other;
+              wallHinge = h;
+            }
           }
         }
       }
-      if (wallFace) {
-        const isHorizWall = wallFace.bounds.width > wallFace.bounds.height;
-        if (isHorizWall) {
+      if (wallFace && wallHinge) {
+        const hingeIsHoriz = Math.abs(wallHinge.p2.x - wallHinge.p1.x) >= Math.abs(wallHinge.p2.y - wallHinge.p1.y);
+        if (hingeIsHoriz) {
           const xH = wallFace.bounds.minX + wallFace.bounds.width * 0.28;
           arrows.push({
-            lineName: 'H',
-            lineLength: H,
-            p1: { x: xH, y: wallFace.bounds.minY },
-            p2: { x: xH, y: wallFace.bounds.maxY },
+            lineName: 'H', lineLength: H,
+            p1: { x: xH, y: wallFace.bounds.minY }, p2: { x: xH, y: wallFace.bounds.maxY },
             tpointer: { x: xH, y: (wallFace.bounds.minY + wallFace.bounds.maxY) * 0.5, value: 'H=' + H }
           });
         } else {
           const yH = wallFace.bounds.minY + wallFace.bounds.height * 0.72;
           arrows.push({
-            lineName: 'H',
-            lineLength: H,
-            p1: { x: wallFace.bounds.minX, y: yH },
-            p2: { x: wallFace.bounds.maxX, y: yH },
+            lineName: 'H', lineLength: H,
+            p1: { x: wallFace.bounds.minX, y: yH }, p2: { x: wallFace.bounds.maxX, y: yH },
             tpointer: { x: (wallFace.bounds.minX + wallFace.bounds.maxX) * 0.5, y: yH, value: 'H=' + H }
           });
         }
       } else {
         const xH = baseFace.bounds.maxX + 15;
         arrows.push({
-          lineName: 'H',
-          lineLength: H,
-          p1: { x: xH, y: baseFace.bounds.minY },
-          p2: { x: xH, y: baseFace.bounds.minY + H },
+          lineName: 'H', lineLength: H,
+          p1: { x: xH, y: baseFace.bounds.minY }, p2: { x: xH, y: baseFace.bounds.minY + H },
           tpointer: { x: xH, y: baseFace.bounds.minY + H * 0.5, value: 'H=' + H }
         });
       }
@@ -3624,11 +3827,14 @@
     if (!model) return model;
     if (!model.boxDimensionsMm) {
       const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
-      if (bodyFaces.length >= 2) {
-        const bodyWidths = bodyFaces.map(f => f.bounds.width);
-        const L = Math.max(...bodyWidths);
-        const W = Math.min(...bodyWidths);
-        const H = bodyFaces[0].bounds.height;
+      if (!model.hasExplicitBase && bodyFaces.length >= 2) {
+        const xs = bodyFaces.map(f => (f.bounds.minX + f.bounds.maxX) * 0.5);
+        const ys = bodyFaces.map(f => (f.bounds.minY + f.bounds.maxY) * 0.5);
+        const isVert = (Math.max(...ys) - Math.min(...ys)) > (Math.max(...xs) - Math.min(...xs));
+        const bodySpans = bodyFaces.map(f => isVert ? f.bounds.height : f.bounds.width);
+        const L = Math.max(...bodySpans);
+        const W = Math.min(...bodySpans);
+        const H = isVert ? bodyFaces[0].bounds.width : bodyFaces[0].bounds.height;
         model.boxDimensionsMm = { length: +L.toFixed(2), width: +W.toFixed(2), depth: +H.toFixed(2) };
       } else {
         model.boxDimensionsMm = dimensionsFromBase(model, model.rootFaceId);
@@ -3699,7 +3905,7 @@
       rootFaceId: sub.rootFaceId
     };
 
-    const built = ensureDielineDimensions(enforceFlapLengthLimit(model));
+    const built = ensureDielineDimensions(model);
     const byName = name => (built.sizeArrowData || []).find(a => a.lineName === name && a.p1 && a.p2);
     const mL = byName('L') ? measureDimensionArrow(byName('L')) : null;
     const mW = byName('W') ? measureDimensionArrow(byName('W')) : null;

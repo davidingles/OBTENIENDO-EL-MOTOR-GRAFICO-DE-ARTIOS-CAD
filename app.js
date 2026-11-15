@@ -30,6 +30,68 @@
       : MATERIAL_FINISHES[2];
   }
 
+  /**
+   * Evalúa expresiones aritméticas simples (p. ej. "9,6 * 10", "100 / 2", "(20 + 5) * 2")
+   * sin usar eval(), aceptando coma o punto decimal.
+   */
+  function parseMathValue(raw) {
+    if (typeof raw === 'number') return Number.isFinite(raw) ? raw : NaN;
+    if (typeof raw !== 'string') return NaN;
+    const cleaned = raw.trim().replace(/,/g, '.').replace(/×/g, '*').replace(/÷/g, '/');
+    if (!cleaned) return NaN;
+    const tokens = [];
+    let i = 0;
+    while (i < cleaned.length) {
+      const ch = cleaned[i];
+      if (/\s/.test(ch)) { i++; continue; }
+      if ('+-*/()'.includes(ch)) { tokens.push(ch); i++; continue; }
+      if (/[\d.]/.test(ch)) {
+        let num = '';
+        while (i < cleaned.length && /[\d.]/.test(cleaned[i])) num += cleaned[i++];
+        const n = Number(num);
+        if (!Number.isFinite(n)) return NaN;
+        tokens.push(n);
+        continue;
+      }
+      return NaN;
+    }
+    let pos = 0;
+    const parseExpr = () => {
+      let val = parseTerm();
+      while (pos < tokens.length && (tokens[pos] === '+' || tokens[pos] === '-')) {
+        const op = tokens[pos++];
+        const rhs = parseTerm();
+        val = op === '+' ? val + rhs : val - rhs;
+      }
+      return val;
+    };
+    const parseTerm = () => {
+      let val = parseFactor();
+      while (pos < tokens.length && (tokens[pos] === '*' || tokens[pos] === '/')) {
+        const op = tokens[pos++];
+        const rhs = parseFactor();
+        if (op === '/' && rhs === 0) return NaN;
+        val = op === '*' ? val * rhs : val / rhs;
+      }
+      return val;
+    };
+    const parseFactor = () => {
+      if (tokens[pos] === '+') { pos++; return parseFactor(); }
+      if (tokens[pos] === '-') { pos++; return -parseFactor(); }
+      if (tokens[pos] === '(') {
+        pos++;
+        const val = parseExpr();
+        if (tokens[pos] !== ')') return NaN;
+        pos++;
+        return val;
+      }
+      const tok = tokens[pos++];
+      return typeof tok === 'number' ? tok : NaN;
+    };
+    const result = parseExpr();
+    return pos === tokens.length && Number.isFinite(result) ? result : NaN;
+  }
+
   // ============================================================================
   // ESTADO GLOBAL DE LA APLICACIÓN
   // ============================================================================
@@ -96,6 +158,10 @@
     hingeAngles: {},
     selectedHinges: new Set(),
     hingeSelectionMode: false,
+    pickingBaseMode: false,
+    foldOrderSteps: 0,
+    activeFoldOrderStep: null,
+    customFoldOrder: {},
     foldSequenceMode: 'phased',
     view2D: {
       zoom: 1,
@@ -467,8 +533,72 @@
     }
   }
 
+  function renderFoldOrderUI() {
+    const container = document.getElementById('fold-order-steps');
+    const clearBtn = document.getElementById('btn-clear-fold-order');
+    if (clearBtn) clearBtn.classList?.toggle('hidden', state.foldOrderSteps === 0);
+    if (!container) return;
+    container.innerHTML = '';
+    for (let step = 1; step <= state.foldOrderSteps; step++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn-fold-step' + (state.activeFoldOrderStep === step ? ' active' : '');
+      btn.textContent = String(step);
+      btn.title = `Paso ${step}: pincha en el 2D las áreas que doblan en el turno ${step}`;
+      btn.addEventListener('click', () => {
+        state.activeFoldOrderStep = state.activeFoldOrderStep === step ? null : step;
+        if (state.activeFoldOrderStep) {
+          state.pickingBaseMode = false;
+          const pb = document.getElementById('tool-pick-base');
+          if (pb) {
+            pb.classList?.remove('active');
+            const sp = pb.querySelector?.('span');
+            if (sp) sp.textContent = 'Elegir base';
+          }
+        }
+        const c2d = document.getElementById('canvas-2d');
+        if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
+        renderFoldOrderUI();
+      });
+      container.appendChild(btn);
+    }
+  }
+
+  async function setBaseFace(faceId) {
+    if (faceId === null || faceId === undefined || !state.baseDieline) return;
+    const c2d = document.getElementById('canvas-2d');
+    const pickBaseBtn = document.getElementById('tool-pick-base');
+    document.body.style.cursor = 'wait';
+    if (c2d) { c2d.style.cursor = 'wait'; c2d.style.pointerEvents = 'none'; }
+    if (pickBaseBtn) pickBaseBtn.disabled = true;
+    await new Promise(r => setTimeout(r, 16));
+    try {
+      const artwork = state.artwork ? { ...state.artwork } : null;
+      const model = DielineEngine.rerootDielineModel(state.baseDieline, faceId);
+      state.pickingBaseMode = false;
+      if (pickBaseBtn) {
+        pickBaseBtn.classList.remove('active');
+        const span = pickBaseBtn.querySelector('span');
+        if (span) span.textContent = 'Elegir base';
+      }
+      applyNewDielineModel(model, state.fileName, true, state.canAddToLibrary);
+      syncParametricInputsUI(model);
+      if (artwork) await loadArtworkData(artwork.dataUrl, artwork);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      document.body.style.cursor = '';
+      if (c2d) {
+        c2d.style.cursor = state.pickingBaseMode ? 'crosshair' : '';
+        c2d.style.pointerEvents = '';
+      }
+      if (pickBaseBtn) pickBaseBtn.disabled = false;
+    }
+  }
+
   function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false) {
-    model = DielineEngine.reconcileDimensionMeasurements(DielineEngine.enforceFlapLengthLimit(VectorCAD.normalize(model)));
+    const normalized = VectorCAD.normalize(model);
+    model = DielineEngine.reconcileDimensionMeasurements(normalized.isPacdoraModel ? DielineEngine.enforceFlapLengthLimit(normalized) : normalized);
     vectorSelection = null; vectorDraft=null; vectorRedo=[];
     vectorHistory = [];
     clearTimeout(livePacdoraTimer);
@@ -493,6 +623,10 @@
     for (const h of model.hinges) {
       state.hingeAngles[h.id] = 0;
     }
+    state.foldOrderSteps = 0;
+    state.activeFoldOrderStep = null;
+    state.customFoldOrder = {};
+    if (typeof renderFoldOrderUI === 'function') renderFoldOrderUI();
 
     syncParametricInputsUI(model);
     updateDielineInfoUI(model);
@@ -508,7 +642,7 @@
       setMasterFold(state.masterFold || 0.75);
       fitCameraToModel(false);
     }
-    if(state.activeFefcoEntry?.userModel)state.parametricDieline=model;
+    if (!state.activeFefcoEntry || state.activeFefcoEntry?.userModel) state.parametricDieline = model;
     else applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
     if (state.activeTab === 'details') renderDetailsTabUI();
   }
@@ -646,11 +780,11 @@
   function applyParametricResizeRealTime(newL, newW, newH) {
     if (!state.baseDieline) return;
     if(state.dieline?.vector3DStale){document.getElementById('param-sync-status').textContent='Cierra el contorno antes de cambiar las medidas.';return;}
-    const incoming = [newL,newW,newH].map((v,i) => Math.max(15, Math.min(2000, Number(v) || [state.paramL,state.paramW,state.paramH][i])));
+    const incoming = [newL,newW,newH].map((v,i) => Math.max(1, Math.min(2000, Number(v) || [state.paramL,state.paramW,state.paramH][i])));
     if (state.dieline && incoming.some((v,i) => v !== [state.paramL,state.paramW,state.paramH][i])) recordUndoState();
-    state.paramL = Math.max(15, Math.min(2000, Number(newL) || state.paramL));
-    state.paramW = Math.max(15, Math.min(2000, Number(newW) || state.paramW));
-    state.paramH = Math.max(15, Math.min(2000, Number(newH) || state.paramH));
+    state.paramL = Math.max(1, Math.min(2000, Number(newL) || state.paramL));
+    state.paramW = Math.max(1, Math.min(2000, Number(newW) || state.paramW));
+    state.paramH = Math.max(1, Math.min(2000, Number(newH) || state.paramH));
     const board = resolveMaterialFinish(state.boardId);
     const ratio = state.caliper / (board?.caliper || state.caliper);
     const inside = (board?.insideLoss || 0) * ratio;
@@ -1248,6 +1382,17 @@
    * Cada área móvil termina a 90° respecto a su padre, sin sobreplegado.
    */
   function computeHingeAngleAtProgress(hinge, childFace, progressT, sequenceMode) {
+    // Orden de plegado personalizado por pasos (1, 2, 3...)
+    if (sequenceMode === 'phased' && state.foldOrderSteps > 0 && childFace && Object.keys(state.customFoldOrder || {}).length > 0) {
+      const totalSteps = Math.max(1, state.foldOrderSteps);
+      const step = state.customFoldOrder[childFace.id] || totalSteps;
+      const start = (step - 1) / totalSteps;
+      const end = step / totalSteps;
+      const t = Math.max(0, Math.min(1, (progressT - start) / Math.max(1e-5, end - start)));
+      const direction = Math.sign(hinge.defaultAngle) || 1;
+      return +(direction * 90 * t * t * (3 - 2 * t)).toFixed(2);
+    }
+
     // Preserve catalog timing and fold direction, but enforce a quarter turn.
     if (sequenceMode === 'phased' && hinge.animSteps && hinge.animSteps.length > 0) {
       const start = Math.min(...hinge.animSteps.map(step => step.start));
@@ -1824,6 +1969,26 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (state.activeFoldOrderStep && e.button === 0) {
+        const hitFace = hitTest2DCanvas(e);
+        if (hitFace && hitFace.id !== state.dieline?.rootFaceId) {
+          if (state.customFoldOrder[hitFace.id] === state.activeFoldOrderStep) {
+            delete state.customFoldOrder[hitFace.id];
+          } else {
+            state.customFoldOrder[hitFace.id] = state.activeFoldOrderStep;
+          }
+          setMasterFold(state.masterFold);
+          render2FDieline();
+        }
+        return;
+      }
+      if (state.pickingBaseMode && e.button === 0) {
+        const hitFace = hitTest2DCanvas(e);
+        if (hitFace) {
+          setBaseFace(hitFace.id);
+        }
+        return;
+      }
       if (state.pickingDimensionArea && e.button === 0) {
         const hitFace = hitTest2DCanvas(e);
         if (hitFace) {
@@ -2380,6 +2545,31 @@
       }
     }
 
+    // 6b. Badges de orden de plegado personalizado (1, 2, 3...)
+    if (state.foldOrderSteps > 0 && state.customFoldOrder) {
+      for (const face of model.faces) {
+        const stepNum = state.customFoldOrder[face.id];
+        if (!stepNum) continue;
+        const sx = tf.toScreenX(face.centroid.x);
+        const sy = tf.toScreenY(face.centroid.y) + 12 * dpr;
+        const r = 10 * dpr;
+        ctx.save();
+        ctx.fillStyle = '#0284c7';
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `700 ${Math.round(11 * dpr)}px "Inter", system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(stepNum), sx, sy + 0.5 * dpr);
+        ctx.restore();
+      }
+    }
+
     ctx.restore();
   }
 
@@ -2633,25 +2823,43 @@
     const wInput = document.getElementById('input-width');
     const hInput = document.getElementById('input-height');
 
-    const handleDimChange = () => {
-      const factor = 1;
-      const nl = (parseFloat(lInput?.value) || state.paramL) * factor;
-      const nw = (parseFloat(wInput?.value) || state.paramW) * factor;
-      const nh = (parseFloat(hInput?.value) || state.paramH) * factor;
+    const handleDimChange = (commitFormula = false) => {
+      const readDim = (inp, fallback) => {
+        if (!inp) return fallback;
+        const raw = String(inp.value ?? '').trim();
+        if (!commitFormula && /[+\-*/×÷(]\s*$/.test(raw)) return fallback;
+        const v = parseMathValue(raw);
+        if (Number.isFinite(v) && v > 0) {
+          if (commitFormula && /[+\-*/×÷()]/.test(raw)) inp.value = +v.toFixed(2);
+          return v;
+        }
+        return fallback;
+      };
+      const nl = readDim(lInput, state.paramL);
+      const nw = readDim(wInput, state.paramW);
+      const nh = readDim(hInput, state.paramH);
       applyParametricResizeRealTime(nl, nw, nh);
     };
 
     [lInput, wInput, hInput].forEach(inp => {
       if (!inp) return;
-      inp.addEventListener('input', handleDimChange);
-      inp.addEventListener('change', handleDimChange);
+      inp.addEventListener('input', () => handleDimChange(false));
+      inp.addEventListener('change', () => handleDimChange(true));
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          handleDimChange(true);
+          inp.blur();
+        }
+      });
       inp.addEventListener('wheel', (e) => {
         e.preventDefault();
         const dir = e.deltaY < 0 ? 1 : -1;
-        const cur = parseFloat(inp.value) || 0;
+        const cur = parseMathValue(inp.value);
+        const base = Number.isFinite(cur) ? cur : 0;
         const step = 1.0;
-        inp.value = +(cur + dir * step).toFixed(2);
-        handleDimChange();
+        inp.value = +(base + dir * step).toFixed(2);
+        handleDimChange(true);
       }, { passive: false });
     });
 
@@ -2939,6 +3147,7 @@
           reader.onload = (ev) => {
             if (/\.dxf$/i.test(file.name)) openDxfImport(ev.target.result, file.name);
             else loadSVGString(ev.target.result, file.name, true);
+            updateHeaderOpenFileInfo(file.name, file.webkitRelativePath || file.name);
           };
           reader.readAsText(file);
           e.target.value = '';
@@ -2970,13 +3179,51 @@
     document.getElementById('btn-create-blend')?.addEventListener('click',createBlendScene);
     setupClientPublishing();
     initVectorEditor();
-    document.getElementById('btn-set-base')?.addEventListener('click',async()=>{
-      try{
-        const artwork=state.artwork?{...state.artwork}:null;
-        const model=DielineEngine.rerootDielineModel(state.baseDieline,state.selectedFaceId);
-        applyNewDielineModel(model,state.fileName,true,state.canAddToLibrary);
-        if(artwork)await loadArtworkData(artwork.dataUrl,artwork);
-      }catch(error){alert(error.message);}
+
+    document.getElementById('btn-set-base')?.addEventListener('click', () => {
+      setBaseFace(state.selectedFaceId);
+    });
+
+    document.getElementById('tool-pick-base')?.addEventListener('click', () => {
+      state.pickingBaseMode = !state.pickingBaseMode;
+      if (state.pickingBaseMode) {
+        state.activeFoldOrderStep = null;
+        renderFoldOrderUI();
+      }
+      const pickBaseBtn = document.getElementById('tool-pick-base');
+      if (pickBaseBtn) {
+        pickBaseBtn.classList.toggle('active', state.pickingBaseMode);
+        const span = pickBaseBtn.querySelector('span');
+        if (span) span.textContent = state.pickingBaseMode ? 'Pincha en la base...' : 'Elegir base';
+      }
+      const c2d = document.getElementById('canvas-2d');
+      if (c2d) c2d.style.cursor = state.pickingBaseMode ? 'crosshair' : '';
+    });
+
+    document.getElementById('btn-add-fold-step')?.addEventListener('click', () => {
+      state.foldOrderSteps = (state.foldOrderSteps || 0) + 1;
+      state.activeFoldOrderStep = state.foldOrderSteps;
+      state.pickingBaseMode = false;
+      const pb = document.getElementById('tool-pick-base');
+      if (pb) {
+        pb.classList?.remove('active');
+        const sp = pb.querySelector?.('span');
+        if (sp) sp.textContent = 'Elegir base';
+      }
+      const c2d = document.getElementById('canvas-2d');
+      if (c2d) c2d.style.cursor = 'crosshair';
+      renderFoldOrderUI();
+    });
+
+    document.getElementById('btn-clear-fold-order')?.addEventListener('click', () => {
+      state.foldOrderSteps = 0;
+      state.activeFoldOrderStep = null;
+      state.customFoldOrder = {};
+      const c2d = document.getElementById('canvas-2d');
+      if (c2d) c2d.style.cursor = '';
+      renderFoldOrderUI();
+      setMasterFold(state.masterFold);
+      render2FDieline();
     });
     initArtworkControls();
 
@@ -3031,34 +3278,47 @@
       if (!file) return;
       if (/\.dxf$/i.test(file.name)) openDxfImport(file.text, file.name);
       else loadSVGString(file.text, file.name, true);
+      if (typeof updateHeaderOpenFileInfo === 'function') {
+        updateHeaderOpenFileInfo(file.name, file.path || file.name);
+      }
     } catch (error) {
       console.error('No se pudo abrir el troquel:', error);
       alert('No se pudo abrir el troquel: ' + (error?.message || String(error)));
     }
   }
 
+  function updateHeaderOpenFileInfo(name, fullPath) {
+    const box = document.getElementById('header-open-file-info');
+    const nameEl = document.getElementById('header-file-name');
+    const pathEl = document.getElementById('header-file-path');
+    if (!box || !nameEl || !pathEl) return;
+    if (!name) {
+      box.classList?.add('hidden');
+      box.title = '';
+      nameEl.textContent = '';
+      pathEl.textContent = '';
+      return;
+    }
+    nameEl.textContent = name;
+    pathEl.textContent = fullPath && fullPath !== name ? fullPath : '';
+    box.title = fullPath || name;
+    box.classList?.remove('hidden');
+  }
+
   function initHeaderDropdowns() {
     const openBtn = document.getElementById('btn-header-open');
-    const openMenu = document.getElementById('header-open-menu');
     const saveBtn = document.getElementById('btn-header-save');
     const saveMenu = document.getElementById('header-save-menu');
 
     function closeAllDropdowns() {
-      if (openMenu) openMenu.classList.add('hidden');
       if (saveMenu) saveMenu.classList.add('hidden');
-      if (openBtn) openBtn.setAttribute('aria-expanded', 'false');
       if (saveBtn) saveBtn.setAttribute('aria-expanded', 'false');
     }
 
-    if (openBtn && openMenu) {
-      openBtn.onclick = (e) => {
-        e.stopPropagation();
-        const willOpen = openMenu.classList.contains('hidden');
+    if (openBtn) {
+      openBtn.onclick = async () => {
         closeAllDropdowns();
-        if (willOpen) {
-          openMenu.classList.remove('hidden');
-          openBtn.setAttribute('aria-expanded', 'true');
-        }
+        await openDielineFile();
       };
     }
 
@@ -3078,11 +3338,6 @@
       if (!e.target.closest('.header-dropdown-container')) {
         closeAllDropdowns();
       }
-    });
-
-    document.getElementById('menu-open-file')?.addEventListener('click', async () => {
-      closeAllDropdowns();
-      await openDielineFile();
     });
 
     document.getElementById('menu-open-projects')?.addEventListener('click', () => {
@@ -3494,9 +3749,11 @@
     const holeFields = document.getElementById('vector-modal-hole-fields');
     const boxFields = document.getElementById('vector-modal-box-fields');
     const dimFields = document.getElementById('vector-modal-dim-fields');
+    const scaleFields = document.getElementById('vector-modal-scale-fields');
     const modalTitle = document.getElementById('vector-modal-title');
 
     if (modal && lineFields && circleFields && handleFields && holeFields) {
+      if (scaleFields) scaleFields.hidden = true;
       if (vectorTool === 'line') {
         modal.hidden = false;
         modalTitle.textContent = 'Línea · Medidas';
@@ -3509,6 +3766,11 @@
         modal.hidden = false;
         modalTitle.textContent = 'Asa · Medidas';
         lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = false; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
+      } else if (vectorTool === 'scale') {
+        modal.hidden = false;
+        modalTitle.textContent = 'Escalar diseño / selección';
+        lineFields.hidden = true; circleFields.hidden = true; handleFields.hidden = true; holeFields.hidden = true; if (boxFields) boxFields.hidden = true; if (dimFields) dimFields.hidden = true;
+        if (scaleFields) scaleFields.hidden = false;
       } else if (vectorTool === 'dimension' || (sel?.type === 'dimension' && sel?.arrow)) {
         modal.hidden = false;
         modalTitle.textContent = 'Acotar ortogonal (X / Y)';
@@ -3586,7 +3848,8 @@
       extend:'Pulsa cerca del extremo que quieres extender hasta el siguiente trazo.',
       trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',
       chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',
-      fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.'
+      fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.',
+      scale:'Elige un origen en el lienzo (opcional) y escribe el factor de multiplicación.'
     };
     for(const key of Object.keys(help)) {
       const btn = document.getElementById('vector-tool-'+key);
@@ -3766,6 +4029,14 @@
 
         vectorSelection = foundHole || hit;
         vectorRefreshControls();
+        return;
+      }
+      if (vectorTool === 'scale') {
+        vectorDraft = { scaleOrigin: p };
+        const originInp = document.getElementById('vector-scale-origin');
+        if (originInp) originInp.value = `${p.x.toFixed(2)} ${p.y.toFixed(2)}`;
+        vectorMessage(`Origen de escala fijado en (${p.x.toFixed(2)}, ${p.y.toFixed(2)}).`);
+        render2FDieline();
         return;
       }
       if (!hit) { vectorMessage('Pulsa sobre una línea de corte o de hendido.'); return; }
@@ -4013,7 +4284,24 @@
       return;
     }
 
-    // 5. Line draft or Circle drag
+    // 5. Scale origin crosshair
+    if (vectorTool === 'scale') {
+      const b = state.dieline?.bounds || { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+      const org = vectorDraft?.scaleOrigin || { x: (b.minX + b.maxX) * 0.5, y: (b.minY + b.maxY) * 0.5 };
+      const sx = tf.toScreenX(org.x), sy = tf.toScreenY(org.y);
+      ctx.save();
+      ctx.strokeStyle = '#e11d48';
+      ctx.lineWidth = 1.6 * dpr;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 6 * dpr, 0, Math.PI * 2);
+      ctx.moveTo(sx - 10 * dpr, sy); ctx.lineTo(sx + 10 * dpr, sy);
+      ctx.moveTo(sx, sy - 10 * dpr); ctx.lineTo(sx, sy + 10 * dpr);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    // 6. Line draft or Circle drag
     if (!vectorDraft?.point) return;
     const p = vectorDraft.point;
     let q = vectorPointer;
@@ -4087,10 +4375,57 @@
     };
     document.getElementById('vector-toggle').onclick = () => toggle(!vectorEditing);
     document.getElementById('vector-close').onclick = () => toggle(false);
-    for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet']) {
+    for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet','scale']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => setVectorTool(tool);
     }
+
+    // Herramienta Escalar: origen por defecto (centro del diseño) + factor de multiplicación
+    const btnScaleReset = document.getElementById('vector-btn-scale-reset-origin');
+    if (btnScaleReset) btnScaleReset.onclick = () => {
+      vectorDraft = null;
+      const originInp = document.getElementById('vector-scale-origin');
+      if (originInp) originInp.value = '';
+      render2FDieline();
+      vectorMessage('Origen restablecido al centro del diseño.');
+    };
+
+    const applyScaleTool = () => {
+      if (!state.dieline) return;
+      const factorInp = document.getElementById('vector-scale-factor');
+      const factor = parseMathValue(factorInp?.value);
+      if (!Number.isFinite(factor) || factor <= 0) {
+        vectorMessage('Introduce un factor de multiplicación válido mayor que 0.');
+        return;
+      }
+      if (factorInp && /[+\-*/×÷()]/.test(String(factorInp.value))) factorInp.value = +factor.toFixed(4);
+      const originRaw = String(document.getElementById('vector-scale-origin')?.value || '').trim();
+      let origin = vectorDraft?.scaleOrigin || null;
+      if (originRaw) {
+        const parts = originRaw.split(/[\s;]+/).map(s => parseMathValue(s)).filter(Number.isFinite);
+        if (parts.length >= 2) origin = { x: parts[0], y: parts[1] };
+      }
+      const selectedItems = vectorSelection?.type === 'multi' && vectorSelection.items?.length ? vectorSelection.items : null;
+      try {
+        const model = VectorCAD.scale(state.dieline, factor, origin, selectedItems);
+        vectorSelection = null;
+        vectorDraft = null;
+        commitVectorEdit(model);
+        if (!selectedItems) reset2DView();
+        vectorMessage(`Escalado ×${+factor.toFixed(4)} aplicado.`);
+      } catch (err) {
+        vectorMessage(err.message || String(err));
+      }
+    };
+
+    const btnApplyScale = document.getElementById('vector-btn-apply-scale');
+    if (btnApplyScale) btnApplyScale.onclick = applyScaleTool;
+    const btnCancelScale = document.getElementById('vector-btn-cancel-scale');
+    if (btnCancelScale) btnCancelScale.onclick = () => setVectorTool('select');
+    const scaleFactorInp = document.getElementById('vector-scale-factor');
+    if (scaleFactorInp) scaleFactorInp.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applyScaleTool(); }
+    };
 
     // Modal discreto de herramientas y manipulación de agujero/asa
     const modalClose = document.getElementById('vector-modal-close');

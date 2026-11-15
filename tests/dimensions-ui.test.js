@@ -349,3 +349,47 @@ test('UI del canvas (añadir troquel, Doblaje, sliders) y cotas SVG descentradas
   assert.equal(+model.boxDimensionsMm.width.toFixed(1), +arrowW.lineLength.toFixed(1));
   assert.equal(+model.boxDimensionsMm.depth.toFixed(1), +arrowH.lineLength.toFixed(1));
 });
+
+test('Herramienta Escalar (origen por defecto = centro del diseño) y fórmulas matemáticas', () => {
+  const html = fs.readFileSync(require('node:path').join(__dirname, '..', 'index.html'), 'utf8');
+  assert.match(html, /id="vector-tool-scale"/);
+  assert.match(html, /id="vector-modal-scale-fields"[\s\S]*?id="vector-scale-origin"[\s\S]*?id="vector-scale-factor"/);
+  assert.match(html, /type="text"[^>]*id="input-length"/);
+
+  const sample = {
+    bounds: { minX: 0, maxX: 20, minY: 0, maxY: 10, width: 20, height: 10 },
+    cutSegments: [
+      { x1: 0, y1: 0, x2: 20, y2: 0 },
+      { x1: 20, y1: 0, x2: 20, y2: 10 },
+      { x1: 20, y1: 10, x2: 0, y2: 10 },
+      { x1: 0, y1: 10, x2: 0, y2: 0 }
+    ],
+    foldSegments: [{ x1: 10, y1: 0, x2: 10, y2: 10 }],
+    faces: [],
+    hinges: [],
+    boxDimensionsMm: { length: 20, width: 10, depth: 5 }
+  };
+
+  // Sin origen => centro del diseño (10, 5)
+  const scaledCenter = VectorCAD.scale(sample, 10);
+  assert.equal(scaledCenter.cutSegments[0].x1, -90);
+  assert.equal(scaledCenter.cutSegments[0].x2, 110);
+  assert.equal(scaledCenter.cutSegments[0].y1, -45);
+  assert.equal(scaledCenter.cutSegments[2].y1, 55);
+  assert.equal(scaledCenter.boxDimensionsMm.length, 200);
+
+  // Con origen explícito (0, 0)
+  const scaledOrigin = VectorCAD.scale(sample, 2, { x: 0, y: 0 });
+  assert.equal(scaledOrigin.cutSegments[0].x1, 0);
+  assert.equal(scaledOrigin.cutSegments[0].x2, 40);
+  assert.equal(scaledOrigin.cutSegments[2].y1, 20);
+
+  // Fórmulas matemáticas en app.js
+  const appJs = fs.readFileSync(require('node:path').join(__dirname, '..', 'app.js'), 'utf8');
+  const fnMatch = appJs.match(/function parseMathValue\(raw\)[\s\S]*?\n  \}/);
+  assert.ok(fnMatch, 'parseMathValue existe en app.js');
+  const parseMathValue = new Function(`${fnMatch[0]}; return parseMathValue;`)();
+  assert.equal(parseMathValue('9,6 * 10'), 96);
+  assert.equal(parseMathValue('(10 + 5) / 3'), 5);
+  assert.equal(parseMathValue('100 - 25,5'), 74.5);
+});

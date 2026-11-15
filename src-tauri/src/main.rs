@@ -216,7 +216,8 @@ async fn open_dieline_file(app: tauri::AppHandle, window: tauri::WebviewWindow) 
         let text = std::fs::read_to_string(&path)
             .map_err(|e| format!("No se pudo leer el archivo: {}", e))?;
         let name = path.file_name().unwrap_or_default().to_string_lossy();
-        Ok(Some(json!({"name": name, "text": text})))
+        let full_path = path.to_string_lossy();
+        Ok(Some(json!({"name": name, "path": full_path, "text": text})))
     }).await.map_err(|e| e.to_string())?
 }
 

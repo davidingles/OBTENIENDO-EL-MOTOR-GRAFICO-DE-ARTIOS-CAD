@@ -309,6 +309,58 @@
       for(let n=1;n<=count;n++){const next=n===count?q:{x:c.x+value*Math.cos(start+sweep*n/count),y:c.y+value*Math.sin(start+sweep*n/count)};list(m,first.kind).push(line(previous,next,extra));previous=next;}
     }return m;
   }
+  function scale(model, factor, origin = null, selectedItems = null) {
+    const f = Number(factor);
+    if (!Number.isFinite(f) || f <= 0) throw Error('El factor de escala debe ser mayor que 0.');
+    const m = normalize(model);
+    const b = m.bounds || { minX: 0, maxX: m.blankWidthMm || 0, minY: 0, maxY: m.blankHeightMm || 0 };
+    const ox = origin && Number.isFinite(origin.x) ? origin.x : (b.minX + b.maxX) * 0.5;
+    const oy = origin && Number.isFinite(origin.y) ? origin.y : (b.minY + b.maxY) * 0.5;
+    const scalePt = p => ({ x: ox + (p.x - ox) * f, y: oy + (p.y - oy) * f });
+    const scaleSeg = s => {
+      s.x1 = ox + (s.x1 - ox) * f;
+      s.y1 = oy + (s.y1 - oy) * f;
+      s.x2 = ox + (s.x2 - ox) * f;
+      s.y2 = oy + (s.y2 - oy) * f;
+    };
+    if (Array.isArray(selectedItems) && selectedItems.length > 0) {
+      for (const item of selectedItems) {
+        const seg = list(m, item.kind)[item.index];
+        if (seg) {
+          scaleSeg(seg);
+          delete seg.vectorGroup;
+        }
+      }
+    } else {
+      m.cutSegments.forEach(scaleSeg);
+      m.foldSegments.forEach(scaleSeg);
+      if (Array.isArray(m.sizeArrowData)) {
+        m.sizeArrowData = m.sizeArrowData.map(a => ({
+          ...a,
+          p1: a.p1 ? scalePt(a.p1) : a.p1,
+          p2: a.p2 ? scalePt(a.p2) : a.p2,
+          tpointer: a.tpointer ? { ...a.tpointer, ...scalePt(a.tpointer) } : a.tpointer
+        }));
+      }
+      if (Array.isArray(m.outsideArrowData)) {
+        m.outsideArrowData = m.outsideArrowData.map(a => ({
+          ...a,
+          p1: a.p1 ? scalePt(a.p1) : a.p1,
+          p2: a.p2 ? scalePt(a.p2) : a.p2,
+          tpointer: a.tpointer ? { ...a.tpointer, ...scalePt(a.tpointer) } : a.tpointer
+        }));
+      }
+      if (m.boxDimensionsMm) {
+        m.boxDimensionsMm = {
+          length: +(m.boxDimensionsMm.length * f).toFixed(2),
+          width: +(m.boxDimensionsMm.width * f).toFixed(2),
+          depth: +(m.boxDimensionsMm.depth * f).toFixed(2)
+        };
+      }
+    }
+    return m;
+  }
+
   function rebuild(model,engine){
     const m=normalize(model),all=[...m.cutSegments,...m.foldSegments];
     if(!all.length)throw Error('El plano debe conservar al menos un trazo.');
@@ -371,5 +423,5 @@
     }
     return engine.enforceFlapLengthLimit(m);
   }
-  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments,deleteSegments,stretch};
+  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,scale,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments,deleteSegments,stretch};
 });

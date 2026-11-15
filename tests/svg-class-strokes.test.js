@@ -6,7 +6,7 @@ const engine = require('../dieline-engine');
 test('un SVG de Illustrator con colores en clases CSS genera sus nueve paneles', () => {
   const svg = fs.readFileSync(require.resolve('./fixtures/illustrator-class-strokes.svg'), 'utf8');
   const parsed = engine.parseSVGDieline(svg);
-  assert.equal(parsed.cutSegmentsMm.length, 96);
+  assert.equal(parsed.cutSegmentsMm.length, 184);
   assert.equal(parsed.foldSegmentsMm.length, 8);
   const model = engine.buildDielineModel(svg);
   assert.equal(model.faces.length, 9);

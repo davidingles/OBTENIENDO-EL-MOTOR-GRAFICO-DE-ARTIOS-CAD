@@ -140,3 +140,82 @@ test('un SVG nuevo sin cotas genera medidas principales (sizeArrowData L, W, H) 
     assert.ok(hasH, `El área ${face.id} debe tener cota de alto`);
   }
 });
+
+test('SVG de bandeja orientada en vertical detecta la base central y asigna L >= W y H de pared', () => {
+  const traySvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 280" width="180mm" height="280mm">
+      <!-- Contorno exterior de cruz: base 100x200 en (40..140, 40..240), paredes de 40mm -->
+      <path d="M40,0 L140,0 L140,40 L180,40 L180,240 L140,240 L140,280 L40,280 L40,240 L0,240 L0,40 L40,40 Z"
+            fill="none" stroke="#00a0e9" stroke-width="1" />
+      <!-- Hendidos de la base -->
+      <line x1="40" y1="40" x2="140" y2="40" stroke="#e6007e" stroke-width="1" />
+      <line x1="40" y1="240" x2="140" y2="240" stroke="#e6007e" stroke-width="1" />
+      <line x1="40" y1="40" x2="40" y2="240" stroke="#e6007e" stroke-width="1" />
+      <line x1="140" y1="40" x2="140" y2="240" stroke="#e6007e" stroke-width="1" />
+    </svg>
+  `;
+  const m = engine.buildDielineModel(traySvg);
+  const root = m.faces.find(f => f.id === m.rootFaceId);
+  assert.ok(root, 'Debe existir cara raíz');
+  assert.ok(Math.abs(root.bounds.width - 100) < 0.5, `Ancho base esperado ~100, obtenido ${root.bounds.width}`);
+  assert.ok(Math.abs(root.bounds.height - 200) < 0.5, `Alto plano base esperado ~200, obtenido ${root.bounds.height}`);
+  assert.equal(m.boxDimensionsMm.length, 200);
+  assert.equal(m.boxDimensionsMm.width, 100);
+  assert.equal(m.boxDimensionsMm.depth, 40);
+});
+
+test('SVG de caja americana rotada 90 grados asigna L, W y H sin confundir ejes', () => {
+  const rotatedSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 680" width="180mm" height="680mm">
+      <rect x="0" y="0" width="180" height="680" fill="none" stroke="#00a0e9" stroke-width="1" />
+      <line x1="0" y1="120" x2="180" y2="120" stroke="#e6007e" stroke-width="1" />
+      <line x1="0" y1="340" x2="180" y2="340" stroke="#e6007e" stroke-width="1" />
+      <line x1="0" y1="460" x2="180" y2="460" stroke="#e6007e" stroke-width="1" />
+    </svg>
+  `;
+  const m = engine.buildDielineModel(rotatedSvg);
+  assert.equal(m.boxDimensionsMm.length, 220);
+  assert.equal(m.boxDimensionsMm.width, 120);
+  assert.equal(m.boxDimensionsMm.depth, 180);
+});
+
+test('rerootDielineModel actualiza boxDimensionsMm y sizeArrowData al elegir nueva base', () => {
+  const sampleSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 280" width="180mm" height="280mm">
+      <path d="M40,0 L140,0 L140,40 L180,40 L180,240 L140,240 L140,280 L40,280 L40,240 L0,240 L0,40 L40,40 Z"
+            fill="none" stroke="#00a0e9" stroke-width="1" />
+      <line x1="40" y1="40" x2="140" y2="40" stroke="#e6007e" stroke-width="1" />
+      <line x1="40" y1="240" x2="140" y2="240" stroke="#e6007e" stroke-width="1" />
+      <line x1="40" y1="40" x2="40" y2="240" stroke="#e6007e" stroke-width="1" />
+      <line x1="140" y1="40" x2="140" y2="240" stroke="#e6007e" stroke-width="1" />
+    </svg>
+  `;
+  const m = engine.buildDielineModel(sampleSvg);
+  const wall = m.faces.find(f => f.id !== m.rootFaceId && Math.abs(f.bounds.width - 100) < 1);
+  assert.ok(wall);
+  const rerooted = engine.rerootDielineModel(m, wall.id);
+  assert.equal(rerooted.rootFaceId, wall.id);
+  assert.equal(rerooted.boxDimensionsMm.length, 100);
+  assert.equal(rerooted.boxDimensionsMm.width, 40);
+  assert.equal(rerooted.boxDimensionsMm.depth, 200);
+  const lArrow = rerooted.sizeArrowData.find(a => a.lineName === 'L');
+  const wArrow = rerooted.sizeArrowData.find(a => a.lineName === 'W');
+  assert.ok(lArrow && wArrow, 'Debe regenerar flechas L y W');
+  assert.ok(lArrow.p1.y >= wall.bounds.minY - 0.5 && lArrow.p2.y <= wall.bounds.maxY + 0.5, 'Flecha L ubicada en la nueva base');
+  assert.ok(wArrow.p1.y >= wall.bounds.minY - 0.5 && wArrow.p2.y <= wall.bounds.maxY + 0.5, 'Flecha W ubicada en la nueva base');
+});
+
+test('cualquier área rodeada exclusivamente por líneas de corte se vacía y no genera cartón', () => {
+  const slotSvg = `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" width="200mm" height="160mm">
+      <!-- Base 100x80 con pared superior de 40 y una ranura rodeada 100% de corte en la línea de hendido -->
+      <rect x="0" y="0" width="200" height="160" fill="none" stroke="#00a0e9" stroke-width="1" />
+      <line x1="0" y1="60" x2="60" y2="60" stroke="#e6007e" stroke-width="1" />
+      <line x1="140" y1="60" x2="200" y2="60" stroke="#e6007e" stroke-width="1" />
+      <rect x="60" y="50" width="80" height="10" fill="none" stroke="#00a0e9" stroke-width="1" />
+    </svg>
+  `;
+  const m = engine.buildDielineModel(slotSvg);
+  const slotFace = m.faces.find(f => Math.abs(f.bounds.width - 80) < 0.5 && Math.abs(f.bounds.height - 10) < 0.5);
+  assert.equal(slotFace, undefined, 'El área rodeada 100% de líneas de corte debe vaciarse');
+});
