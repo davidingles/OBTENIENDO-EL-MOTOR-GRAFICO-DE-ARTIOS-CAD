@@ -77,7 +77,7 @@ function createMockApp() {
     bboxHelperGroup = new THREE.Group();
     camera = new THREE.PerspectiveCamera(38, 1.25, 0.1, 10000);
     controls = { target: new THREE.Vector3(), update() { camera.lookAt(this.target); camera.updateMatrixWorld(true); } };
-    globalThis._testApp = { state, loadSVGString, initUIControls, init2DCanvasInteractions, setMasterFold, computeHingeAngleAtProgress, faceMeshMap, get2DTransform, hitTest2DCanvas, get root() { return dielineRootGroup; } };
+    globalThis._testApp = { state, loadSVGString, initUIControls, init2DCanvasInteractions, setMasterFold, computeHingeAngleAtProgress, deleteFoldOrderStep, faceMeshMap, get2DTransform, hitTest2DCanvas, get root() { return dielineRootGroup; } };
   })();`), ctx);
   return { app: ctx._testApp, elements, makeEl };
 }
@@ -169,4 +169,17 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
   // Al final (t = 1): ambos en 90°
   const angleB_end = Math.abs(app.computeHingeAngleAtProgress(hingeB, wallB, 1, 'phased'));
   assert.equal(angleB_end, 90);
+
+  // Borrar paso 1 renumera el paso 2 a paso 1
+  app.deleteFoldOrderStep(1);
+  assert.equal(app.state.foldOrderSteps, 1);
+  assert.equal(app.state.customFoldOrder[wallA.id], undefined);
+  assert.equal(app.state.customFoldOrder[wallB.id], 1);
+
+  // Botón Reset limpia toda la animación y deja masterFold en 0
+  elements.get('btn-reset-fold-order').listeners.click[0]();
+  assert.equal(app.state.foldOrderSteps, 0);
+  assert.equal(app.state.activeFoldOrderStep, null);
+  assert.equal(Object.keys(app.state.customFoldOrder).length, 0);
+  assert.equal(app.state.masterFold, 0);
 });

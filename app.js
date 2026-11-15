@@ -533,16 +533,48 @@
     }
   }
 
+  function deleteFoldOrderStep(stepToRemove) {
+    const nextOrder = {};
+    for (const [fid, st] of Object.entries(state.customFoldOrder || {})) {
+      if (st < stepToRemove) nextOrder[fid] = st;
+      else if (st > stepToRemove) nextOrder[fid] = st - 1;
+    }
+    state.customFoldOrder = nextOrder;
+    state.foldOrderSteps = Math.max(0, (state.foldOrderSteps || 0) - 1);
+    if (state.activeFoldOrderStep === stepToRemove) {
+      state.activeFoldOrderStep = state.foldOrderSteps > 0 ? Math.min(stepToRemove, state.foldOrderSteps) : null;
+    } else if (state.activeFoldOrderStep > stepToRemove) {
+      state.activeFoldOrderStep -= 1;
+    }
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
+    renderFoldOrderUI();
+    setMasterFold(state.masterFold);
+    render2FDieline();
+  }
+
+  function resetFoldOrder() {
+    state.foldOrderSteps = 0;
+    state.activeFoldOrderStep = null;
+    state.customFoldOrder = {};
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d) c2d.style.cursor = '';
+    renderFoldOrderUI();
+    setMasterFold(0);
+    render2FDieline();
+  }
+
   function renderFoldOrderUI() {
     const container = document.getElementById('fold-order-steps');
-    const clearBtn = document.getElementById('btn-clear-fold-order');
-    if (clearBtn) clearBtn.classList?.toggle('hidden', state.foldOrderSteps === 0);
     if (!container) return;
     container.innerHTML = '';
     for (let step = 1; step <= state.foldOrderSteps; step++) {
+      const pill = document.createElement('div');
+      pill.className = 'fold-step-pill' + (state.activeFoldOrderStep === step ? ' active' : '');
+
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'btn-fold-step' + (state.activeFoldOrderStep === step ? ' active' : '');
+      btn.className = 'btn-fold-step';
       btn.textContent = String(step);
       btn.title = `Paso ${step}: pincha en el 2D las áreas que doblan en el turno ${step}`;
       btn.addEventListener('click', () => {
@@ -560,7 +592,20 @@
         if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
         renderFoldOrderUI();
       });
-      container.appendChild(btn);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn-fold-step-del';
+      delBtn.textContent = '×';
+      delBtn.title = `Borrar paso ${step}`;
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteFoldOrderStep(step);
+      });
+
+      pill.appendChild(btn);
+      pill.appendChild(delBtn);
+      container.appendChild(pill);
     }
   }
 
@@ -3215,16 +3260,7 @@
       renderFoldOrderUI();
     });
 
-    document.getElementById('btn-clear-fold-order')?.addEventListener('click', () => {
-      state.foldOrderSteps = 0;
-      state.activeFoldOrderStep = null;
-      state.customFoldOrder = {};
-      const c2d = document.getElementById('canvas-2d');
-      if (c2d) c2d.style.cursor = '';
-      renderFoldOrderUI();
-      setMasterFold(state.masterFold);
-      render2FDieline();
-    });
+    document.getElementById('btn-reset-fold-order')?.addEventListener('click', resetFoldOrder);
     initArtworkControls();
 
     const bindCheck = (id, prop, callback) => {

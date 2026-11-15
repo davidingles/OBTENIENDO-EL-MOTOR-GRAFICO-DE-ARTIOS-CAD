@@ -1880,3 +1880,80 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .btn-fold-order-clear.hidden {
   display: none;
 }
+
+.btn-fold-order-reset {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn-fold-order-reset:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #dc2626;
+}
+
+.fold-step-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.fold-step-pill.active {
+  border-color: #0284c7;
+  background: #0284c7;
+}
+
+.fold-step-pill .btn-fold-step {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  min-width: 22px;
+  padding: 0 5px;
+}
+
+.fold-step-pill.active .btn-fold-step {
+  color: #ffffff;
+}
+
+.btn-fold-step-del {
+  height: 26px;
+  width: 18px;
+  border: none;
+  border-left: 1px solid rgba(148, 163, 184, 0.35);
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fold-step-pill.active .btn-fold-step-del {
+  color: rgba(255, 255, 255, 0.85);
+  border-left-color: rgba(255, 255, 255, 0.3);
+}
+
+.btn-fold-step-del:hover {
+  background: rgba(220, 38, 38, 0.14);
+  color: #dc2626;
+}
+
+.fold-step-pill.active .btn-fold-step-del:hover {
+  background: rgba(220, 38, 38, 0.75);
+  color: #ffffff;
+}
