@@ -356,7 +356,7 @@ html, body {
    4. DRAWER CARD LATERAL EXPANDIBLE (300px)
    ============================================================================ */
 .drawer-card {
-  width: 300px;
+  width: 360px;
   background: var(--bg-card);
   border-right: 1px solid var(--border-subtle);
   display: flex;
@@ -832,8 +832,10 @@ html, body {
 
 .categories-chip-bar {
   display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
   gap: 6px;
-  overflow-x: auto;
+  overflow: visible;
   padding-bottom: 4px;
 }
 
@@ -1234,6 +1236,8 @@ html, body {
 /* Pestañas / Filtros de Cartón (C1, C2, C3, C8) en Biblioteca */
 .library-board-pills {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 4px;
 }

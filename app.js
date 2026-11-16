@@ -690,7 +690,7 @@
       setMasterFold(state.masterFold || 0.75);
       fitCameraToModel(false);
     }
-    if (!state.activeFefcoEntry || state.activeFefcoEntry?.userModel) state.parametricDieline = model;
+    if (!state.activeFefcoEntry || state.activeFefcoEntry?.userModel || state.activeFefcoEntry?.bundledModel) state.parametricDieline = model;
     else applyParametricResizeRealTime(state.paramL, state.paramW, state.paramH);
     if (state.activeTab === 'details') renderDetailsTabUI();
   }
@@ -769,9 +769,10 @@
     if (!fefcoEntry) return;
     const revision = ++modelRevision;
     try {
-      if(fefcoEntry.userModel){
-        UserLibrary.validate(fefcoEntry);
+      if(fefcoEntry.userModel || fefcoEntry.bundledModel){
+        if (fefcoEntry.userModel) UserLibrary.validate(fefcoEntry);
         state.activeFefcoEntry=fefcoEntry;
+        state.svgText=fefcoEntry.svgText || '';
         state.boardCode=fefcoEntry.boardCode;
         state.caliper=UserLibrary.boardThicknessMm[fefcoEntry.boardCode]||1.5;
         applyNewDielineModel(JSON.parse(JSON.stringify(fefcoEntry.geometry)),fefcoEntry.name,animateIntro);
@@ -3697,7 +3698,7 @@
   }
 
   function nombreModelo(item) {
-    if(item.userModel)return item.name;
+    if(item.userModel || item.bundledModel)return item.name;
     const text = (item.name || '').toLowerCase();
     if (item.fefcoCode) return 'Caja ' + item.fefcoCode;
     if (text.includes('mailer') || text.includes('shipping')) return 'Caja de envío';
@@ -4817,7 +4818,7 @@
   let userLibraryReady=Promise.resolve();
   function allCatalogModels(){
     const stock=window.PACDORA_CATALOG_INDEX?.models||window.FEFCO_CATALOG||[];
-    return userLibraryModels.concat(stock);
+    return userLibraryModels.concat(window.AUTOMOUNT_TRAYS || [], stock);
   }
   async function loadUserLibrary(){
     try{
@@ -4937,9 +4938,9 @@
           return;
         }
         let full = item;
-        if (!item.userModel && !full.knifeData && item.shard) full = (await loadPacdoraShard(item.shard)).find(x => Number(x.num) === Number(item.num));
-        if (!card.isConnected || (!item.userModel && !full?.knifeData)) return;
-        const model = item.userModel?item.geometry:DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
+        if (!item.userModel && !item.bundledModel && !full.knifeData && item.shard) full = (await loadPacdoraShard(item.shard)).find(x => Number(x.num) === Number(item.num));
+        if (!card.isConnected || (!item.userModel && !item.bundledModel && !full?.knifeData)) return;
+        const model = item.userModel || item.bundledModel ? item.geometry : DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
         drawMiniDielinePreview(flat, model);
         drawCatalog3DPreview(folded, model);
         const copy = source => {const c=document.createElement('canvas');c.width=source.width;c.height=source.height;c.getContext('2d').drawImage(source,0,0);return c;};
@@ -4959,7 +4960,7 @@
     const q = normalizar((state.fefcoSearch || '').trim());
 
     const filtered = allModels.filter(m => {
-      const mBoard = m.userModel ? (m.boardCode || 'C1') : 'C1';
+      const mBoard = m.boardCode || 'C1';
       if (selectedBoard !== 'ALL' && mBoard !== selectedBoard) return false;
 
       const matchCat = catSlug === 'FAVORITES' ? favoriteModelIds.has(Number(m.num)) : (catSlug === 'ALL') ||
@@ -4991,8 +4992,9 @@
         <div class="card-model-sub"></div>
       `;
       card.querySelector('.card-model-title').textContent=cleanDesc;
-      const code=item.userModel?item.boardCode:'C1',mm=UserLibrary.boardThicknessMm[code];
-      card.querySelector('.card-model-sub').textContent=`${item.userModel?'':'#'+item.num+' · '}${item.length}×${item.width}×${item.height} mm · ${code}${mm?' · '+String(mm).replace('.',',')+' mm':''}`;
+      const code=item.boardCode||'C1',mm=UserLibrary.boardThicknessMm[code];
+      const dimensions=item.bundledModel?`Plano ${item.flatWidth}×${item.flatHeight} mm`:`${item.length}×${item.width}×${item.height} mm`;
+      card.querySelector('.card-model-sub').textContent=`${item.userModel || item.bundledModel?'':'#'+item.num+' · '}${dimensions} · ${code}${mm?' · '+String(mm).replace('.',',')+' mm':''}`;
       card.title=cleanDesc+' · '+code+(item.userModel?'':' · #'+item.num);
       card.appendChild(createFavoriteButton(item));
 
