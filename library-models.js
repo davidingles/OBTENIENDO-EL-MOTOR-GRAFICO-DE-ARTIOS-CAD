@@ -14,11 +14,19 @@
     }
     return model;
   }
-  function create(name,boardCode,geometry,sourceFilename='',id=Date.now()*1000+Math.floor(Math.random()*1000)){
+  function findByName(models,name){
+    const target=String(name||'').trim().toLowerCase();
+    if(!target)return null;
+    return (Array.isArray(models)?models:[]).find(m=>String(m?.name||'').trim().toLowerCase()===target)||null;
+  }
+  function create(name,boardCode,geometry,sourceFilename='',id=Date.now()*1000+Math.floor(Math.random()*1000),extra={}){
     const g=JSON.parse(JSON.stringify(geometry));
     const model={num:id,id,userModel:true,name:String(name).trim(),boardCode,thickness:boardThicknessMm[boardCode]??null,
       length:g.boxDimensionsMm?.length,width:g.boxDimensionsMm?.width,height:g.boxDimensionsMm?.depth,
       sourceFilename,geometry:g,createdAt:new Date().toISOString(),modelCategories:['user-models'],useCategories:[]};
+    if(typeof extra?.thumbnail3dDataUrl==='string'&&extra.thumbnail3dDataUrl.startsWith('data:image/')){
+      model.thumbnail3dDataUrl=extra.thumbnail3dDataUrl;
+    }
     validate(model);
     if(new TextEncoder().encode(JSON.stringify(model)).length>8000000)throw new Error('El modelo supera el límite de 8 MB.');
     return model;
@@ -30,5 +38,5 @@
     }
     return accepted.sort((a,b)=>b.num-a.num);
   }
-  return {boardThicknessMm,validate,create,normalize};
+  return {boardThicknessMm,validate,findByName,create,normalize};
 });

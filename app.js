@@ -3658,7 +3658,7 @@
     if (partKey === 'double_flaps' && model.partDoubleFlapsSide) {
       const sideLabel = model.partDoubleFlapsSide === 'top' ? '4 solapas superiores' : '4 solapas inferiores';
       const clearance = model.partOptions?.clearance ?? 2;
-      return `Solapas dobles aplicadas a las ${sideLabel} (2×L - ${clearance} mm). Pulsa «Listo» para añadir más piezas.`;
+      return `Solapas dobles aplicadas a las ${sideLabel} (ancho - ${clearance} mm). Pulsa «Listo» para añadir más piezas.`;
     }
     const appliedFace = model.partTargetFaceId !== undefined && model.partTargetFaceId !== null
       ? model.faces?.find(f => String(f.id) === String(model.partTargetFaceId))
@@ -3743,7 +3743,7 @@
       });
     };
     const definitions = key === 'handle'
-      ? [['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)']]
+      ? [['rotate90','Orientación'],['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)']]
       : key === 'thumb_notch'
         ? [['count','Número de uñeros'],['radius','Radio del uñero (mm)'],['distance','Distancia entre centros (mm)']]
         : key === 'side_locks'
@@ -3757,13 +3757,15 @@
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;
       let number, slider;
-      if (name === 'count') {
+      if (name === 'count' || name === 'rotate90') {
         number = document.createElement('select');
-        const selectOptions = key === 'side_locks'
-          ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
-          : key === 'windows'
-            ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]
-            : [[1, 'Uno'], [2, 'Dos']];
+        const selectOptions = name === 'rotate90'
+          ? [[0, '0° (Horizontal)'], [1, '90° (Girar 90°)']]
+          : key === 'side_locks'
+            ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
+            : key === 'windows'
+              ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]
+              : [[1, 'Uno'], [2, 'Dos']];
         for (const [value, text] of selectOptions) {
           const option = document.createElement('option');
           option.value = value;
@@ -5115,10 +5117,35 @@
       try{
         await userLibraryReady;
         const name=document.getElementById('library-model-name').value;
-        const item=UserLibrary.create(name,profile.value,state.dieline,state.fileName);
-        if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('add_library_model',{model:item});
-        else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
-        userLibraryModels.unshift(item);state.activeFefcoEntry=item;state.fileName=item.name;
+        const existing=UserLibrary.findByName?UserLibrary.findByName(userLibraryModels,name):null;
+        if(existing){
+          const overwrite=window.confirm(`Ya existe un modelo llamado «${existing.name}» en tu biblioteca. ¿Quieres sobreescribirlo?`);
+          if(!overwrite){
+            status.textContent='Cambia el nombre para guardarlo como un modelo nuevo.';
+            return;
+          }
+        }
+        const thumbnail3dDataUrl=captureCurrent3DCanvasThumbnail();
+        const item=UserLibrary.create(
+          name,
+          profile.value,
+          state.dieline,
+          state.fileName,
+          existing?existing.num:undefined,
+          {thumbnail3dDataUrl}
+        );
+        if(existing){
+          const nextList=[item,...userLibraryModels.filter(m=>Number(m.num)!==Number(existing.num))];
+          if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('update_library_model',{model:item});
+          else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify(nextList));
+          userLibraryModels=nextList;
+        }else{
+          if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('add_library_model',{model:item});
+          else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
+          userLibraryModels.unshift(item);
+        }
+        catalogPreviewCache.delete(Number(item.num));
+        state.activeFefcoEntry=item;state.fileName=item.name;
         state.boardCode=item.boardCode;
         state.selectedBoardFilter=item.boardCode;
         state.caliper=UserLibrary.boardThicknessMm[item.boardCode]||1.5;
@@ -5201,7 +5228,11 @@
         if (!card.isConnected || (!item.userModel && !item.bundledModel && !full?.knifeData)) return;
         const model = item.userModel || item.bundledModel ? item.geometry : DielineEngine.buildDielineModelFromPacdora(full.knifeData, full);
         drawMiniDielinePreview(flat, model);
-        drawCatalog3DPreview(folded, model);
+        if (item.thumbnail3dDataUrl) {
+          await drawSaved3DThumbnail(folded, item.thumbnail3dDataUrl, model);
+        } else {
+          drawCatalog3DPreview(folded, model);
+        }
         const copy = source => {const c=document.createElement('canvas');c.width=source.width;c.height=source.height;c.getContext('2d').drawImage(source,0,0);return c;};
         catalogPreviewCache.set(Number(item.num), {flat:copy(flat),folded:copy(folded)});
         if (catalogPreviewCache.size > 80) catalogPreviewCache.delete(catalogPreviewCache.keys().next().value);
@@ -5341,6 +5372,56 @@
     if(baseMesh) root.position.y=-new THREE.Box3().setFromObject(baseMesh).min.y;
     root.updateMatrixWorld(true);
     return root;
+  }
+
+  function captureCurrent3DCanvasThumbnail() {
+    try {
+      if (!renderer || !renderer.domElement || !scene || !camera) return null;
+      renderer.render(scene, camera);
+      const src = renderer.domElement;
+      if (!src.width || !src.height) return null;
+      const outW = 240, outH = 176;
+      const tmp = document.createElement('canvas');
+      tmp.width = outW;
+      tmp.height = outH;
+      const ctx = tmp.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, outW, outH);
+      const scale = Math.max(outW / src.width, outH / src.height);
+      const drawW = src.width * scale;
+      const drawH = src.height * scale;
+      ctx.drawImage(src, (outW - drawW) / 2, (outH - drawH) / 2, drawW, drawH);
+      return tmp.toDataURL('image/png');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function drawSaved3DThumbnail(canvas, dataUrl, fallbackModel) {
+    return new Promise(resolve => {
+      if (!canvas || !dataUrl) {
+        if (fallbackModel) drawCatalog3DPreview(canvas, fallbackModel);
+        resolve();
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = 240;
+        canvas.height = 176;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 240, 176);
+        const scale = Math.max(240 / img.width, 176 / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (240 - w) / 2, (176 - h) / 2, w, h);
+        resolve();
+      };
+      img.onerror = () => {
+        if (fallbackModel) drawCatalog3DPreview(canvas, fallbackModel);
+        resolve();
+      };
+      img.src = dataUrl;
+    });
   }
 
   function drawCatalog3DPreview(canvas, model) {

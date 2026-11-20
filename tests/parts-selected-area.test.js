@@ -6,6 +6,7 @@ const path = require('node:path');
 global.window = global;
 require('../assets/pacdora-catalog/folding-box-dielines-p1.js');
 const DielineEngine = require('../dieline-engine.js');
+const UserLibrary = require('../library-models.js');
 
 function loadAmericanBoxModel() {
   const svg = fs.readFileSync(path.join(__dirname, '..', 'b1 caja americana.svg'), 'utf8');
@@ -62,22 +63,25 @@ test('Cambiar piezas aplica cada variación al área seleccionada (targetFaceId)
   assert.equal(withTear.partTargetFaceId, otherFlap.id);
 });
 
-test('Solapas dobles en caja B1 americana hace crecer las 4 solapas del lado elegido en Y a 2×L - 2 mm', () => {
+test('Solapas dobles en caja B1 americana hace crecer las 4 solapas del lado elegido en Y al ancho (X más corto) menos 2 mm', () => {
   const baseModel = loadAmericanBoxModel();
   const b1Data = DielineEngine.getB1DoubleFlapsData(baseModel);
   assert.equal(b1Data.isB1, true);
   assert.equal(b1Data.topFlaps.length, 4);
   assert.equal(b1Data.bottomFlaps.length, 4);
+  assert.ok(b1Data.minBodyWidthX > 80);
 
-  // Seleccionar una solapa superior -> crecen las 4 superiores, las 4 inferiores no cambian
+  // Seleccionar una solapa superior -> crecen las 4 superiores hasta minBodyWidthX - 2 mm
   const topTarget = b1Data.topFlaps[0].face;
   const maxTopH = Math.max(...b1Data.topFlaps.map(x => x.face.bounds.height));
-  const expectedTopDelta = maxTopH - 2;
+  const expectedTopDelta = Math.max(0, (b1Data.minBodyWidthX - 2) - maxTopH);
   const mTop = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', { targetFaceId: topTarget.id });
   assert.ok(!mTop.partError, mTop.partError);
   assert.equal(mTop.activePartVariation, 'double_flaps');
   assert.equal(mTop.partDoubleFlapsSide, 'top');
 
+  const maxNewTopH = Math.max(...b1Data.topFlaps.map(x => mTop.faces.find(f => f.id === x.face.id).bounds.height));
+  assert.ok(Math.abs(maxNewTopH - (b1Data.minBodyWidthX - 2)) < 0.25, 'La altura en Y debe ser igual al ancho más corto en X menos 2 mm');
   for (const { face: orig } of b1Data.topFlaps) {
     const updated = mTop.faces.find(f => f.id === orig.id);
     assert.ok(
@@ -93,7 +97,7 @@ test('Solapas dobles en caja B1 americana hace crecer las 4 solapas del lado ele
   // Seleccionar una solapa inferior sobre el modelo ya modificado -> crecen también las 4 inferiores
   const bottomTarget = b1Data.bottomFlaps[0].face;
   const maxBotH = Math.max(...b1Data.bottomFlaps.map(x => x.face.bounds.height));
-  const expectedBotDelta = maxBotH - 2;
+  const expectedBotDelta = Math.max(0, (b1Data.minBodyWidthX - 2) - maxBotH);
   const mBoth = DielineEngine.applyPartVariationToModel(mTop, 'double_flaps', { targetFaceId: bottomTarget.id });
   assert.ok(!mBoth.partError, mBoth.partError);
   assert.equal(mBoth.partDoubleFlapsSide, 'bottom');
@@ -123,6 +127,40 @@ test('Solapas dobles en caja B1 americana hace crecer las 4 solapas del lado ele
   const trayModel = DielineEngine.buildDielineModelFromPacdora(entry.knifeData, entry);
   const errTray = DielineEngine.applyPartVariationToModel(trayModel, 'double_flaps', { targetFaceId: trayModel.faces[0].id });
   assert.ok(errTray.partError && errTray.partError.includes('B1'));
+});
+
+test('Asa en Cara Cuerpo 4 se orienta horizontal por defecto y admite girar 90 grados', () => {
+  const baseModel = loadAmericanBoxModel();
+  const body4 = baseModel.faces.find(f => f.label && f.label.includes('Cara Cuerpo 4'));
+  assert.ok(body4 && body4.bounds.width > body4.bounds.height);
+
+  const holeBounds = hole => {
+    const xs = hole.map(p => p.x), ys = hole.map(p => p.y);
+    return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  };
+
+  // Por defecto (rotate90 = 0): horizontal (ancho > alto)
+  const mHoriz = DielineEngine.applyPartVariationToModel(baseModel, 'handle', { targetFaceId: body4.id, length: 70, width: 20, radius: 6, rotate90: 0 });
+  assert.ok(!mHoriz.partError, mHoriz.partError);
+  const bH = holeBounds(mHoriz.faces.find(f => f.id === body4.id).holes[0]);
+  assert.ok(bH.w > bH.h, `Por defecto debe ser horizontal, obtenido ${bH.w.toFixed(1)}×${bH.h.toFixed(1)}`);
+
+  // Con rotate90 = 1: vertical (alto > ancho)
+  const mVert = DielineEngine.applyPartVariationToModel(baseModel, 'handle', { targetFaceId: body4.id, length: 70, width: 20, radius: 6, rotate90: 1 });
+  assert.ok(!mVert.partError, mVert.partError);
+  const bV = holeBounds(mVert.faces.find(f => f.id === body4.id).holes[0]);
+  assert.ok(bV.h > bV.w, `Con girar 90° debe ser vertical, obtenido ${bV.w.toFixed(1)}×${bV.h.toFixed(1)}`);
+});
+
+test('UserLibrary detecta nombres duplicados para sobreescribir y conserva thumbnail3dDataUrl', () => {
+  const baseModel = loadAmericanBoxModel();
+  const thumb = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const item = UserLibrary.create('b1-americana copia-01', 'C1', baseModel, 'b1.svg', undefined, { thumbnail3dDataUrl: thumb });
+  assert.equal(item.thumbnail3dDataUrl, thumb);
+  const found = UserLibrary.findByName([item], '  B1-AMERICANA COPIA-01  ');
+  assert.ok(found && found.num === item.num);
+  const normalized = UserLibrary.normalize([item]);
+  assert.equal(normalized[0].thumbnail3dDataUrl, thumb);
 });
 
 test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada (incluso paneles interiores de cuerpo)', () => {

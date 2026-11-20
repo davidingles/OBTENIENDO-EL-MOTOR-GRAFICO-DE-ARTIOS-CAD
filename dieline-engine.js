@@ -2801,6 +2801,7 @@
     const face = resolvePartTargetFace(model, targetFaceId);
     if (!face || !Array.isArray(face.polygon) || face.polygon.length < 3) return null;
     const allowFoldEdge = !!opts.allowFoldEdge;
+    const preferLongestAny = !!opts.preferLongestAny;
     const centroid = face.centroid || {
       x: (face.bounds.minX + face.bounds.maxX) / 2,
       y: (face.bounds.minY + face.bounds.maxY) / 2
@@ -2821,6 +2822,7 @@
       if (!isFold && (!bestFree || length > bestFree.length)) bestFree = candidate;
       if (!bestAny || length > bestAny.length) bestAny = candidate;
     }
+    if (preferLongestAny && bestAny) return bestAny;
     if (bestFree) return bestFree;
     return allowFoldEdge ? bestAny : null;
   }
@@ -3108,12 +3110,15 @@
       side = 'top';
     }
 
+    const minBodyWidthX = Math.min(...bodyFaces.map(f => f.bounds?.width || Infinity));
+
     return {
       isB1: true,
       side,
       flaps: side === 'top' ? topFlaps : bottomFlaps,
       topFlaps,
-      bottomFlaps
+      bottomFlaps,
+      minBodyWidthX
     };
   }
 
@@ -3148,7 +3153,9 @@
     const refHeight = Math.max(...data.flaps.map(x =>
       Math.abs(x.yFold - (isTop ? x.face.bounds.minY : x.face.bounds.maxY))
     ));
-    const delta = Math.max(0, refHeight - clearance);
+    // Longitud objetivo en Y = distancia en X del ancho (panel de cuerpo más corto) menos 2 mm
+    const targetHeight = Math.max(refHeight, (data.minBodyWidthX || refHeight * 2) - clearance);
+    const delta = Math.max(0, targetHeight - refHeight);
     const shiftY = dir * delta;
     const minXSpan = Math.min(...data.flaps.map(x => x.face.bounds.minX));
     const maxXSpan = Math.max(...data.flaps.map(x => x.face.bounds.maxX));
@@ -3235,11 +3242,15 @@
     }
 
     const allowFoldEdge = key === 'handle' || key === 'windows';
-    const edge = getPartEdge(model, options?.targetFaceId, { allowFoldEdge });
+    const preferLongestAny = key === 'handle' || key === 'windows';
+    const edge = getPartEdge(model, options?.targetFaceId, { allowFoldEdge, preferLongestAny });
     if (!edge) return {params:{}, limits:{}};
     if (key === 'handle') {
-      field('length', 4, edge.length-8, 86);
-      field('width', 3, edge.depth-8, 22);
+      params.rotate90 = Number(options.rotate90) === 1 ? 1 : 0;
+      const maxLen = params.rotate90 ? edge.depth - 8 : edge.length - 8;
+      const maxWid = params.rotate90 ? edge.length - 8 : edge.depth - 8;
+      field('length', 4, maxLen, 86);
+      field('width', 3, maxWid, 22);
       field('radius', 0, Math.min(params.width, params.length)/2, 8);
     } else if (key === 'thumb_notch') {
       params.count = Number(options.count) === 2 ? 2 : 1;
@@ -3285,7 +3296,8 @@
       return applyDoubleFlapsVariation(baseModel, params, options?.targetFaceId);
     }
     const allowFoldEdge = partKey === 'handle' || partKey === 'windows';
-    const edge = getPartEdge(baseModel, options?.targetFaceId, { allowFoldEdge });
+    const preferLongestAny = partKey === 'handle' || partKey === 'windows';
+    const edge = getPartEdge(baseModel, options?.targetFaceId, { allowFoldEdge, preferLongestAny });
     if (!edge) {
       return { ...baseModel, partError: 'El área seleccionada no tiene borde exterior libre para aplicar esta pieza. Selecciona una solapa o un panel con borde exterior.' };
     }
@@ -3320,10 +3332,12 @@
       });
     };
     if(partKey==='handle') {
-      const {length, width, radius:r}=params;
+      const {length, width, radius:r, rotate90}=params;
+      const spanU = rotate90 ? width : length;
+      const spanV = rotate90 ? length : width;
       const pts=[];
       const c=edge.length/2, d=edge.depth/2;
-      const corners=[[c+length/2-r,d+width/2-r,0],[c-length/2+r,d+width/2-r,Math.PI/2],[c-length/2+r,d-width/2+r,Math.PI],[c+length/2-r,d-width/2+r,Math.PI*1.5]];
+      const corners=[[c+spanU/2-r,d+spanV/2-r,0],[c-spanU/2+r,d+spanV/2-r,Math.PI/2],[c-spanU/2+r,d-spanV/2+r,Math.PI],[c+spanU/2-r,d-spanV/2+r,Math.PI*1.5]];
       for(const [u,v,start] of corners) for(let i=0;i<=8;i++) {
         const angle=start+i*Math.PI/16;
         pts.push(at(u+Math.cos(angle)*r,v+Math.sin(angle)*r));
