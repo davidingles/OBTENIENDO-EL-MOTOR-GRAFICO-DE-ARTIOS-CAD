@@ -1970,3 +1970,17 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   background: rgba(220, 38, 38, 0.75);
   color: #ffffff;
 }
+
+.btn-rotate-dieline {
+  padding: 9px 12px;
+  border: 1px solid #e1e7ee;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #334155;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(32, 48, 70, 0.08);
+}
+.btn-rotate-dieline:hover { background: #e0f2fe; border-color: #38bdf8; }
+.btn-rotate-dieline:focus-visible { outline: 2px solid #0284c7; outline-offset: 2px; }

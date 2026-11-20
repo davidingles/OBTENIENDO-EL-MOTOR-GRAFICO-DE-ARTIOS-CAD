@@ -4565,8 +4565,51 @@
     return reconcileDimensionMeasurements(built);
   }
 
+  // Rotate actual geometry so picking, export and editing share the same coordinates.
+  function rotateDieline90(model) {
+    if (!model) return model;
+    const b = model.bounds;
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    const point = p => p ? {...p, x: cx - (p.y - cy), y: cy + (p.x - cx)} : p;
+    const bounds = b => {
+      if (!b) return b;
+      const a = point({x:b.minX,y:b.maxY}), z = point({x:b.maxX,y:b.minY});
+      return {...b,minX:a.x,minY:a.y,maxX:z.x,maxY:z.y,width:z.x-a.x,height:z.y-a.y};
+    };
+    const segment = s => {
+      const a = point({x:s.x1,y:s.y1}), b = point({x:s.x2,y:s.y2});
+      return {...s,x1:a.x,y1:a.y,x2:b.x,y2:b.y};
+    };
+    const result = {...model, bounds:bounds(model.bounds),
+      blankWidthMm:model.blankHeightMm, blankHeightMm:model.blankWidthMm,
+      faces:(model.faces || []).map(f => ({...f,
+        polygon:(f.polygon || f.points || []).map(point),
+        points:(f.points || f.polygon || []).map(point),
+        holes:(f.holes || []).map(h => h.map(point)),
+        centroid:point(f.centroid), bounds:bounds(f.bounds), bbox:bounds(f.bbox)
+      })),
+      hinges:(model.hinges || []).map(h => {
+        const rotated = {...h,p1:point(h.p1),p2:point(h.p2),midpoint:point(h.midpoint)};
+        if (h.orientation) rotated.orientation = Math.abs(rotated.p2.y - rotated.p1.y) > Math.abs(rotated.p2.x - rotated.p1.x) ? 'VERTICAL' : 'HORIZONTAL';
+        if (Number.isFinite(h.planarSlope)) {
+          if (Math.abs(h.planarSlope) > 1e-12) rotated.planarSlope = -1 / h.planarSlope;
+          else delete rotated.planarSlope;
+        }
+        return rotated;
+      })
+    };
+    for (const key of ['cutSegments','foldSegments','bleedSegments','cutSegmentsMm','foldSegmentsMm','bleedSegmentsMm']) {
+      if (model[key]) result[key] = model[key].map(segment);
+    }
+    for (const key of ['sizeArrowData','outsideArrowData']) {
+      if (model[key]) result[key] = model[key].map(a => ({...a,p1:point(a.p1),p2:point(a.p2),tpointer:point(a.tpointer)}));
+    }
+    return result;
+  }
+
   return {
     ARTIOS_BOARDS,
+    rotateDieline90,
     parseSVGDieline,
     buildPlanarSubdivision,
     buildDielineModel,

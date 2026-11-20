@@ -198,6 +198,7 @@
   const pivotMap = new Map();    // hingeId -> { pivotGroup, axis3d, basePos, hinge, childFace, parentFace }
   const faceMeshMap = new Map(); // faceId -> { mesh, cutOutline, creaseLines, face }
   const textureCache = new Map();
+  const textureLoads = new Map();
 
   // Materiales compartidos
   let matOuterFace = null;
@@ -211,7 +212,7 @@
   const vectorClone = value => JSON.parse(JSON.stringify(value));
 
   function captureUndoState() {
-    return vectorClone({model: state.dieline, parameters: {
+    return vectorClone({model: state.dieline, artworkLayouts: getArtworkList().map(a => ({id:a.id, centerX:a.centerX, centerY:a.centerY, rotation:a.rotation})), parameters: {
       baseDieline: state.baseDieline, parametricDieline: state.parametricDieline,
       paramL: state.paramL, paramW: state.paramW, paramH: state.paramH,
       openParamsValues: state.openParamsValues, activePart: state.activePart,
@@ -223,6 +224,10 @@
   }
 
   function restoreUndoState(snapshot) {
+    for (const layout of snapshot.artworkLayouts || []) {
+      const artwork = getArtworkList().find(a => a.id === layout.id);
+      if (artwork) Object.assign(artwork, layout);
+    }
     displayVectorModel(snapshot.model);
     Object.assign(state, snapshot.parameters);
     syncParametricInputsUI({boxDimensionsMm: {
@@ -445,10 +450,16 @@
       ? window.ARTIOS_TEXTURES[fileName]
       : fileName === 'corrugado.png' ? 'assets/corrugado.png' : `assets/textures/${fileName}`;
 
+    let resolveLoad, rejectLoad;
+    const loaded = new Promise((resolve, reject) => { resolveLoad = resolve; rejectLoad = reject; });
+    // Keep a rejected load available to the exporter without an unhandled rejection.
+    loaded.catch(() => {});
     const tex = loader.load(dataUri, () => {
       tex.needsUpdate = true;
+      resolveLoad();
       if (state.artwork && state.dieline) { refreshArtworkAtlas(state.dieline); render2FDieline(); }
-    });
+    }, undefined, () => rejectLoad(new Error('No se pudo cargar la textura: ' + fileName)));
+    textureLoads.set(tex, loaded);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     tex.repeat.set(repeatX, repeatY);
@@ -489,11 +500,14 @@
       wireframe: state.showWireframe
     });
 
-    // 3. Material del Canto Cortado (color liso, sin corrugado)
+    // Flutes run along vertical Y in the flat dieline. Edge UVs sample X/Z.
+    const corrugated = getArtiosTexture('corrugado.png');
+    corrugated.wrapT = THREE.ClampToEdgeWrapping;
+    corrugated.name = 'Corrugado';
     matCutEdge = new THREE.MeshStandardMaterial({
       name: 'Carton_Canto_Cortado',
-      map: null,
-      color: board.innerColorHex || board.colorHex || 0xcfa778,
+      map: corrugated,
+      color: 0xffffff,
       vertexColors: false,
       roughness: 0.90,
       metalness: 0.0,
@@ -1079,7 +1093,9 @@
     const spanX = Math.max(1, maxX3d - minX3d);
     const spanY = Math.max(1, maxY3d - minY3d);
     const grainScaleMM = 130.0;
-    const fluteWaveSpanMM = Math.max(18.0, caliper * 7.5);
+    // corrugado.png is 295 x 37 px: preserve its aspect ratio across full thickness.
+    // One image contains several waves; this is a visual pitch, not a board specification.
+    const fluteWaveSpanMM = Math.max(0.01, caliper) * (295 / 37);
     const halfT = caliper * 0.5;
 
     function pushVertex(grpIdx, vx, vy, vz, nx, ny, nz, u, v, shade) {
@@ -1175,7 +1191,6 @@
     for (const [ringIndex, sourceRing] of [face.polygon, ...(face.holes || [])].entries()) {
     const signedArea = sourceRing.reduce((sum,p,i) => {const q=sourceRing[(i+1)%sourceRing.length]; return sum+p.x*q.y-q.x*p.y;},0);
     const ring = (signedArea > 0) === (ringIndex === 0) ? sourceRing : sourceRing.slice().reverse();
-    let perimeterRunMM = 0;
 
     for (let i = 0; i < ring.length; i++) {
       const a = ring[i];
@@ -1212,10 +1227,12 @@
         const e0 = evalPoint3D(p0);
         const e1 = evalPoint3D(p1);
 
-        const u0 = (perimeterRunMM + segLen * t0) / fluteWaveSpanMM;
-        const u1 = (perimeterRunMM + segLen * t1) / fluteWaveSpanMM;
-        const vBot = 0.06;
-        const vTop = 0.94;
+        // Global material coordinates keep phase continuous across panels and holes.
+        // Along Y, U stays constant: longitudinal cuts cannot show repeated waves.
+        const u0 = (p0.x - globalBounds.minX) / fluteWaveSpanMM;
+        const u1 = (p1.x - globalBounds.minX) / fluteWaveSpanMM;
+        const vBot = 0;
+        const vTop = 1;
 
         // Dos triángulos con orientación CCW vista desde fuera del canto (normal = enX, enY, 0)
         // Como ahora zInner (-Z) < zOuter (+Z), avanzamos de zInner a zOuter para conservar la normal exterior
@@ -1228,7 +1245,6 @@
         pushVertex(2, e1.x3d, e1.y3d, e1.zInner, enX, enY, 0, u1, vBot, e1.shade);
       }
 
-      perimeterRunMM += segLen;
     }
     }
 
@@ -1795,13 +1811,26 @@
     return {root, clips:buildBlenderAnimationClips()};
   }
 
-  function exportGLBForBlender() {
+  async function waitForExportTextures() {
+    const pending = new Set();
+    dielineRootGroup?.traverse(object => {
+      for (const material of (Array.isArray(object.material) ? object.material : [object.material])) {
+        const loaded = textureLoads.get(material?.map);
+        if (loaded) pending.add(loaded);
+      }
+    });
+    await Promise.all(pending);
+  }
+
+  async function exportGLBForBlender() {
     if(state.dieline?.vector3DStale){alert('Cierra los contornos del plano antes de exportar el modelo 3D.');return;}
     if (!dielineRootGroup || !THREE.GLTFExporter) {
       alert('El exportador GLTF/GLB no está disponible.');
       return;
     }
 
+    try { await waitForExportTextures(); }
+    catch (error) { alert(error.message); return; }
     const {root:exportRoot, clips} = buildSingleMeshExport();
     const exporter = new THREE.GLTFExporter();
 
@@ -1825,11 +1854,12 @@
     );
   }
 
-  function buildClientGLB() {
+  async function buildClientGLB() {
     if (!dielineRootGroup || !state.dieline?.faces.length || state.dieline.vector3DStale) {
       return Promise.reject(new Error('Cierra los contornos y comprueba el modelo 3D antes de publicarlo.'));
     }
     if (!THREE.GLTFExporter) return Promise.reject(new Error('No está disponible el exportador GLB.'));
+    await waitForExportTextures();
     const {root, clips} = buildSingleMeshExport();
     root.userData.clientViewer = true;
     return new Promise((resolve, reject) => {
@@ -1928,6 +1958,7 @@
     if(!dielineRootGroup || !state.dieline?.faces.length || state.dieline.vector3DStale){alert('Cierra los contornos antes de crear el archivo Blender.');return;}
     button.disabled=true;button.textContent='Creando escena en Blender…';
     try {
+      await waitForExportTextures();
       const exported=buildSingleMeshExport(),root=exported.root;
       const clips=exported.clips.filter(c=>c.name.startsWith('02_'));
       const result=await new Promise(resolve=>new THREE.GLTFExporter().parse(root,resolve,{binary:true,animations:clips,onlyVisible:true,embedImages:true}));
@@ -3427,6 +3458,7 @@
     });
 
     document.getElementById('btn-reset-fold-order')?.addEventListener('click', resetFoldOrder);
+    document.getElementById('btn-rotate-dieline')?.addEventListener('click', rotateWholeDieline90);
     initArtworkControls();
 
     const bindCheck = (id, prop, callback) => {
@@ -4696,6 +4728,28 @@
     displayVectorModel(model);
     vectorMessage(model.vectorWarning||'Cambio aplicado. Exporta o guarda en la biblioteca.');
   }
+  function rotateWholeDieline90() {
+    if (!state.dieline) return;
+    recordUndoState();
+    const b = state.dieline.bounds;
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    for (const artwork of getArtworkList()) {
+      const x = artwork.centerX, y = artwork.centerY;
+      artwork.centerX = cx - (y - cy);
+      artwork.centerY = cy + (x - cx);
+      artwork.rotation = (((artwork.rotation || 0) + 270) % 360) - 180;
+    }
+    const angles = {...state.hingeAngles};
+    vectorDraft = null; vectorSelection = null; artworkDrag = null;
+    displayVectorModel(DielineEngine.rotateDieline90(state.dieline));
+    state.hingeAngles = angles;
+    state.openParamsValues = {};
+    setMasterFold(state.masterFold);
+    reset2DView();
+    render2FDieline();
+    syncArtworkControls();
+  }
+
   function initVectorEditor() {
     const controls=document.getElementById('vector-controls');
     const upImg = document.getElementById('vector-upload-image');

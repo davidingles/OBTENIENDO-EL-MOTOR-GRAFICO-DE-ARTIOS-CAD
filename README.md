@@ -12,6 +12,9 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 
 ## Funcionamiento
 
+- «Girar troquel 90°», debajo del orden de plegado, gira el plano completo en sentido horario y admite deshacer. La flauta permanece vertical en el plano: el giro cambia su orientación respecto al troquel.
+- El canto 3D utiliza `assets/corrugado.png`, con UV continuas según la dirección de la flauta y la imagen integrada en los GLB. Los cortes transversales muestran ondas; los longitudinales, una sección constante. La escala de la imagen sigue el espesor del material; es una representación visual de las ondas, no geometría hueca ni una especificación industrial del paso de flauta.
+
 - «CREAR .blend» es únicamente un botón sin acción asociada.
 - Se pueden abrir SVG y DXF ASCII. Al abrir DXF se confirma la escala y la clasificación de grupos como corte, hendido o ignorar. Admite LINE, ARC, CIRCLE, LWPOLYLINE/POLYLINE con bulges, ELLIPSE, splines con nudos y puntos de control, y bloques INSERT 2D. Los formatos no compatibles se notifican; DWG y DXF binario no se importan de forma nativa. Referencia: [grupos DXF de Autodesk](https://help.autodesk.com/cloudhelp/2025/ENU/AutoCAD-DXF/files/GUID-89CB823D-614D-4D1E-8204-568EC72DF869.htm).
 - Tras importar CAD, selecciona el panel de la base y usa «Usar panel seleccionado como base 3D» en Más si necesitas cambiarlo. El plegado requiere contornos cerrados y uniones de hendido entre paneles.

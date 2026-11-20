@@ -113,7 +113,7 @@ test('si falla el guardado de preferidos, la selección no se muestra como guard
 
 
 
-test('GLB exporta una sola malla en metros, con materiales y plegado, sin modificar el visor', () => {
+test('GLB exporta una sola malla en metros, con materiales y plegado, sin modificar el visor', async () => {
   const ui=app(),original=THREE.GLTFExporter;
   let exported,options;
   THREE.GLTFExporter=class {parse(root,callback,opts){exported=root;options=opts;}};
@@ -121,7 +121,7 @@ test('GLB exporta una sola malla en metros, con materiales y plegado, sin modifi
     ui.setup(engine.buildDielineModelFromPacdora(entry.knifeData,entry));
     ui.setMasterFold(0.75);
     const before=ui.root.position.clone();
-    ui.exportGLBForBlender();
+    await ui.exportGLBForBlender();
     assert.notEqual(exported,ui.root);
     assert.equal(exported.scale.x,1);
     assert.equal(exported.position.length(),0);
@@ -417,4 +417,43 @@ test('seleccionar o señalar un panel no añade contornos azules ni el box auxil
   ui.updateSelectionHighlight();
   assert.ok([...ui.meshes.values()].every(item => !item.cutOutline.visible));
   assert.equal(ui.boxHelpers.children.length, 0);
+});
+
+
+test('corrugated edges use the source image without tinting the printed faces', () => {
+  const ui=app();
+  for(const finish of ui.MATERIAL_FINISHES) {
+    ui.state.boardId=finish.id;
+    const materials=ui.realBuildBoardMaterials();
+    assert.equal(materials[2].map.name,'Corrugado');
+    assert.equal(materials[2].map.wrapT,THREE.ClampToEdgeWrapping);
+    assert.equal(materials[2].color.getHex(),0xffffff);
+    assert.equal(materials[1].map,null);
+  }
+});
+
+test('flutes stay vertical: transverse, longitudinal, oblique and hole cuts share X/Z UVs at every thickness', () => {
+  const ui=app();
+  const polygon=[{x:0,y:0},{x:30,y:0},{x:30,y:15},{x:20,y:25},{x:0,y:25}];
+  const face={polygon,holes:[[{x:4,y:4},{x:8,y:4},{x:8,y:8},{x:4,y:8}]],centroid:{x:15,y:12}};
+  const bounds={minX:0,minY:0,maxX:30,maxY:25};
+  for(const thickness of [1.5,3,4.5,7]) {
+    const geo=ui.createCrushedPanelGeometry(face,[],thickness,bounds);
+    const group=geo.groups.find(g=>g.materialIndex===2);
+    const pos=geo.attributes.position,uv=geo.attributes.uv;
+    const span=thickness*295/37;
+    let longitudinal=0,transverse=0,oblique=0;
+    for(let i=group.start;i<group.start+group.count;i++) {
+      assert.ok(Math.abs(uv.getX(i)-pos.getX(i)/span)<1e-6);
+      assert.ok(Math.abs(uv.getY(i)-(pos.getZ(i)/thickness+.5))<1e-6);
+    }
+    for(let i=group.start;i<group.start+group.count;i+=6) {
+      const dx=pos.getX(i+2)-pos.getX(i),dy=pos.getY(i+2)-pos.getY(i);
+      const du=uv.getX(i+2)-uv.getX(i);
+      if(Math.abs(dx)<1e-6){assert.ok(Math.abs(du)<1e-6);longitudinal++;}
+      else if(Math.abs(dy)<1e-6){assert.ok(Math.abs(du)>0);transverse++;}
+      else {assert.ok(Math.abs(du-dx/span)<1e-6);oblique++;}
+    }
+    assert.ok(longitudinal && transverse && oblique);
+  }
 });

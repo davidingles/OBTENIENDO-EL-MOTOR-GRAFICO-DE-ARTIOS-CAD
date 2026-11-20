@@ -73,11 +73,12 @@ function createMockApp() {
   };
   vm.createContext(ctx);
   vm.runInContext(source.replace(/\}\)\(\);\s*$/, `
+    getArtiosTexture = () => new THREE.Texture();
     rootBoxGroup = new THREE.Group();
     bboxHelperGroup = new THREE.Group();
     camera = new THREE.PerspectiveCamera(38, 1.25, 0.1, 10000);
     controls = { target: new THREE.Vector3(), update() { camera.lookAt(this.target); camera.updateMatrixWorld(true); } };
-    globalThis._testApp = { state, loadSVGString, initUIControls, init2DCanvasInteractions, setMasterFold, computeHingeAngleAtProgress, deleteFoldOrderStep, faceMeshMap, get2DTransform, hitTest2DCanvas, get root() { return dielineRootGroup; } };
+    globalThis._testApp = { state, handleUndo, handleRedo, loadSVGString, initUIControls, init2DCanvasInteractions, setMasterFold, computeHingeAngleAtProgress, deleteFoldOrderStep, faceMeshMap, get2DTransform, hitTest2DCanvas, get root() { return dielineRootGroup; } };
   })();`), ctx);
   return { app: ctx._testApp, elements, makeEl };
 }
@@ -211,4 +212,52 @@ test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rot
   assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeA, wallA, 1, 'phased')), 0);
   assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeB, wallB, 1, 'phased')), 0);
   assert.equal(Math.abs(app.computeHingeAngleAtProgress(hingeC, wallC, 1, 'phased')), 0);
+});
+
+
+test('whole dieline button rotates geometry clockwise, preserves folds, and supports undo/redo', () => {
+  const {app, elements} = createMockApp();
+  app.initUIControls();
+  app.loadSVGString(sampleTraySvg, 'tray.svg', true);
+  const before = JSON.parse(JSON.stringify(app.state.dieline));
+  const root = before.rootFaceId;
+  app.state.customFoldOrder = {[before.faces[1].id]: 1};
+  const click = elements.get('btn-rotate-dieline').listeners.click[0];
+  click();
+  const after = app.state.dieline;
+  assert.equal(after.rootFaceId, root);
+  assert.equal(after.bounds.width, before.bounds.height);
+  assert.equal(after.bounds.height, before.bounds.width);
+  assert.deepEqual(after.hinges.map(h=>h.id), before.hinges.map(h=>h.id));
+  assert.equal(app.state.customFoldOrder[before.faces[1].id], 1);
+  const a = before.faces[0].polygon[0], b = after.faces[0].polygon[0];
+  const cx = (before.bounds.minX + before.bounds.maxX)/2, cy = (before.bounds.minY + before.bounds.maxY)/2;
+  assert.ok(Math.abs(b.x-(cx-a.y+cy))<1e-8);
+  assert.ok(Math.abs(b.y-(cy+a.x-cx))<1e-8);
+  app.handleUndo();
+  assert.equal(app.state.dieline.bounds.width, before.bounds.width);
+  app.handleRedo();
+  assert.equal(app.state.dieline.bounds.width, after.bounds.width);
+  for(let i=0;i<3;i++) click();
+  for(let i=0;i<before.faces.length;i++) for(let j=0;j<before.faces[i].polygon.length;j++) {
+    const p=before.faces[i].polygon[j], q=app.state.dieline.faces[i].polygon[j];
+    assert.ok(Math.hypot(p.x-q.x,p.y-q.y)<1e-8);
+  }
+});
+
+test('quarter turn preserves holes, dimension lengths and segment lengths without mutating input', () => {
+  const model = engine.buildDielineModel(sampleTraySvg);
+  model.faces[0].holes = [[{x:50,y:50},{x:55,y:50},{x:55,y:55}]];
+  const original = JSON.stringify(model);
+  const result = engine.rotateDieline90(model);
+  assert.equal(JSON.stringify(model), original);
+  assert.notDeepEqual(result.faces[0].holes, model.faces[0].holes);
+  assert.deepEqual(result.boxDimensionsMm, model.boxDimensionsMm);
+  for (let i=0;i<model.cutSegments.length;i++) {
+    const a=model.cutSegments[i],b=result.cutSegments[i];
+    assert.ok(Math.abs(Math.hypot(a.x2-a.x1,a.y2-a.y1)-Math.hypot(b.x2-b.x1,b.y2-b.y1))<1e-8);
+  }
+  for(let i=0;i<model.sizeArrowData.length;i++) {
+    assert.ok(Math.abs(engine.measureDimensionArrow(model.sizeArrowData[i])-engine.measureDimensionArrow(result.sizeArrowData[i]))<1e-8);
+  }
 });
