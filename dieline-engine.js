@@ -3472,6 +3472,15 @@
         ? Math.min(maxDist, Math.max(minDist, params.length + 14))
         : Math.min(maxDist, Math.max(minDist, edge.length * 0.42));
       field('distance', minDist, maxDist, defDist);
+      const totalU = params.count === 1 ? params.length : params.count === 2 ? params.distance + params.length : 2 * params.distance + params.length;
+      const totalV = params.width;
+      const isHorizEdge = Math.abs(edge.tx) >= Math.abs(edge.ty);
+      const spanX = isHorizEdge ? totalU : totalV;
+      const spanY = isHorizEdge ? totalV : totalU;
+      const maxOffX = Math.max(0, Math.floor(((edge.face.bounds?.width || edge.length) - spanX) / 2 - 4));
+      const maxOffY = Math.max(0, Math.floor(((edge.face.bounds?.height || edge.depth) - spanY) / 2 - 4));
+      field('offsetX', -maxOffX, maxOffX, 0);
+      field('offsetY', -maxOffY, maxOffY, 0);
     }
     return {params, limits};
   }
@@ -3615,7 +3624,7 @@
         p1:a,p2:b,midpoint:at(edge.length/2),length:len,lengthMm:len,defaultAngle:angle,animSteps:[{start:0.8,end:1,deltaDeg:angle}],isPartMod:true});
     } else if(partKey==='windows') {
       const count = [1, 2, 3].includes(Number(params.count)) ? Number(params.count) : 1;
-      const {length:w, width:h, radius:r, distance} = params;
+      const {length:w, width:h, radius:r, distance, offsetX = 0, offsetY = 0} = params;
       const mid = edge.length / 2, d = edge.depth / 2;
       const centers = count === 1 ? [mid]
         : count === 2 ? [mid - distance / 2, mid + distance / 2]
@@ -3624,7 +3633,9 @@
       for (const c of centers) {
         const pts = [];
         if (r < 0.1) {
-          pts.push(at(c + w / 2, d + h / 2), at(c - w / 2, d + h / 2), at(c - w / 2, d - h / 2), at(c + w / 2, d - h / 2));
+          for (const pt of [at(c + w / 2, d + h / 2), at(c - w / 2, d + h / 2), at(c - w / 2, d - h / 2), at(c + w / 2, d - h / 2)]) {
+            pts.push({ x: pt.x + offsetX, y: pt.y + offsetY });
+          }
         } else {
           const corners = [
             [c + w / 2 - r, d + h / 2 - r, 0],
@@ -3635,18 +3646,55 @@
           for (const [u, v, start] of corners) {
             for (let i = 0; i <= 8; i++) {
               const angle = start + i * Math.PI / 16;
-              pts.push(at(u + Math.cos(angle) * r, v + Math.sin(angle) * r));
+              const pt = at(u + Math.cos(angle) * r, v + Math.sin(angle) * r);
+              pts.push({ x: pt.x + offsetX, y: pt.y + offsetY });
             }
           }
         }
         if (!pts.every(p => pointInPolygon(p, flap.polygon))) {
-          return {...baseModel, partError:'La ventana no cabe en esta área. Reduce sus medidas o el número de ventanas.'};
+          return {...baseModel, partError:'La ventana no cabe en esta posición o área. Reduce sus medidas o ajusta X/Y.'};
         }
         windowPolys.push(pts);
       }
+      const allVectors = [...model.cutSegments, ...model.foldSegments];
+      const allPts = windowPolys.flat();
+      const wxs = allPts.map(p => p.x), wys = allPts.map(p => p.y);
+      const wMinX = Math.min(...wxs), wMaxX = Math.max(...wxs);
+      const wMinY = Math.min(...wys), wMaxY = Math.max(...wys);
+      const wxMid = (wMinX + wMaxX) / 2, wyMid = (wMinY + wMaxY) / 2;
+      const topHit = findNearestVectorHit(allVectors, wxMid, wMinY, 0, -1);
+      const leftHit = findNearestVectorHit(allVectors, wMinX, wyMid, -1, 0);
+      const rightHit = findNearestVectorHit(allVectors, wMaxX, wyMid, 1, 0);
+
       for (const pts of windowPolys) {
         flap.holes.push(positive(pts));
         addCuts(pts, true);
+      }
+
+      const winIdx = flap.holes.length;
+      const makeWinDim = (id, p1, p2) => {
+        const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        if (dist < 0.5) return null;
+        return {
+          id,
+          p1: { x: p1.x, y: p1.y },
+          p2: { x: p2.x, y: p2.y },
+          textPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 },
+          valueMm: +dist.toFixed(1),
+          text: `${dist.toFixed(1)} mm`,
+          lineName: '',
+          isUserCreated: true,
+          isPartDim: true
+        };
+      };
+      const newWinArrows = [
+        topHit ? makeWinDim(`part_win_top_${flap.id}_${winIdx}`, { x: wxMid, y: topHit.y }, { x: wxMid, y: wMinY }) : null,
+        leftHit ? makeWinDim(`part_win_left_${flap.id}_${winIdx}`, { x: leftHit.x, y: wyMid }, { x: wMinX, y: wyMid }) : null,
+        rightHit ? makeWinDim(`part_win_right_${flap.id}_${winIdx}`, { x: wMaxX, y: wyMid }, { x: rightHit.x, y: wyMid }) : null
+      ].filter(Boolean);
+      model.sizeArrowData = [...(baseModel.sizeArrowData || []), ...newWinArrows];
+      if (Array.isArray(baseModel.outsideArrowData)) {
+        model.outsideArrowData = [...baseModel.outsideArrowData, ...newWinArrows];
       }
     }
     for(const face of model.faces) {

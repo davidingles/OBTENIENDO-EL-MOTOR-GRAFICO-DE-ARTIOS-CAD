@@ -3798,7 +3798,7 @@
           : key === 'double_flaps'
             ? [['clearance','Holgura (-mm)']]
             : key === 'windows'
-              ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)']]
+              ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)'],['offsetX','Posición X (mm)'],['offsetY','Posición Y (mm)']]
               : key === 'chamfer'
                 ? [['angle','Ángulo del chaflán (°)'],['size','Tamaño del chaflán (mm)']]
                 : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];

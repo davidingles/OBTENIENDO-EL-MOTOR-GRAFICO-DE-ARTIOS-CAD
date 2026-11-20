@@ -205,6 +205,22 @@ test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada 
   });
   assert.ok(!m3.partError, m3.partError);
   assert.equal(m3.faces.find(f => f.id === bodyFace.id).holes.length, 3);
+
+  // Mover ventana en X e Y y comprobar cotas automáticas
+  const w0 = DielineEngine.applyPartVariationToModel(baseModel, 'windows', {
+    targetFaceId: bodyFace.id, count: 1, length: 40, width: 30, radius: 4, offsetX: 0, offsetY: 0
+  });
+  const wShift = DielineEngine.applyPartVariationToModel(baseModel, 'windows', {
+    targetFaceId: bodyFace.id, count: 1, length: 40, width: 30, radius: 4, offsetX: 10, offsetY: -8
+  });
+  assert.ok(!wShift.partError, wShift.partError);
+  const wTop0 = (w0.sizeArrowData || []).find(a => a.id && a.id.includes('part_win_top_'));
+  const wLeft0 = (w0.sizeArrowData || []).find(a => a.id && a.id.includes('part_win_left_'));
+  const wTopS = (wShift.sizeArrowData || []).find(a => a.id && a.id.includes('part_win_top_'));
+  const wLeftS = (wShift.sizeArrowData || []).find(a => a.id && a.id.includes('part_win_left_'));
+  assert.ok(wTop0 && wLeft0 && wTopS && wLeftS);
+  assert.ok(Math.abs((wTop0.valueMm - wTopS.valueMm) - 8) < 0.3);
+  assert.ok(Math.abs((wLeftS.valueMm - wLeft0.valueMm) - 10) < 0.3);
 });
 
 test('Asa genera cotas al filo superior y extremos laterales y permite mover en X e Y', () => {
