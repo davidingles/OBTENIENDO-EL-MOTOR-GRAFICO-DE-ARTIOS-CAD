@@ -152,6 +152,7 @@
     showDimensions3D: false,
     showGrid: true,
     selectedFaceId: null,
+    selectedFaceIds: [],
     hoveredFaceId: null,
     viewMode: 'split',      // 'split' | '3d' | '2d'
     customArtworkTex: null,
@@ -2183,10 +2184,10 @@
         return;
       }
       const hitFace = hitTest2DCanvas(e);
-      if (state.toolMode === 'select' && hitFace && e.button === 0 && !e.shiftKey) {
-        selectFace(hitFace.id);
+      if (state.toolMode === 'select' && hitFace && e.button === 0) {
+        selectFace(hitFace.id, e.shiftKey);
       }
-      state.view2D.isDragging = state.toolMode === 'pan' || (!vectorEditing && e.shiftKey) || e.button === 1;
+      state.view2D.isDragging = state.toolMode === 'pan' || (!vectorEditing && e.shiftKey && !hitFace) || e.button === 1;
       state.view2D.lastX = e.clientX;
       state.view2D.lastY = e.clientY;
     });
@@ -2452,7 +2453,7 @@
       const dimBaseFaceId = model.dimensionBaseFaceId ?? model.rootFaceId;
       const supportFaceId = model.rootFaceId;
       for (const face of model.faces) {
-        const isSelected = face.id === state.selectedFaceId;
+        const isSelected = (Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.some(id => String(id) === String(face.id))) || face.id === state.selectedFaceId;
         const isDimBase = face.id === dimBaseFaceId;
         const isSupport = face.id === supportFaceId;
 
@@ -2678,7 +2679,8 @@
         ctx.font = `600 ${Math.round(9.5 * areaScale * dpr)}px "Inter", system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = face.id === state.selectedFaceId ? '#006ca8' : '#39475a';
+        const isSelectedLabel = (Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.some(id => String(id) === String(face.id))) || face.id === state.selectedFaceId;
+        ctx.fillStyle = isSelectedLabel ? '#006ca8' : '#39475a';
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
         ctx.fillText(shortName, 0, -6 * areaScale * dpr);
         ctx.restore();
@@ -2756,15 +2758,30 @@
       if (dist < 5) {
         const face = get3DHitFace(upEvt);
         if (face) {
-          selectFace(face.id);
+          selectFace(face.id, upEvt.shiftKey);
         }
       }
     };
     window.addEventListener('pointerup', onUp);
   }
 
-  function selectFace(faceId) {
-    state.selectedFaceId = faceId;
+  function selectFace(faceId, additive = false) {
+    if (additive && faceId !== null && faceId !== undefined) {
+      const current = Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.length
+        ? [...state.selectedFaceIds]
+        : (state.selectedFaceId !== null && state.selectedFaceId !== undefined ? [state.selectedFaceId] : []);
+      const idx = current.findIndex(id => String(id) === String(faceId));
+      if (idx >= 0) {
+        if (current.length > 1) current.splice(idx, 1);
+      } else {
+        current.push(faceId);
+      }
+      state.selectedFaceIds = current;
+      state.selectedFaceId = current[current.length - 1] ?? faceId;
+    } else {
+      state.selectedFaceId = faceId;
+      state.selectedFaceIds = (faceId !== null && faceId !== undefined) ? [faceId] : [];
+    }
     updateSelectionHighlight();
     render2FDieline();
 
@@ -3125,11 +3142,12 @@
         }
 
         const committedBase = rebuildModelWithParts(state.parametricDieline, false);
+        const targetFaceIds = partKey === 'chamfer' ? getEffectivePartTargetFaceIds() : (targetFaceId !== null ? [targetFaceId] : []);
         const savedParams = state.partParams[partKey] || {};
         const settings = DielineEngine.getPartVariationSettings
-          ? DielineEngine.getPartVariationSettings(committedBase, partKey, { ...savedParams, targetFaceId })
+          ? DielineEngine.getPartVariationSettings(committedBase, partKey, { ...savedParams, targetFaceId, targetFaceIds })
           : { params: { ...savedParams } };
-        const op = { partKey, targetFaceId, params: { ...settings.params } };
+        const op = { partKey, targetFaceId, targetFaceIds, params: { ...settings.params } };
         if (partKey === 'double_flaps' && DielineEngine.getB1DoubleFlapsData) {
           op.side = DielineEngine.getB1DoubleFlapsData(committedBase, targetFaceId)?.side || null;
         }
@@ -3143,7 +3161,7 @@
 
         state.draftPart = op;
         applyCurrentPartVariation(false);
-        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows'].includes(partKey)) {
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows', 'chamfer'].includes(partKey)) {
           openPartOptions(partKey);
         }
       });
@@ -3597,6 +3615,29 @@
     return null;
   }
 
+  function getEffectivePartTargetFaceIds() {
+    const baseFaces = state.parametricDieline?.faces || state.dieline?.faces || [];
+    const rawIds = Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.length
+      ? state.selectedFaceIds
+      : (state.selectedFaceId !== null && state.selectedFaceId !== undefined ? [state.selectedFaceId] : []);
+    const resolved = [];
+    for (const id of rawIds) {
+      if (baseFaces.some(f => String(f.id) === String(id))) {
+        if (!resolved.some(x => String(x) === String(id))) resolved.push(id);
+      } else {
+        const curFace = state.dieline?.faces?.find(f => String(f.id) === String(id));
+        if (curFace && curFace.parentId !== undefined && curFace.parentId !== null && baseFaces.some(f => String(f.id) === String(curFace.parentId))) {
+          if (!resolved.some(x => String(x) === String(curFace.parentId))) resolved.push(curFace.parentId);
+        }
+      }
+    }
+    if (!resolved.length) {
+      const single = getEffectivePartTargetFaceId();
+      if (single !== null && single !== undefined) resolved.push(single);
+    }
+    return resolved;
+  }
+
   function rebuildModelWithParts(baseModel, includeDraft = true) {
     if (!baseModel || !DielineEngine.applyPartVariationToModel) return baseModel;
     const ops = [...(state.appliedParts || [])];
@@ -3612,7 +3653,8 @@
       if (!op || !op.partKey || op.partKey === 'standard') continue;
       const next = DielineEngine.applyPartVariationToModel(current, op.partKey, {
         ...(op.params || {}),
-        targetFaceId: op.targetFaceId
+        targetFaceId: op.targetFaceId,
+        targetFaceIds: op.targetFaceIds
       });
       if (next) {
         lastError = next.partError || null;
@@ -3660,6 +3702,9 @@
       const clearance = model.partOptions?.clearance ?? 2;
       return `Solapas dobles aplicadas a las ${sideLabel} (ancho - ${clearance} mm). Pulsa «Listo» para añadir más piezas.`;
     }
+    if (partKey === 'chamfer' && Array.isArray(model.partTargetFaceIds) && model.partTargetFaceIds.length > 1) {
+      return `Chaflán aplicado en ${model.partTargetFaceIds.length} áreas seleccionadas. Pulsa «Listo» para seguir aplicando.`;
+    }
     const appliedFace = model.partTargetFaceId !== undefined && model.partTargetFaceId !== null
       ? model.faces?.find(f => String(f.id) === String(model.partTargetFaceId))
       : null;
@@ -3697,21 +3742,23 @@
       tab_lock: 'Pestaña de cierre',
       side_locks: 'Machos y hembras',
       double_flaps: 'Solapas dobles',
-      windows: 'Ventanas'
+      windows: 'Ventanas',
+      chamfer: 'Chaflanar'
     };
     document.getElementById('part-options-title').textContent = titles[key] || 'Variación de pieza';
     const controls = new Map();
     if (!state.partParams[key]) state.partParams[key] = {};
     const committedBase = rebuildModelWithParts(state.parametricDieline, false);
     const targetFaceId = state.draftPart?.targetFaceId ?? state.partTargetFaceId ?? getEffectivePartTargetFaceId();
+    const targetFaceIds = state.draftPart?.targetFaceIds ?? getEffectivePartTargetFaceIds();
     let localParams = { ...(state.partParams[key] || {}), ...(state.draftPart?.params || {}) };
-    let settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId });
+    let settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId, targetFaceIds });
     localParams = { ...settings.params };
     if (state.draftPart && state.draftPart.partKey === key) {
       state.draftPart.params = { ...localParams };
     }
     const sync = () => {
-      settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId });
+      settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId, targetFaceIds });
       localParams = { ...settings.params };
       if (state.draftPart && state.draftPart.partKey === key) {
         state.draftPart.params = { ...localParams };
@@ -3743,7 +3790,7 @@
       });
     };
     const definitions = key === 'handle'
-      ? [['rotate90','Orientación'],['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)']]
+      ? [['rotate90','Orientación'],['width','Ancho del asa (mm)'],['length','Largo del asa (mm)'],['radius','Radio de las esquinas (mm)'],['offsetX','Posición X (mm)'],['offsetY','Posición Y (mm)']]
       : key === 'thumb_notch'
         ? [['count','Número de uñeros'],['radius','Radio del uñero (mm)'],['distance','Distancia entre centros (mm)']]
         : key === 'side_locks'
@@ -3752,7 +3799,9 @@
             ? [['clearance','Holgura (-mm)']]
             : key === 'windows'
               ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)']]
-              : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
+              : key === 'chamfer'
+                ? [['angle','Ángulo del chaflán (°)'],['size','Tamaño del chaflán (mm)']]
+                : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
     for (const [name, label] of definitions) {
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;

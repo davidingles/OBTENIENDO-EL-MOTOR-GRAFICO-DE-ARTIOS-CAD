@@ -3215,6 +3215,178 @@
     return model;
   }
 
+  function applyChamferVariation(baseModel, params = {}, targetFaceIds = []) {
+    const idList = Array.isArray(targetFaceIds) && targetFaceIds.length > 0
+      ? targetFaceIds
+      : (params.targetFaceId !== undefined && params.targetFaceId !== null ? [params.targetFaceId] : []);
+    const resolvedIds = idList.length > 0
+      ? [...new Set(idList.map(id => String(id)))]
+      : (() => {
+          const fallback = findPrimaryLidFlapFace(baseModel);
+          return fallback ? [String(fallback.id)] : [];
+        })();
+
+    const targetFacesOrig = (baseModel.faces || []).filter(f => resolvedIds.includes(String(f.id)));
+    if (!targetFacesOrig.length) {
+      return { ...baseModel, partError: 'Selecciona al menos un área para chaflanar sus esquinas de corte.' };
+    }
+
+    const angleDeg = Math.max(15, Math.min(75, Number.isFinite(Number(params.angle)) ? Number(params.angle) : 45));
+    const sizeMm = Math.max(2, Number.isFinite(Number(params.size)) ? Number(params.size) : 12);
+    const tanA = Math.tan(angleDeg * Math.PI / 180);
+
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces.map(f => ({
+        ...f,
+        polygon: f.polygon.map(p => ({ ...p })),
+        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+      })),
+      cutSegments: baseModel.cutSegments.map(s => ({ ...s })),
+      foldSegments: baseModel.foldSegments.map(s => ({ ...s })),
+      hinges: baseModel.hinges.map(h => ({ ...h })),
+      activePartVariation: 'chamfer',
+      partTargetFaceId: targetFacesOrig[0].id,
+      partTargetFaceIds: targetFacesOrig.map(f => f.id),
+      partOptions: { angle: angleDeg, size: sizeMm }
+    };
+
+    const isFoldEdgeForFace = (faceId, a, b) => {
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      if (len < 1e-4) return false;
+      const tx = (b.x - a.x) / len, ty = (b.y - a.y) / len;
+      const onLine = p => Math.abs((p.x - a.x) * ty - (p.y - a.y) * tx) < 0.25;
+      return (model.hinges || []).some(h =>
+        (String(h.parentFaceId) === String(faceId) || String(h.childFaceId) === String(faceId)) &&
+        h.p1 && h.p2 && onLine(h.p1) && onLine(h.p2)
+      );
+    };
+
+    const trimCutAtVertex = (V, dir, C) => {
+      for (const s of model.cutSegments) {
+        const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+        if (len < 0.1) continue;
+        const d1 = Math.hypot(s.x1 - V.x, s.y1 - V.y);
+        const d2 = Math.hypot(s.x2 - V.x, s.y2 - V.y);
+        if (d1 < 0.3) {
+          const sx = (s.x2 - s.x1) / len, sy = (s.y2 - s.y1) / len;
+          if (sx * dir.x + sy * dir.y > 0.96) {
+            s.x1 = C.x;
+            s.y1 = C.y;
+          }
+        } else if (d2 < 0.3) {
+          const sx = (s.x1 - s.x2) / len, sy = (s.y1 - s.y2) / len;
+          if (sx * dir.x + sy * dir.y > 0.96) {
+            s.x2 = C.x;
+            s.y2 = C.y;
+          }
+        }
+      }
+    };
+
+    let chamferCount = 0;
+    for (const origFace of targetFacesOrig) {
+      const face = model.faces.find(f => String(f.id) === String(origFace.id));
+      if (!face || !Array.isArray(face.polygon) || face.polygon.length < 3) continue;
+      const poly = face.polygon;
+      const n = poly.length;
+      const newPoly = [];
+      for (let i = 0; i < n; i++) {
+        const P = poly[(i - 1 + n) % n];
+        const V = poly[i];
+        const Q = poly[(i + 1) % n];
+        const len1 = Math.hypot(P.x - V.x, P.y - V.y);
+        const len2 = Math.hypot(Q.x - V.x, Q.y - V.y);
+        if (len1 < 3 || len2 < 3) {
+          newPoly.push({ ...V });
+          continue;
+        }
+        const u1 = { x: (P.x - V.x) / len1, y: (P.y - V.y) / len1 };
+        const u2 = { x: (Q.x - V.x) / len2, y: (Q.y - V.y) / len2 };
+        const cross = Math.abs(u1.x * u2.y - u1.y * u2.x);
+        const fold1 = isFoldEdgeForFace(face.id, P, V);
+        const fold2 = isFoldEdgeForFace(face.id, V, Q);
+        // Solo chaflanar esquinas reales entre dos líneas de corte (no líneas de hendido)
+        if (fold1 || fold2 || cross < 0.25) {
+          newPoly.push({ ...V });
+          continue;
+        }
+        // d along longer edge = sizeMm, d along shorter/adjacent edge = sizeMm * tan(angle)
+        const dRaw1 = len1 >= len2 ? sizeMm : sizeMm * tanA;
+        const dRaw2 = len1 >= len2 ? sizeMm * tanA : sizeMm;
+        const d1 = Math.min(dRaw1, len1 * 0.45);
+        const d2 = Math.min(dRaw2, len2 * 0.45);
+        if (d1 < 0.5 || d2 < 0.5) {
+          newPoly.push({ ...V });
+          continue;
+        }
+        const C1 = { x: V.x + u1.x * d1, y: V.y + u1.y * d1 };
+        const C2 = { x: V.x + u2.x * d2, y: V.y + u2.y * d2 };
+        trimCutAtVertex(V, u1, C1);
+        trimCutAtVertex(V, u2, C2);
+        model.cutSegments.push({ x1: C1.x, y1: C1.y, x2: C2.x, y2: C2.y, type: 'CUT', isPartMod: true });
+        newPoly.push(C1, C2);
+        chamferCount++;
+      }
+      face.polygon = newPoly;
+    }
+
+    if (chamferCount === 0) {
+      return { ...baseModel, partError: 'Las áreas seleccionadas no tienen esquinas libres entre líneas de corte para chaflanar.' };
+    }
+
+    const area = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) / 2;
+
+    for (const face of model.faces) {
+      const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      face.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+      face.bbox = { ...face.bounds };
+      face.points = face.polygon;
+      face.centroid = {
+        x: face.polygon.reduce((s, p) => s + p.x, 0) / face.polygon.length,
+        y: face.polygon.reduce((s, p) => s + p.y, 0) / face.polygon.length
+      };
+      face.areaMm2 = Math.abs(area(face.polygon)) - (face.holes || []).reduce((s, h) => s + Math.abs(area(h)), 0);
+      face.area = face.areaMm2;
+    }
+
+    const minX = Math.min(...model.faces.map(f => f.bounds.minX));
+    const maxX = Math.max(...model.faces.map(f => f.bounds.maxX));
+    const minY = Math.min(...model.faces.map(f => f.bounds.minY));
+    const maxY = Math.max(...model.faces.map(f => f.bounds.maxY));
+    model.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+    model.blankWidthMm = maxX - minX;
+    model.blankHeightMm = maxY - minY;
+    model.cutSegmentsMm = model.cutSegments;
+    model.foldSegmentsMm = model.foldSegments;
+    const segmentLength = s => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    model.totalCutLengthMm = model.cutSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalFoldLengthMm = model.foldSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalAreaMm2 = model.faces.reduce((s, f) => s + f.areaMm2, 0);
+    return model;
+  }
+
+  function findNearestVectorHit(segments, ox, oy, dx, dy) {
+    let bestT = Infinity;
+    for (const s of segments || []) {
+      if (!s) continue;
+      const sx = s.x2 - s.x1, sy = s.y2 - s.y1;
+      const denom = dx * sy - dy * sx;
+      if (Math.abs(denom) < 1e-7) continue;
+      const qx = s.x1 - ox, qy = s.y1 - oy;
+      const t = (qx * sy - qy * sx) / denom;
+      const u = (qx * dy - qy * dx) / denom;
+      if (t > 0.2 && u >= -1e-4 && u <= 1 + 1e-4 && t < bestT) {
+        bestT = t;
+      }
+    }
+    return Number.isFinite(bestT) ? { x: ox + dx * bestT, y: oy + dy * bestT, dist: bestT } : null;
+  }
+
   function getPartVariationSettings(model, key, options = {}) {
     const clamp = (value, min, max, fallback) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : fallback));
     const limits = {}, params = {};
@@ -3241,6 +3413,19 @@
       return {params, limits};
     }
 
+    if (key === 'chamfer') {
+      const targetIds = Array.isArray(options.targetFaceIds) && options.targetFaceIds.length
+        ? options.targetFaceIds.map(id => String(id))
+        : (options.targetFaceId !== undefined && options.targetFaceId !== null ? [String(options.targetFaceId)] : []);
+      const faces = (model?.faces || []).filter(f => targetIds.includes(String(f.id)));
+      const minSpan = faces.length
+        ? Math.min(...faces.map(f => Math.min(f.bounds?.width || 40, f.bounds?.height || 40)))
+        : 60;
+      field('angle', 15, 75, 45);
+      field('size', 2, Math.max(4, Math.min(80, Math.floor(minSpan * 0.4))), 12);
+      return {params, limits};
+    }
+
     const allowFoldEdge = key === 'handle' || key === 'windows';
     const preferLongestAny = key === 'handle' || key === 'windows';
     const edge = getPartEdge(model, options?.targetFaceId, { allowFoldEdge, preferLongestAny });
@@ -3252,6 +3437,13 @@
       field('length', 4, maxLen, 86);
       field('width', 3, maxWid, 22);
       field('radius', 0, Math.min(params.width, params.length)/2, 8);
+      const isHorizEdge = Math.abs(edge.tx) >= Math.abs(edge.ty);
+      const spanX = params.rotate90 ? (isHorizEdge ? params.width : params.length) : (isHorizEdge ? params.length : params.width);
+      const spanY = params.rotate90 ? (isHorizEdge ? params.length : params.width) : (isHorizEdge ? params.width : params.length);
+      const maxOffX = Math.max(0, Math.floor(((edge.face.bounds?.width || edge.length) - spanX) / 2 - 4));
+      const maxOffY = Math.max(0, Math.floor(((edge.face.bounds?.height || edge.depth) - spanY) / 2 - 4));
+      field('offsetX', -maxOffX, maxOffX, 0);
+      field('offsetY', -maxOffY, maxOffY, 0);
     } else if (key === 'thumb_notch') {
       params.count = Number(options.count) === 2 ? 2 : 1;
       field('radius', 1, Math.min(edge.depth-3, (edge.length-8)/(params.count === 2 ? 4 : 2)), 10);
@@ -3295,6 +3487,13 @@
       const {params} = getPartVariationSettings(baseModel, partKey, options);
       return applyDoubleFlapsVariation(baseModel, params, options?.targetFaceId);
     }
+    if (partKey === 'chamfer') {
+      const {params} = getPartVariationSettings(baseModel, partKey, options);
+      const ids = Array.isArray(options?.targetFaceIds) && options.targetFaceIds.length
+        ? options.targetFaceIds
+        : (options?.targetFaceId !== undefined && options?.targetFaceId !== null ? [options.targetFaceId] : []);
+      return applyChamferVariation(baseModel, params, ids);
+    }
     const allowFoldEdge = partKey === 'handle' || partKey === 'windows';
     const preferLongestAny = partKey === 'handle' || partKey === 'windows';
     const edge = getPartEdge(baseModel, options?.targetFaceId, { allowFoldEdge, preferLongestAny });
@@ -3332,7 +3531,7 @@
       });
     };
     if(partKey==='handle') {
-      const {length, width, radius:r, rotate90}=params;
+      const {length, width, radius:r, rotate90, offsetX = 0, offsetY = 0}=params;
       const spanU = rotate90 ? width : length;
       const spanV = rotate90 ? length : width;
       const pts=[];
@@ -3340,11 +3539,48 @@
       const corners=[[c+spanU/2-r,d+spanV/2-r,0],[c-spanU/2+r,d+spanV/2-r,Math.PI/2],[c-spanU/2+r,d-spanV/2+r,Math.PI],[c+spanU/2-r,d-spanV/2+r,Math.PI*1.5]];
       for(const [u,v,start] of corners) for(let i=0;i<=8;i++) {
         const angle=start+i*Math.PI/16;
-        pts.push(at(u+Math.cos(angle)*r,v+Math.sin(angle)*r));
+        const pt = at(u+Math.cos(angle)*r,v+Math.sin(angle)*r);
+        pts.push({ x: pt.x + offsetX, y: pt.y + offsetY });
       }
-      if(!pts.every(p=>pointInPolygon(p,flap.polygon))) return {...baseModel,partError:'El asa no cabe en esta solapa. Reduce su largo o ancho.'};
+      if(!pts.every(p=>pointInPolygon(p,flap.polygon))) return {...baseModel,partError:'El asa no cabe en esta posición o área. Reduce su tamaño o ajusta X/Y.'};
+      // Raycast against existing dieline vectors (cut + fold) BEFORE adding this handle's own cut segments
+      const allVectors = [...model.cutSegments, ...model.foldSegments];
+      const hxs = pts.map(p => p.x), hys = pts.map(p => p.y);
+      const hMinX = Math.min(...hxs), hMaxX = Math.max(...hxs);
+      const hMinY = Math.min(...hys), hMaxY = Math.max(...hys);
+      const hxMid = (hMinX + hMaxX) / 2, hyMid = (hMinY + hMaxY) / 2;
+      const topHit = findNearestVectorHit(allVectors, hxMid, hMinY, 0, -1);
+      const leftHit = findNearestVectorHit(allVectors, hMinX, hyMid, -1, 0);
+      const rightHit = findNearestVectorHit(allVectors, hMaxX, hyMid, 1, 0);
+
       flap.holes.push(positive(pts));
       addCuts(pts,true);
+
+      const handleIdx = flap.holes.length;
+      const makeDimArrow = (id, p1, p2) => {
+        const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        if (dist < 0.5) return null;
+        return {
+          id,
+          p1: { x: p1.x, y: p1.y },
+          p2: { x: p2.x, y: p2.y },
+          textPos: { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 },
+          valueMm: +dist.toFixed(1),
+          text: `${dist.toFixed(1)} mm`,
+          lineName: '',
+          isUserCreated: true,
+          isPartDim: true
+        };
+      };
+      const newArrows = [
+        topHit ? makeDimArrow(`part_handle_top_${flap.id}_${handleIdx}`, { x: hxMid, y: topHit.y }, { x: hxMid, y: hMinY }) : null,
+        leftHit ? makeDimArrow(`part_handle_left_${flap.id}_${handleIdx}`, { x: leftHit.x, y: hyMid }, { x: hMinX, y: hyMid }) : null,
+        rightHit ? makeDimArrow(`part_handle_right_${flap.id}_${handleIdx}`, { x: hMaxX, y: hyMid }, { x: rightHit.x, y: hyMid }) : null
+      ].filter(Boolean);
+      model.sizeArrowData = [...(baseModel.sizeArrowData || []), ...newArrows];
+      if (Array.isArray(baseModel.outsideArrowData)) {
+        model.outsideArrowData = [...baseModel.outsideArrowData, ...newArrows];
+      }
     } else if(partKey==='thumb_notch') {
       const centers=params.count===2 ? [edge.length/2-params.distance/2,edge.length/2+params.distance/2] : [edge.length/2];
       const path=[{...edge.a}];

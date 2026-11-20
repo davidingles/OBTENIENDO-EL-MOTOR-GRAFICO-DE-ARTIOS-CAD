@@ -207,10 +207,67 @@ test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada 
   assert.equal(m3.faces.find(f => f.id === bodyFace.id).holes.length, 3);
 });
 
-test('index.html incluye las tarjetas Solapas dobles y Ventanas en Cambiar piezas', () => {
+test('Asa genera cotas al filo superior y extremos laterales y permite mover en X e Y', () => {
+  const baseModel = loadAmericanBoxModel();
+  const body2 = baseModel.faces.find(f => f.label && f.label.includes('Cara Cuerpo 2'));
+  assert.ok(body2);
+
+  const m0 = DielineEngine.applyPartVariationToModel(baseModel, 'handle', {
+    targetFaceId: body2.id, length: 70, width: 20, radius: 6, offsetX: 0, offsetY: 0
+  });
+  assert.ok(!m0.partError, m0.partError);
+  const dims0 = (m0.sizeArrowData || []).filter(a => a.isPartDim);
+  assert.equal(dims0.length, 3, 'Debe generar cota superior, lateral izquierda y lateral derecha');
+  const top0 = dims0.find(a => a.id.includes('_top_'));
+  const left0 = dims0.find(a => a.id.includes('_left_'));
+  const right0 = dims0.find(a => a.id.includes('_right_'));
+  assert.ok(top0 && left0 && right0);
+  assert.ok(Math.abs(left0.valueMm - right0.valueMm) < 0.5, 'Centrada en X las cotas laterales deben ser iguales');
+
+  // Mover el asa +12 mm en X y -10 mm en Y
+  const mShift = DielineEngine.applyPartVariationToModel(baseModel, 'handle', {
+    targetFaceId: body2.id, length: 70, width: 20, radius: 6, offsetX: 12, offsetY: -10
+  });
+  assert.ok(!mShift.partError, mShift.partError);
+  const dimsS = (mShift.sizeArrowData || []).filter(a => a.isPartDim);
+  const topS = dimsS.find(a => a.id.includes('_top_'));
+  const leftS = dimsS.find(a => a.id.includes('_left_'));
+  const rightS = dimsS.find(a => a.id.includes('_right_'));
+  assert.ok(Math.abs((top0.valueMm - topS.valueMm) - 10) < 0.3, 'Mover -10 mm en Y acerca el asa 10 mm al borde superior');
+  assert.ok(Math.abs((leftS.valueMm - left0.valueMm) - 12) < 0.3, 'Mover +12 mm en X aumenta la cota izquierda en 12 mm');
+  assert.ok(Math.abs((right0.valueMm - rightS.valueMm) - 12) < 0.3, 'Mover +12 mm en X reduce la cota derecha en 12 mm');
+});
+
+test('Pieza Chaflanar chaflana las esquinas de corte en una o varias áreas seleccionadas con los grados indicados', () => {
+  const baseModel = loadAmericanBoxModel();
+  const topFlaps = baseModel.faces.filter(f => f.role && f.role.includes('TOP'));
+  assert.ok(topFlaps.length >= 2);
+  const [f1, f2] = topFlaps;
+
+  const res = DielineEngine.applyPartVariationToModel(baseModel, 'chamfer', {
+    targetFaceId: f1.id,
+    targetFaceIds: [f1.id, f2.id],
+    angle: 35,
+    size: 10
+  });
+  assert.ok(!res.partError, res.partError);
+  assert.equal(res.activePartVariation, 'chamfer');
+  assert.equal(res.partTargetFaceIds.length, 2);
+
+  const u1 = res.faces.find(f => f.id === f1.id);
+  const u2 = res.faces.find(f => f.id === f2.id);
+  assert.ok(u1.polygon.length > f1.polygon.length, 'El área 1 debe tener vértices de chaflán añadidos');
+  assert.ok(u2.polygon.length > f2.polygon.length, 'El área 2 debe tener vértices de chaflán añadidos');
+  assert.ok(u1.areaMm2 < f1.areaMm2 && u2.areaMm2 < f2.areaMm2, 'Chaflanar las esquinas reduce el área de los paneles');
+  assert.ok(res.cutSegments.some(s => s.isPartMod), 'Debe añadir segmentos de corte de chaflán en 2D');
+});
+
+test('index.html incluye las tarjetas Solapas dobles, Ventanas y Chaflanar en Cambiar piezas', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(html.includes('data-part-key="double_flaps"'));
   assert.ok(html.includes('Solapas dobles'));
   assert.ok(html.includes('data-part-key="windows"'));
   assert.ok(html.includes('Ventanas'));
+  assert.ok(html.includes('data-part-key="chamfer"'));
+  assert.ok(html.includes('Chaflanar'));
 });
