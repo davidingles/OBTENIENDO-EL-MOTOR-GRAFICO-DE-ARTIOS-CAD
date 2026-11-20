@@ -110,6 +110,7 @@
     activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip' | 'side_locks' | 'double_flaps' | 'windows'
     partParams: {},         // Última configuración usada por cada tipo de pieza
     appliedParts: [],       // Historial de piezas confirmadas con 'Listo' en distintas áreas
+    selectingChamferFlaps: false,
     draftPart: null,        // Pieza actualmente en edición antes de pulsar 'Listo'
     partTargetFaceId: null, // Área seleccionada a la que se aplica la pieza activa
     partHoverFaceId: null,  // Para resaltar el área afectada en 2D al pasar el cursor sobre la tarjeta
@@ -720,6 +721,7 @@
     state.partParams = {};
     state.appliedParts = [];
     state.draftPart = null;
+    state.selectingChamferFlaps = false;
     state.partTargetFaceId = null;
     document.getElementById('part-options-dialog')?.close();
     document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
@@ -739,6 +741,7 @@
 
     syncParametricInputsUI(model);
     updateDielineInfoUI(model);
+    if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(model);
     buildHingeSlidersUI(model);
     rebuild3DMesh();
     reset2DView();
@@ -923,6 +926,7 @@
       ? 'Hay medidas sin resolver: las cotas muestran la geometría real.'
       : 'Cálculo local · medidas estimadas';
     updateDielineInfoUI(state.dieline);
+    if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(state.dieline);
     rebuild3DMesh();
     setMasterFold(state.masterFold);
   }
@@ -2104,6 +2108,12 @@
     }, { passive: false });
 
     canvas.addEventListener('pointerdown', (e) => {
+      if (state.selectingChamferFlaps && e.button === 0) {
+        const face = hitTest2DCanvas(e);
+        if (face) selectFace(face.id);
+        e.preventDefault();
+        return;
+      }
       if (state.activeFoldOrderStep && e.button === 0) {
         const hitFace = hitTest2DCanvas(e);
         if (hitFace && hitFace.id !== state.dieline?.rootFaceId) {
@@ -2797,6 +2807,21 @@
   }
 
   function selectFace(faceId, additive = false) {
+    if (state.selectingChamferFlaps && state.draftPart?.partKey === 'chamfer') {
+      const model = state.parametricDieline;
+      const face = model?.faces.find(f => String(f.id) === String(faceId));
+      if (!DielineEngine.isChamferFlap(model, face)) return;
+      const ids = [...(state.draftPart.targetFaceIds || [])];
+      const index = ids.findIndex(id => String(id) === String(faceId));
+      if (index < 0) ids.push(faceId); else ids.splice(index, 1);
+      state.draftPart.targetFaceIds = ids;
+      state.draftPart.targetFaceId = ids[0] ?? null;
+      state.selectedFaceIds = [...ids]; state.selectedFaceId = ids[0] ?? null;
+      applyCurrentPartVariation(false);
+      openPartOptions('chamfer');
+      updateSelectionHighlight();
+      return;
+    }
     if (additive && faceId !== null && faceId !== undefined) {
       const current = Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.length
         ? [...state.selectedFaceIds]
@@ -2833,7 +2858,7 @@
 
   function updateSelectionHighlight() {
     for (const [fid, item] of faceMeshMap.entries()) {
-      item.cutOutline.visible = state.showCutLines3D;
+      item.cutOutline.visible = state.showCutLines3D || (state.selectingChamferFlaps && state.selectedFaceIds.includes(fid));
     }
   }
 
@@ -2984,6 +3009,7 @@
     railTabs.forEach(btn => {
       btn.addEventListener('click', () => {
         const tabKey = btn.getAttribute('data-drawer-tab');
+        if (tabKey !== 'parts') finishPartEditing();
         state.activeTab = tabKey;
         railTabs.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
@@ -3155,8 +3181,8 @@
         const targetFaceId = partKey === 'standard' ? null : getEffectivePartTargetFaceId();
         // Si había una pieza en edición en otra área y el usuario cambió de área y pulsó otra tarjeta,
         // la confirmamos primero para no perderla.
-        if (partKey !== 'standard' && prevDraft && String(prevDraft.targetFaceId) !== String(targetFaceId)) {
-          commitDraftPart();
+        if (partKey !== 'standard' && prevDraft) {
+          finishPartEditing();
         }
         document.getElementById('part-options-dialog')?.close();
         partCards.forEach(c => c.classList.remove('active'));
@@ -3173,12 +3199,12 @@
         }
 
         const committedBase = rebuildModelWithParts(state.parametricDieline, false);
-        const targetFaceIds = partKey === 'chamfer' ? getEffectivePartTargetFaceIds() : (targetFaceId !== null ? [targetFaceId] : []);
+        const targetFaceIds = partKey === 'chamfer' ? getEffectivePartTargetFaceIds().filter(id => DielineEngine.isChamferFlap(committedBase, committedBase.faces.find(f => String(f.id) === String(id)))) : (targetFaceId !== null ? [targetFaceId] : []);
         const savedParams = state.partParams[partKey] || {};
         const settings = DielineEngine.getPartVariationSettings
           ? DielineEngine.getPartVariationSettings(committedBase, partKey, { ...savedParams, targetFaceId, targetFaceIds })
           : { params: { ...savedParams } };
-        const op = { partKey, targetFaceId, targetFaceIds, params: { ...settings.params } };
+        const op = { partKey, targetFaceId: partKey === 'chamfer' ? (targetFaceIds[0] ?? null) : targetFaceId, targetFaceIds, params: { ...settings.params } };
         if (partKey === 'double_flaps' && DielineEngine.getB1DoubleFlapsData) {
           op.side = DielineEngine.getB1DoubleFlapsData(committedBase, targetFaceId)?.side || null;
         }
@@ -3459,6 +3485,19 @@
 
     document.getElementById('btn-reset-fold-order')?.addEventListener('click', resetFoldOrder);
     document.getElementById('btn-rotate-dieline')?.addEventListener('click', rotateWholeDieline90);
+    document.getElementById('btn-b1-retranqueos')?.addEventListener('click', () => {
+      const menu = document.getElementById('b1-retranqueos-menu');
+      const btn = document.getElementById('btn-b1-retranqueos');
+      if (!menu || !btn) return;
+      const open = menu.classList.toggle('hidden') === false;
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.querySelectorAll('.btn-b1-retranqueo-opt').forEach(optBtn => {
+      optBtn.addEventListener('click', () => {
+        const val = Number(optBtn.dataset.retranqueo);
+        if (Number.isFinite(val)) applyB1RetranqueoOption(val);
+      });
+    });
     initArtworkControls();
 
     const bindCheck = (id, prop, callback) => {
@@ -3762,12 +3801,30 @@
     }
   }
 
+  function finishPartEditing() {
+    if (partUpdateFrame) { cancelAnimationFrame(partUpdateFrame); partUpdateFrame = 0; }
+    if (state.draftPart) { applyCurrentPartVariation(false); commitDraftPart(); applyCurrentPartVariation(false); }
+    state.selectingChamferFlaps = false;
+    document.getElementById('part-options-dialog')?.close();
+    updateSelectionHighlight();
+  }
+
   let partUpdateFrame = 0;
   function openPartOptions(key) {
     const dialog = document.getElementById('part-options-dialog');
     const fields = document.getElementById('part-options-fields');
     if (!dialog || !fields || !state.parametricDieline) return;
     fields.replaceChildren();
+    const selectFlaps = document.getElementById('part-select-flaps');
+    selectFlaps.hidden = key !== 'chamfer';
+    selectFlaps.setAttribute('aria-pressed', String(state.selectingChamferFlaps));
+    selectFlaps.onclick = () => {
+      state.selectingChamferFlaps = !state.selectingChamferFlaps;
+      state.pickingBaseMode = false; state.pickingSupportMode = false; state.hingeSelectionMode = false;
+      state.selectedFaceIds = [...(state.draftPart?.targetFaceIds || [])];
+      state.selectedFaceId = state.selectedFaceIds[0] ?? null;
+      updateSelectionHighlight(); render2FDieline(); openPartOptions(key);
+    };
     const titles = {
       handle: 'Asa',
       thumb_notch: 'Uñero',
@@ -3867,11 +3924,9 @@
       fields.appendChild(row);
     }
     sync();
-    document.getElementById('part-options-status').textContent = formatPartStatusMessage(state.dieline, key);
-    const finishPartEdit = () => {
-      commitDraftPart();
-      dialog.close();
-    };
+    document.getElementById('part-options-status').textContent = state.selectingChamferFlaps ? 'Pulsa las solapas en el plano o en 3D para marcarlas o desmarcarlas. Seleccionadas: ' + (state.draftPart?.targetFaceIds?.length || 0) : formatPartStatusMessage(state.dieline, key);
+    const finishPartEdit = finishPartEditing;
+    dialog.oncancel = event => { event.preventDefault(); finishPartEditing(); };
     document.getElementById('part-options-close').onclick = finishPartEdit;
     document.getElementById('part-options-done').onclick = finishPartEdit;
     if (!dialog.open) dialog.show();
@@ -4721,6 +4776,7 @@
       refreshArtworkAtlas(model);
     }
     rebuild3DMesh();setMasterFold(state.masterFold);buildHingeSlidersUI(model);vectorRefreshControls();
+    if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(model);
   }
   function commitVectorEdit(model) {
     model=VectorCAD.rebuild(model,DielineEngine);
@@ -4728,6 +4784,71 @@
     displayVectorModel(model);
     vectorMessage(model.vectorWarning||'Cambio aplicado. Exporta o guarda en la biblioteca.');
   }
+  function updateB1RetranqueosUI(model = state.dieline) {
+    const container = document.getElementById('b1-retranqueos-control');
+    const btn = document.getElementById('btn-b1-retranqueos');
+    const menu = document.getElementById('b1-retranqueos-menu');
+    const badge = document.getElementById('b1-retranqueo-badge');
+    const resetBtn = document.getElementById('btn-b1-retranqueo-reset');
+    if (!container) return;
+    const toggleClass = (el, cls, force) => {
+      if (!el || !el.classList) return;
+      if (typeof el.classList.toggle === 'function') el.classList.toggle(cls, force);
+      else if (force) el.classList.add?.(cls);
+      else el.classList.remove?.(cls);
+    };
+    const isB1 = Boolean(model && typeof DielineEngine?.detectB1AmericanBox === 'function' && DielineEngine.detectB1AmericanBox(model).isB1);
+    toggleClass(container, 'hidden', !isB1);
+    if (!isB1) {
+      menu?.classList?.add?.('hidden');
+      if (typeof btn?.setAttribute === 'function') btn.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    const activeVal = Number(model.b1RetranqueoMm) || 0;
+    const hasActive = activeVal > 0;
+    toggleClass(btn, 'active', hasActive);
+    if (badge) {
+      badge.textContent = hasActive ? `${String(activeVal).replace('.', ',')} mm` : '';
+      toggleClass(badge, 'hidden', !hasActive);
+    }
+    toggleClass(resetBtn, 'hidden', !hasActive);
+    if (typeof container.querySelectorAll === 'function') {
+      container.querySelectorAll('.btn-b1-retranqueo-opt').forEach(opt => {
+        const v = Number(opt.dataset?.retranqueo);
+        toggleClass(opt, 'active', hasActive && Math.abs(v - activeVal) < 1e-6);
+      });
+    }
+  }
+
+  function applyB1RetranqueoOption(retranqueoMm) {
+    if (!state.dieline || typeof DielineEngine?.applyB1Retranqueo !== 'function') return;
+    const targetVal = Number(retranqueoMm);
+    if (!Number.isFinite(targetVal) || targetVal < 0) return;
+    const currentVal = Number(state.dieline.b1RetranqueoMm) || 0;
+    if (Math.abs(targetVal - currentVal) < 1e-6) return;
+    const info = DielineEngine.detectB1AmericanBox(state.dieline);
+    if (!info || !info.isB1) return;
+
+    recordUndoState();
+    const angles = { ...state.hingeAngles };
+    vectorDraft = null;
+    vectorSelection = null;
+    artworkDrag = null;
+
+    const nextModel = DielineEngine.applyB1Retranqueo(state.dieline, targetVal);
+    displayVectorModel(nextModel);
+    state.hingeAngles = angles;
+    setMasterFold(state.masterFold);
+    updateDielineInfoUI(state.dieline);
+    updateB1RetranqueosUI(state.dieline);
+    render2FDieline();
+    if (typeof vectorMessage === 'function') {
+      vectorMessage(targetVal > 0
+        ? `Retranqueo para troquel aplicado: ${String(targetVal).replace('.', ',')} mm.`
+        : 'Retranqueo para troquel restaurado a 0 mm.');
+    }
+  }
+
   function rotateWholeDieline90() {
     if (!state.dieline) return;
     recordUndoState();
@@ -5188,8 +5309,11 @@
     try{
       let result;
       if(window.__TAURI__?.core?.invoke)result=await window.__TAURI__.core.invoke('load_library_models');
-      else result={models:JSON.parse(window.localStorage.getItem(USER_LIBRARY_KEY)||'[]'),warnings:[]};
-      userLibraryModels=UserLibrary.normalize(result.models);
+      else if (/^https?:$/.test(window.location.protocol)) {
+        const response = await fetch('/api/library-models');
+        result = response.ok ? await response.json() : {models:JSON.parse(window.localStorage.getItem(USER_LIBRARY_KEY)||'[]'),warnings:[]};
+      } else result={models:JSON.parse(window.localStorage.getItem(USER_LIBRARY_KEY)||'[]'),warnings:[]};
+      userLibraryModels=UserLibrary.normalize([...(window.BUNDLED_USER_MODELS || []), ...result.models]);
       if(result.warnings?.length)alert('No se pudieron cargar '+result.warnings.length+' modelos guardados de la biblioteca.');
       if(state.activeTab==='dielines')renderDrawerCatalogList();
     }catch(error){alert('No se pudo cargar tu biblioteca: '+(error.message||error));}
@@ -5219,34 +5343,25 @@
       const button=document.getElementById('library-model-save');button.disabled=true;
       try{
         await userLibraryReady;
+        finishPartEditing();
         const name=document.getElementById('library-model-name').value;
         const existing=UserLibrary.findByName?UserLibrary.findByName(userLibraryModels,name):null;
-        if(existing){
-          const overwrite=window.confirm(`Ya existe un modelo llamado «${existing.name}» en tu biblioteca. ¿Quieres sobreescribirlo?`);
-          if(!overwrite){
-            status.textContent='Cambia el nombre para guardarlo como un modelo nuevo.';
-            return;
-          }
-        }
+        if(existing) throw new Error('Ese nombre ya existe. Usa otro nombre para guardar una copia; el modelo original se conserva.');
         const thumbnail3dDataUrl=captureCurrent3DCanvasThumbnail();
         const item=UserLibrary.create(
           name,
           profile.value,
           state.dieline,
           state.fileName,
-          existing?existing.num:undefined,
+          undefined,
           {thumbnail3dDataUrl}
         );
-        if(existing){
-          const nextList=[item,...userLibraryModels.filter(m=>Number(m.num)!==Number(existing.num))];
-          if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('update_library_model',{model:item});
-          else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify(nextList));
-          userLibraryModels=nextList;
-        }else{
-          if(window.__TAURI__?.core?.invoke)await window.__TAURI__.core.invoke('add_library_model',{model:item});
-          else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
-          userLibraryModels.unshift(item);
-        }
+        if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke('add_library_model',{model:item});
+        else if (/^https?:$/.test(window.location.protocol)) {
+          const response = await fetch('/api/library-models', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)});
+          if (!response.ok) throw new Error((await response.json()).error || 'No se pudo guardar el modelo en el proyecto.');
+        } else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
+        userLibraryModels.unshift(item);
         catalogPreviewCache.delete(Number(item.num));
         state.activeFefcoEntry=item;state.fileName=item.name;
         state.boardCode=item.boardCode;

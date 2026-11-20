@@ -3286,20 +3286,340 @@
     return model;
   }
 
+  function detectB1AmericanBox(model) {
+    if (!model || !Array.isArray(model.faces) || !Array.isArray(model.hinges)) {
+      return { isB1: false };
+    }
+    if (model.faces.length < 12 || model.faces.length > 13) {
+      return { isB1: false };
+    }
+
+    const faceById = new Map(model.faces.map(f => [String(f.id), f]));
+    const adj = new Map(model.faces.map(f => [String(f.id), []]));
+
+    for (const h of model.hinges) {
+      if (!h || !h.p1 || !h.p2) continue;
+      const pId = String(h.parentFaceId ?? h.parentId);
+      const cId = String(h.childFaceId ?? h.childId);
+      if (!faceById.has(pId) || !faceById.has(cId) || pId === cId) continue;
+      const dx = Math.abs(h.p2.x - h.p1.x);
+      const dy = Math.abs(h.p2.y - h.p1.y);
+      let kind = null;
+      if (dy <= 2.0 && dx > 5.0) kind = 'H';
+      else if (dx <= 2.0 && dy > 5.0) kind = 'V';
+      else continue;
+      adj.get(pId).push({ otherId: cId, hinge: h, kind });
+      adj.get(cId).push({ otherId: pId, hinge: h, kind });
+    }
+
+    const faceCenterY = f => (f.centroid ? f.centroid.y : (f.bounds.minY + f.bounds.maxY) * 0.5);
+    const faceCenterX = f => (f.centroid ? f.centroid.x : (f.bounds.minX + f.bounds.maxX) * 0.5);
+
+    // Body panels have both a top flap and a bottom flap via horizontal hinges
+    const bodyCandidates = [];
+    for (const f of model.faces) {
+      const fId = String(f.id);
+      const neighbors = adj.get(fId) || [];
+      const topLinks = [];
+      const botLinks = [];
+      for (const link of neighbors) {
+        if (link.kind !== 'H') continue;
+        const other = faceById.get(link.otherId);
+        if (!other) continue;
+        const yFold = (link.hinge.p1.y + link.hinge.p2.y) * 0.5;
+        if (faceCenterY(other) < yFold) topLinks.push({ face: other, hinge: link.hinge, yFold });
+        else botLinks.push({ face: other, hinge: link.hinge, yFold });
+      }
+      if (topLinks.length === 1 && botLinks.length === 1) {
+        bodyCandidates.push({
+          bodyFace: f,
+          topFlap: topLinks[0].face,
+          topHinge: topLinks[0].hinge,
+          yTopHinge: topLinks[0].yFold,
+          botFlap: botLinks[0].face,
+          botHinge: botLinks[0].hinge,
+          yBotHinge: botLinks[0].yFold
+        });
+      }
+    }
+
+    if (bodyCandidates.length !== 4) {
+      return { isB1: false };
+    }
+
+    // Sort body panels left-to-right along X
+    bodyCandidates.sort((a, b) => faceCenterX(a.bodyFace) - faceCenterX(b.bodyFace));
+
+    // Verify linear chain of 3 vertical hinges connecting body[0]-body[1]-body[2]-body[3]
+    for (let i = 0; i < 3; i++) {
+      const idA = String(bodyCandidates[i].bodyFace.id);
+      const idB = String(bodyCandidates[i + 1].bodyFace.id);
+      const connectedV = (adj.get(idA) || []).some(link => link.kind === 'V' && link.otherId === idB);
+      if (!connectedV) return { isB1: false };
+    }
+
+    // Verify all 8 flaps are distinct and leaf faces (degree 1)
+    const usedIds = new Set(bodyCandidates.map(c => String(c.bodyFace.id)));
+    for (const c of bodyCandidates) {
+      const tId = String(c.topFlap.id);
+      const bId = String(c.botFlap.id);
+      if (usedIds.has(tId) || usedIds.has(bId) || tId === bId) return { isB1: false };
+      if ((adj.get(tId) || []).length !== 1 || (adj.get(bId) || []).length !== 1) return { isB1: false };
+      usedIds.add(tId);
+      usedIds.add(bId);
+    }
+
+    // Remaining face (if any) must be a single glue flap attached via vertical hinge to body[0] or body[3]
+    const remaining = model.faces.filter(f => !usedIds.has(String(f.id)));
+    if (remaining.length > 1) return { isB1: false };
+    let glueFlap = null;
+    let glueSide = null;
+    if (remaining.length === 1) {
+      glueFlap = remaining[0];
+      const gId = String(glueFlap.id);
+      const gLinks = adj.get(gId) || [];
+      if (gLinks.length !== 1 || gLinks[0].kind !== 'V') return { isB1: false };
+      const hostId = gLinks[0].otherId;
+      if (hostId === String(bodyCandidates[0].bodyFace.id)) glueSide = 'left';
+      else if (hostId === String(bodyCandidates[3].bodyFace.id)) glueSide = 'right';
+      else return { isB1: false };
+    }
+
+    // Identify the 2 narrow faces (width = smaller measure in X) vs 2 wide faces
+    const widths = bodyCandidates.map(c => c.bodyFace.bounds.width);
+    const avgEven = (widths[0] + widths[2]) * 0.5;
+    const avgOdd = (widths[1] + widths[3]) * 0.5;
+    let narrowParity;
+    if (avgEven < avgOdd - 0.1) narrowParity = 0;
+    else if (avgOdd < avgEven - 0.1) narrowParity = 1;
+    else narrowParity = glueSide === 'right' ? 1 : 0;
+
+    const columns = bodyCandidates.map((c, idx) => ({
+      ...c,
+      index: idx,
+      widthX: c.bodyFace.bounds.width,
+      isNarrow: (idx % 2) === narrowParity,
+      yTopOuter: c.topFlap.bounds.minY,
+      yBotOuter: c.botFlap.bounds.maxY
+    }));
+
+    const yCenter = columns.reduce((s, c) => s + (c.yTopHinge + c.yBotHinge) * 0.5, 0) / columns.length;
+
+    return {
+      isB1: true,
+      columns,
+      narrowColumns: columns.filter(c => c.isNarrow),
+      wideColumns: columns.filter(c => !c.isNarrow),
+      glueFlap,
+      glueSide,
+      yCenter
+    };
+  }
+
+  function applyB1Retranqueo(baseModel, retranqueoMm) {
+    const targetR = Number(retranqueoMm);
+    if (!baseModel || !Number.isFinite(targetR) || targetR < 0) return baseModel;
+    const info = detectB1AmericanBox(baseModel);
+    if (!info || !info.isB1) return baseModel;
+
+    const prevR = Number(baseModel.b1RetranqueoMm) || 0;
+    const d = targetR - prevR;
+    if (Math.abs(d) < 1e-6) {
+      return { ...baseModel, b1RetranqueoMm: targetR };
+    }
+
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces.map(f => ({
+        ...f,
+        polygon: f.polygon.map(p => ({ ...p })),
+        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+      })),
+      cutSegments: (baseModel.cutSegments || baseModel.cutSegmentsMm || []).map(s => ({ ...s })),
+      foldSegments: (baseModel.foldSegments || baseModel.foldSegmentsMm || []).map(s => ({ ...s })),
+      hinges: (baseModel.hinges || []).map(h => ({
+        ...h,
+        p1: h.p1 ? { ...h.p1 } : h.p1,
+        p2: h.p2 ? { ...h.p2 } : h.p2,
+        midpoint: h.midpoint ? { ...h.midpoint } : h.midpoint
+      })),
+      b1RetranqueoMm: targetR
+    };
+    delete model.bleedSegments;
+    delete model.bleedSegmentsMm;
+
+    const faceById = new Map(model.faces.map(f => [String(f.id), f]));
+    const hingeById = new Map(model.hinges.map(h => [String(h.id), h]));
+
+    // 1. Update polygons, hinges, and narrow horizontal foldSegments
+    const outerBands = [];
+    for (const col of info.columns) {
+      const bodyFace = faceById.get(String(col.bodyFace.id));
+      const topFlap = faceById.get(String(col.topFlap.id));
+      const botFlap = faceById.get(String(col.botFlap.id));
+      const topHinge = hingeById.get(String(col.topHinge.id));
+      const botHinge = hingeById.get(String(col.botHinge.id));
+
+      const isWide = !col.isNarrow;
+      const topOuterShift = -2 * d;
+      const botOuterShift = +2 * d;
+      const topCreaseShift = isWide ? -d : 0;
+      const botCreaseShift = isWide ? +d : 0;
+
+      outerBands.push({
+        y: col.yTopOuter,
+        minX: col.topFlap.bounds.minX - 0.5,
+        maxX: col.topFlap.bounds.maxX + 0.5,
+        shiftY: topOuterShift
+      });
+      outerBands.push({
+        y: col.yBotOuter,
+        minX: col.botFlap.bounds.minX - 0.5,
+        maxX: col.botFlap.bounds.maxX + 0.5,
+        shiftY: botOuterShift
+      });
+
+      // Top flap polygon
+      if (topFlap) {
+        const hTop = Math.max(1, col.yTopHinge - col.yTopOuter);
+        const splitY = col.yTopOuter + hTop * 0.5;
+        for (const p of topFlap.polygon) {
+          if (p.y < splitY) p.y += topOuterShift;
+          else if (topCreaseShift !== 0) p.y += topCreaseShift;
+        }
+      }
+
+      // Bottom flap polygon
+      if (botFlap) {
+        const hBot = Math.max(1, col.yBotOuter - col.yBotHinge);
+        const splitY = col.yBotHinge + hBot * 0.5;
+        for (const p of botFlap.polygon) {
+          if (p.y > splitY) p.y += botOuterShift;
+          else if (botCreaseShift !== 0) p.y += botCreaseShift;
+        }
+      }
+
+      // Wide (LARGO) body panel, horizontal hinges, and horizontal red fold segments
+      if (isWide) {
+        if (bodyFace) {
+          for (const p of bodyFace.polygon) {
+            if (Math.abs(p.y - col.yTopHinge) <= 2.0) p.y += topCreaseShift;
+            else if (Math.abs(p.y - col.yBotHinge) <= 2.0) p.y += botCreaseShift;
+          }
+        }
+        if (topHinge) {
+          if (topHinge.p1) topHinge.p1.y += topCreaseShift;
+          if (topHinge.p2) topHinge.p2.y += topCreaseShift;
+          if (topHinge.midpoint) topHinge.midpoint.y += topCreaseShift;
+        }
+        if (botHinge) {
+          if (botHinge.p1) botHinge.p1.y += botCreaseShift;
+          if (botHinge.p2) botHinge.p2.y += botCreaseShift;
+          if (botHinge.midpoint) botHinge.midpoint.y += botCreaseShift;
+        }
+
+        const bxMin = col.bodyFace.bounds.minX - 0.5;
+        const bxMax = col.bodyFace.bounds.maxX + 0.5;
+        for (const s of model.foldSegments) {
+          if (Math.abs(s.y1 - s.y2) > 1.5) continue;
+          const mx = (s.x1 + s.x2) * 0.5;
+          if (mx < bxMin || mx > bxMax) continue;
+          const my = (s.y1 + s.y2) * 0.5;
+          if (Math.abs(my - col.yTopHinge) <= 1.5) {
+            s.y1 += topCreaseShift;
+            s.y2 += topCreaseShift;
+          } else if (Math.abs(my - col.yBotHinge) <= 1.5) {
+            s.y1 += botCreaseShift;
+            s.y2 += botCreaseShift;
+          }
+        }
+      }
+    }
+
+    // 2. Update blue cutSegments on outer flap edges and their connected side endpoints
+    const findEndpointShift = (x, y) => {
+      let chosen = null;
+      for (const band of outerBands) {
+        if (Math.abs(y - band.y) <= 1.5 && x >= band.minX && x <= band.maxX) {
+          if (chosen === null || Math.abs(band.shiftY) > Math.abs(chosen)) {
+            chosen = band.shiftY;
+          }
+        }
+      }
+      return chosen;
+    };
+
+    for (const s of model.cutSegments) {
+      if (Math.abs(s.y1 - s.y2) <= 1.5) {
+        const mx = (s.x1 + s.x2) * 0.5;
+        const my = (s.y1 + s.y2) * 0.5;
+        const band = outerBands.find(b => Math.abs(my - b.y) <= 1.5 && mx >= b.minX && mx <= b.maxX);
+        if (band) {
+          s.y1 += band.shiftY;
+          s.y2 += band.shiftY;
+        }
+      } else {
+        const sh1 = findEndpointShift(s.x1, s.y1);
+        const sh2 = findEndpointShift(s.x2, s.y2);
+        if (sh1 !== null) s.y1 += sh1;
+        if (sh2 !== null) s.y2 += sh2;
+      }
+    }
+
+    // 3. Recompute face bounds, centroids, areas, and model metrics
+    const ringArea = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) / 2;
+
+    for (const face of model.faces) {
+      const xs = face.polygon.map(p => p.x);
+      const ys = face.polygon.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      face.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+      face.bbox = { ...face.bounds };
+      face.points = face.polygon;
+      face.centroid = {
+        x: face.polygon.reduce((sum, p) => sum + p.x, 0) / face.polygon.length,
+        y: face.polygon.reduce((sum, p) => sum + p.y, 0) / face.polygon.length
+      };
+      face.areaMm2 = Math.abs(ringArea(face.polygon)) - (face.holes || []).reduce((sum, h) => sum + Math.abs(ringArea(h)), 0);
+      face.area = face.areaMm2;
+    }
+
+    const minX = Math.min(...model.faces.map(f => f.bounds.minX));
+    const maxX = Math.max(...model.faces.map(f => f.bounds.maxX));
+    const minY = Math.min(...model.faces.map(f => f.bounds.minY));
+    const maxY = Math.max(...model.faces.map(f => f.bounds.maxY));
+    model.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+    model.blankWidthMm = maxX - minX;
+    model.blankHeightMm = maxY - minY;
+    model.cutSegmentsMm = model.cutSegments;
+    model.foldSegmentsMm = model.foldSegments;
+    const segmentLength = s => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    model.totalCutLengthMm = model.cutSegments.reduce((sum, e) => sum + segmentLength(e), 0);
+    model.totalFoldLengthMm = model.foldSegments.reduce((sum, e) => sum + segmentLength(e), 0);
+    model.totalAreaMm2 = model.faces.reduce((sum, f) => sum + f.areaMm2, 0);
+    model.outsideArrowData = generateOutsideArrowData(model);
+    return model;
+  }
+
+  function isChamferFlap(model, face) {
+    if (!face || String(face.id) === String(model.rootFaceId) || face.role === 'GLUE_FLAP') return false;
+    if (/FLAP/.test(face.role || '') || /solapa/i.test(face.label || face.name || '')) return true;
+    if (/BODY|BASE|WALL/.test(face.role || '')) return false;
+    return (model.hinges || []).filter(h => String(h.parentFaceId) === String(face.id) || String(h.childFaceId) === String(face.id)).length === 1;
+  }
+
   function applyChamferVariation(baseModel, params = {}, targetFaceIds = []) {
     const idList = Array.isArray(targetFaceIds) && targetFaceIds.length > 0
       ? targetFaceIds
       : (params.targetFaceId !== undefined && params.targetFaceId !== null ? [params.targetFaceId] : []);
-    const resolvedIds = idList.length > 0
-      ? [...new Set(idList.map(id => String(id)))]
-      : (() => {
-          const fallback = findPrimaryLidFlapFace(baseModel);
-          return fallback ? [String(fallback.id)] : [];
-        })();
-
-    const targetFacesOrig = (baseModel.faces || []).filter(f => resolvedIds.includes(String(f.id)));
+    const resolvedIds = [...new Set(idList.map(String))];
+    const targetFacesOrig = (baseModel.faces || []).filter(f => resolvedIds.includes(String(f.id)) && isChamferFlap(baseModel, f));
     if (!targetFacesOrig.length) {
-      return { ...baseModel, partError: 'Selecciona al menos un área para chaflanar sus esquinas de corte.' };
+      return { ...baseModel, partError: 'Pulsa SELECCIONA SOLAPAS y elige las solapas que quieres chaflanar.' };
     }
 
     const angleDeg = Math.max(15, Math.min(75, Number.isFinite(Number(params.angle)) ? Number(params.angle) : 45));
@@ -4610,6 +4930,7 @@
   return {
     ARTIOS_BOARDS,
     rotateDieline90,
+    isChamferFlap,
     parseSVGDieline,
     buildPlanarSubdivision,
     buildDielineModel,
@@ -4621,6 +4942,8 @@
     enforceFlapLengthLimit,
     getSideLocksData,
     getB1DoubleFlapsData,
+    detectB1AmericanBox,
+    applyB1Retranqueo,
     applyPartVariationToModel,
     getPartVariationSettings,
     resolvePartTargetFace,

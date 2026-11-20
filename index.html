@@ -669,6 +669,19 @@
           </div>
         </div>
         <button type="button" id="btn-rotate-dieline" class="btn-rotate-dieline" title="Girar todo el troquel 90° en sentido horario">↻ Girar troquel 90°</button>
+        <div class="b1-retranqueos-control hidden" id="b1-retranqueos-control">
+          <button type="button" id="btn-b1-retranqueos" class="btn-b1-retranqueos" aria-expanded="false" title="Aplicar retranqueos para troquel en caja B1 americana">
+            <span>RETRANQUEOS PARA TROQUEL</span>
+            <span class="b1-retranqueo-badge hidden" id="b1-retranqueo-badge"></span>
+          </button>
+          <div class="b1-retranqueos-menu hidden" id="b1-retranqueos-menu" role="group" aria-label="Retranqueos para troquel">
+            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="1.5">1,5 mm</button>
+            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="3">3 mm</button>
+            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="4.5">4,5 mm</button>
+            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="7">7 mm</button>
+            <button type="button" class="btn-b1-retranqueo-opt btn-b1-retranqueo-reset hidden" id="btn-b1-retranqueo-reset" data-retranqueo="0" title="Quitar retranqueo">0 mm</button>
+          </div>
+        </div>
       </div>
 
       <div class="vector-editor" id="vector-editor">
@@ -900,6 +913,7 @@
   <script src="cad-io.js"></script>
   <script src="artwork-layout.js"></script>
   <script src="library-models.js"></script>
+  <script src="assets/user-models.js"></script>
   <script src="vector-cad.js"></script>
   <script src="client-publishing.js"></script>
   <script src="app.js"></script>
@@ -927,6 +941,7 @@
       <strong id="part-options-title">Ajustar pieza</strong>
       <button id="part-options-close" class="icon-btn" aria-label="Cerrar ajustes de pieza">×</button>
     </div>
+    <button type="button" id="part-select-flaps" class="btn-primary" hidden aria-pressed="false">SELECCIONA SOLAPAS</button>
     <div id="part-options-fields"></div>
     <p id="part-options-status" class="part-options-status" role="status"></p>
     <button id="part-options-done" class="btn-primary-blue">Listo</button>
