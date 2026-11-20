@@ -2701,9 +2701,80 @@
     return null;
   }
 
+  function detectBoxSleeveStructure(model, baseFaceId = null) {
+    if (!model || !Array.isArray(model.faces)) return null;
+    const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
+    if (bodyFaces.length < 3) return null;
+    const targetId = baseFaceId ?? model.dimensionBaseFaceId ?? model.rootFaceId;
+    const base = bodyFaces.find(f => f.id === targetId);
+    if (!base) return null;
+
+    const xs = bodyFaces.map(f => (f.bounds.minX + f.bounds.maxX) * 0.5);
+    const ys = bodyFaces.map(f => (f.bounds.minY + f.bounds.maxY) * 0.5);
+    const spanX = Math.max(...xs) - Math.min(...xs);
+    const spanY = Math.max(...ys) - Math.min(...ys);
+    const isVerticalStrip = spanY > spanX;
+    const bodyIds = new Set(bodyFaces.map(f => f.id));
+
+    // Buscar una cara de cuerpo adyacente a `base` por hendido lateral del cuerpo
+    let adjBody = null;
+    for (const h of model.hinges || []) {
+      const pId = h.parentFaceId ?? h.parentId;
+      const cId = h.childFaceId ?? h.childId;
+      const otherId = pId === base.id ? cId : cId === base.id ? pId : null;
+      if (otherId === null || !bodyIds.has(otherId)) continue;
+      const candidate = bodyFaces.find(f => f.id === otherId);
+      if (!candidate) continue;
+      const baseSpan = isVerticalStrip ? base.bounds.height : base.bounds.width;
+      const candSpan = isVerticalStrip ? candidate.bounds.height : candidate.bounds.width;
+      // Preferir la cara adyacente cuya medida difiere (pareja L / W)
+      if (!adjBody || Math.abs(candSpan - baseSpan) > Math.abs((isVerticalStrip ? adjBody.bounds.height : adjBody.bounds.width) - baseSpan)) {
+        adjBody = candidate;
+      }
+    }
+    if (!adjBody) {
+      adjBody = bodyFaces.find(f => f.id !== base.id) || base;
+    }
+    return { base, adjBody, bodyFaces, isVerticalStrip };
+  }
+
+  function syncBoxDimensionsFromSizeArrows(model) {
+    if (!model || !Array.isArray(model.sizeArrowData)) return model;
+    const byName = name => model.sizeArrowData.find(a => a.lineName === name && a.p1 && a.p2);
+    const mL = byName('L') ? measureDimensionArrow(byName('L')) : null;
+    const mW = byName('W') ? measureDimensionArrow(byName('W')) : null;
+    const mH = byName('H') ? measureDimensionArrow(byName('H')) : null;
+    if (mL || mW || mH) {
+      const prev = model.boxDimensionsMm || {};
+      model.boxDimensionsMm = {
+        length: +(mL || prev.length || 0).toFixed(2),
+        width: +(mW || prev.width || 0).toFixed(2),
+        depth: +(mH || prev.depth || 0).toFixed(2)
+      };
+    }
+    return model;
+  }
+
   function dimensionsFromBase(model,rootFaceId=model.rootFaceId) {
     const base=model.faces.find(f=>f.id===rootFaceId);
     if(!base)return model.boxDimensionsMm;
+
+    // En troqueles tipo caja / cuerpo tubular (p.ej. B1 americana, estuches):
+    // la altura (H) es el eje transversal del cuerpo (eje Y en disposición horizontal)
+    // y Largo (L) / Ancho (W) son las medidas en X de la cara base y su pared contigua.
+    const sleeve = detectBoxSleeveStructure(model, rootFaceId);
+    if (sleeve) {
+      const { base: bFace, adjBody, isVerticalStrip } = sleeve;
+      const span1 = isVerticalStrip ? bFace.bounds.height : bFace.bounds.width;
+      const span2 = isVerticalStrip ? adjBody.bounds.height : adjBody.bounds.width;
+      const height = isVerticalStrip ? bFace.bounds.width : bFace.bounds.height;
+      return {
+        length: +Math.max(span1, span2).toFixed(3),
+        width: +Math.min(span1, span2).toFixed(3),
+        depth: +height.toFixed(3)
+      };
+    }
+
     const depths=[];
     for(const h of model.hinges){
       const childId=h.parentFaceId===rootFaceId?h.childFaceId:h.childFaceId===rootFaceId?h.parentFaceId:null;
@@ -2727,7 +2798,7 @@
       boxDimensionsMm: dimensionsFromBase(model, baseFaceId)
     };
     nextModel.sizeArrowData = generateSizeArrowData(nextModel);
-    return reconcileDimensionMeasurements(nextModel);
+    return syncBoxDimensionsFromSizeArrows(reconcileDimensionMeasurements(nextModel));
   }
 
   function rerootDielineModel(model, rootFaceId, options = {}) {
@@ -2751,11 +2822,11 @@
         rootFaceId,
         dimensionBaseFaceId
       };
-      return reconcileDimensionMeasurements(nextModel);
+      return syncBoxDimensionsFromSizeArrows(reconcileDimensionMeasurements(nextModel));
     }
     const nextModel={...model,faces,hinges,rootFaceId,dimensionBaseFaceId:rootFaceId,hasExplicitBase:true,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
     nextModel.sizeArrowData=generateSizeArrowData(nextModel);
-    return reconcileDimensionMeasurements(nextModel);
+    return syncBoxDimensionsFromSizeArrows(reconcileDimensionMeasurements(nextModel));
   }
 
   function findPrimaryLidFlapFace(model) {
@@ -4180,17 +4251,28 @@
 
     const bodyFaces = model.faces.filter(f => f.role === 'BODY' || (f.name && f.name.includes('Cara Cuerpo')));
     const arrows = [];
+    const sleeve = detectBoxSleeveStructure(model, model.dimensionBaseFaceId ?? model.rootFaceId);
 
-    if (!model.hasExplicitBase && bodyFaces.length >= 2) {
+    if (sleeve || (!model.hasExplicitBase && bodyFaces.length >= 2)) {
       const xs = bodyFaces.map(f => (f.bounds.minX + f.bounds.maxX) * 0.5);
       const ys = bodyFaces.map(f => (f.bounds.minY + f.bounds.maxY) * 0.5);
       const spanX = Math.max(...xs) - Math.min(...xs);
       const spanY = Math.max(...ys) - Math.min(...ys);
-      const isVerticalStrip = spanY > spanX;
+      const isVerticalStrip = sleeve ? sleeve.isVerticalStrip : (spanY > spanX);
 
       const spanOf = f => isVerticalStrip ? f.bounds.height : f.bounds.width;
-      const fL = bodyFaces.find(f => Math.abs(spanOf(f) - L) < 3) || bodyFaces[0];
-      const fW = bodyFaces.find(f => Math.abs(spanOf(f) - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
+      let fL, fW, fH;
+      if (model.hasExplicitBase && sleeve) {
+        const sBase = spanOf(sleeve.base);
+        const sAdj = spanOf(sleeve.adjBody);
+        fL = sBase >= sAdj ? sleeve.base : sleeve.adjBody;
+        fW = fL.id === sleeve.base.id ? sleeve.adjBody : sleeve.base;
+        fH = sleeve.base;
+      } else {
+        fL = bodyFaces.find(f => Math.abs(spanOf(f) - L) < 3) || bodyFaces[0];
+        fW = bodyFaces.find(f => Math.abs(spanOf(f) - W) < 3 && f.id !== fL.id) || bodyFaces[1] || bodyFaces[0];
+        fH = fL;
+      }
 
       if (isVerticalStrip) {
         const xL = fL.bounds.minX + fL.bounds.width * 0.72;
@@ -4205,11 +4287,11 @@
           p1: { x: xW, y: fW.bounds.minY }, p2: { x: xW, y: fW.bounds.maxY },
           tpointer: { x: xW, y: (fW.bounds.minY + fW.bounds.maxY) * 0.5, value: 'W=' + W }
         });
-        const yH = fL.bounds.minY + Math.min(30, fL.bounds.height * 0.2);
+        const yH = fH.bounds.minY + Math.min(30, fH.bounds.height * 0.2);
         arrows.push({
           lineName: 'H', lineLength: H,
-          p1: { x: fL.bounds.minX, y: yH }, p2: { x: fL.bounds.maxX, y: yH },
-          tpointer: { x: (fL.bounds.minX + fL.bounds.maxX) * 0.5, y: yH, value: 'H=' + H }
+          p1: { x: fH.bounds.minX, y: yH }, p2: { x: fH.bounds.maxX, y: yH },
+          tpointer: { x: (fH.bounds.minX + fH.bounds.maxX) * 0.5, y: yH, value: 'H=' + H }
         });
       } else {
         // Flecha L (Largo) - ligeramente ladeada entre el centro y el lateral
@@ -4226,12 +4308,12 @@
           p1: { x: fW.bounds.minX, y: yW }, p2: { x: fW.bounds.maxX, y: yW },
           tpointer: { x: (fW.bounds.minX + fW.bounds.maxX) * 0.5, y: yW, value: 'W=' + W }
         });
-        // Flecha H (Alto)
-        const xH = fL.bounds.minX + Math.min(30, fL.bounds.width * 0.2);
+        // Flecha H (Alto) en el eje Y del cuerpo
+        const xH = fH.bounds.minX + Math.min(30, fH.bounds.width * 0.2);
         arrows.push({
           lineName: 'H', lineLength: H,
-          p1: { x: xH, y: fL.bounds.minY }, p2: { x: xH, y: fL.bounds.maxY },
-          tpointer: { x: xH, y: (fL.bounds.minY + fL.bounds.maxY) * 0.5, value: 'H=' + H }
+          p1: { x: xH, y: fH.bounds.minY }, p2: { x: xH, y: fH.bounds.maxY },
+          tpointer: { x: xH, y: (fH.bounds.minY + fH.bounds.maxY) * 0.5, value: 'H=' + H }
         });
       }
     } else {

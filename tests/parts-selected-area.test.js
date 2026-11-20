@@ -278,6 +278,28 @@ test('Pieza Chaflanar chaflana las esquinas de corte en una o varias áreas sele
   assert.ok(res.cutSegments.some(s => s.isPartMod), 'Debe añadir segmentos de corte de chaflán en 2D');
 });
 
+test('Elegir base en troquel tipo caja B1 mantiene H en eje Y y sincroniza boxDimensionsMm con cotas L/W/H', () => {
+  const baseModel = loadAmericanBoxModel();
+  const cara3 = baseModel.faces.find(f => f.label && f.label.includes('Cara Cuerpo 3'));
+  const cara2 = baseModel.faces.find(f => f.label && f.label.includes('Cara Cuerpo 2'));
+  assert.ok(cara3 && cara2);
+
+  const updated = DielineEngine.setDimensionBaseFace(baseModel, cara3.id);
+  const arrowL = updated.sizeArrowData.find(a => a.lineName === 'L');
+  const arrowW = updated.sizeArrowData.find(a => a.lineName === 'W');
+  const arrowH = updated.sizeArrowData.find(a => a.lineName === 'H');
+  assert.ok(arrowL && arrowW && arrowH);
+
+  // En caja B1, H debe ser el eje Y (vertical: p1.x === p2.x) y coincidir con la altura de Cara Cuerpo 3
+  assert.ok(Math.abs(arrowH.p1.x - arrowH.p2.x) < 0.5, 'La cota H en troquel tipo caja debe ser vertical (eje Y)');
+  assert.ok(Math.abs(updated.boxDimensionsMm.depth - cara3.bounds.height) < 0.5, 'Alto (H) debe ser la dimensión en Y de la cara de cuerpo');
+
+  // Las medidas personalizadas (boxDimensionsMm) deben coincidir exactamente con las cotas medidas
+  assert.ok(Math.abs(updated.boxDimensionsMm.length - DielineEngine.measureDimensionArrow(arrowL)) < 0.1);
+  assert.ok(Math.abs(updated.boxDimensionsMm.width - DielineEngine.measureDimensionArrow(arrowW)) < 0.1);
+  assert.ok(Math.abs(updated.boxDimensionsMm.depth - DielineEngine.measureDimensionArrow(arrowH)) < 0.1);
+});
+
 test('index.html incluye las tarjetas Solapas dobles, Ventanas y Chaflanar en Cambiar piezas', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert.ok(html.includes('data-part-key="double_flaps"'));
