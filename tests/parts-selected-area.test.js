@@ -17,7 +17,6 @@ test('Cambiar piezas aplica cada variación al área seleccionada (targetFaceId)
   const defaultFlap = DielineEngine.findPrimaryLidFlapFace(baseModel);
   assert.ok(defaultFlap, 'Debe existir una solapa principal por defecto');
 
-  // Elegir una solapa diferente a la principal por defecto
   const otherFlap = baseModel.faces.find(f =>
     f.id !== defaultFlap.id &&
     f.role && f.role.includes('FLAP') &&
@@ -32,79 +31,105 @@ test('Cambiar piezas aplica cada variación al área seleccionada (targetFaceId)
   assert.equal(withHandle.faces.find(f => f.id === otherFlap.id).holes.length, 1);
   assert.equal(withHandle.faces.find(f => f.id === defaultFlap.id).holes.length, 0);
 
-  // 2. Muesca para el dedo aplicada a la solapa seleccionada
+  // 2. Acumular una segunda pieza en otra área (flujo tras pulsar Listo con la última configuración)
+  const bodyFace = baseModel.faces.find(f => f.role === 'BODY' && f.bounds.width > 100);
+  const withTwoHandles = DielineEngine.applyPartVariationToModel(withHandle, 'handle', {
+    targetFaceId: bodyFace.id,
+    length: 70,
+    width: 18,
+    radius: 6
+  });
+  assert.ok(!withTwoHandles.partError, withTwoHandles.partError);
+  assert.equal(withTwoHandles.faces.find(f => f.id === otherFlap.id).holes.length, 1, 'Debe conservar el asa del área anterior');
+  assert.equal(withTwoHandles.faces.find(f => f.id === bodyFace.id).holes.length, 1, 'Debe añadir el asa en la nueva área');
+
+  // 3. Muesca para el dedo aplicada a la solapa seleccionada
   const withNotch = DielineEngine.applyPartVariationToModel(baseModel, 'thumb_notch', { targetFaceId: otherFlap.id, radius: 8 });
   assert.ok(!withNotch.partError, withNotch.partError);
   assert.equal(withNotch.partTargetFaceId, otherFlap.id);
   assert.ok(withNotch.faces.find(f => f.id === otherFlap.id).polygon.length > otherFlap.polygon.length);
   assert.equal(withNotch.faces.find(f => f.id === defaultFlap.id).polygon.length, defaultFlap.polygon.length);
 
-  // 3. Pestaña de cierre aplicada a la solapa seleccionada
+  // 4. Pestaña de cierre aplicada a la solapa seleccionada
   const withTab = DielineEngine.applyPartVariationToModel(baseModel, 'tab_lock', { targetFaceId: otherFlap.id, length: 40, depth: 15 });
   assert.ok(!withTab.partError, withTab.partError);
   assert.equal(withTab.partTargetFaceId, otherFlap.id);
   const tabFace = withTab.faces.find(f => f.name === 'Pestaña de cierre');
   assert.ok(tabFace && tabFace.parentId === otherFlap.id);
 
-  // 4. Tira de apertura aplicada a la solapa seleccionada
+  // 5. Tira de apertura aplicada a la solapa seleccionada
   const withTear = DielineEngine.applyPartVariationToModel(baseModel, 'tear_strip', { targetFaceId: otherFlap.id });
   assert.equal(withTear.partTargetFaceId, otherFlap.id);
 });
 
-test('Pieza Solapas dobles crea 1 o 2 solapas articuladas en 2D y 3D sobre el área seleccionada', () => {
+test('Solapas dobles en caja B1 americana hace crecer las 4 solapas del lado elegido en Y a 2×L - 2 mm', () => {
   const baseModel = loadAmericanBoxModel();
-  const targetFlap = baseModel.faces.find(f =>
-    f.role && f.role.includes('FLAP') && f.bounds.width > 80 && f.bounds.height > 20
-  );
-  assert.ok(targetFlap);
+  const b1Data = DielineEngine.getB1DoubleFlapsData(baseModel);
+  assert.equal(b1Data.isB1, true);
+  assert.equal(b1Data.topFlaps.length, 4);
+  assert.equal(b1Data.bottomFlaps.length, 4);
 
-  // Dos solapas (por defecto)
-  const settings2 = DielineEngine.getPartVariationSettings(baseModel, 'double_flaps', { targetFaceId: targetFlap.id });
-  assert.equal(settings2.params.count, 2);
-  assert.equal(settings2.params.angle, 90);
+  // Seleccionar una solapa superior -> crecen las 4 superiores, las 4 inferiores no cambian
+  const topTarget = b1Data.topFlaps[0].face;
+  const maxTopH = Math.max(...b1Data.topFlaps.map(x => x.face.bounds.height));
+  const expectedTopDelta = maxTopH - 2;
+  const mTop = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', { targetFaceId: topTarget.id });
+  assert.ok(!mTop.partError, mTop.partError);
+  assert.equal(mTop.activePartVariation, 'double_flaps');
+  assert.equal(mTop.partDoubleFlapsSide, 'top');
 
-  const m2 = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', {
-    targetFaceId: targetFlap.id,
-    count: 2,
-    depth: 24,
-    gap: 8,
-    margin: 2,
-    angle: 90
-  });
-  assert.ok(!m2.partError, m2.partError);
-  assert.equal(m2.activePartVariation, 'double_flaps');
-  assert.equal(m2.partTargetFaceId, targetFlap.id);
-  assert.equal(m2.faces.length, baseModel.faces.length + 2);
-  assert.equal(m2.hinges.length, baseModel.hinges.length + 2);
-  const newFaces = m2.faces.filter(f => f.parentId === targetFlap.id && String(f.hingeId).startsWith('part_dflap_'));
-  assert.equal(newFaces.length, 2);
-  for (const nf of newFaces) {
-    assert.equal(Math.abs(nf.defaultAngle), 90);
-    assert.ok(nf.areaMm2 > 0);
+  for (const { face: orig } of b1Data.topFlaps) {
+    const updated = mTop.faces.find(f => f.id === orig.id);
+    assert.ok(
+      Math.abs(updated.bounds.height - (orig.bounds.height + expectedTopDelta)) < 0.25,
+      `Solapa superior ${orig.label} debe crecer +${expectedTopDelta.toFixed(2)} mm en Y`
+    );
+  }
+  for (const { face: orig } of b1Data.bottomFlaps) {
+    const updated = mTop.faces.find(f => f.id === orig.id);
+    assert.ok(Math.abs(updated.bounds.height - orig.bounds.height) < 0.05, 'Las solapas inferiores no deben cambiar');
   }
 
-  // Una solapa continua a 180° (doble pared)
-  const m1 = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', {
-    targetFaceId: targetFlap.id,
-    count: 1,
-    depth: 30,
-    margin: 2,
-    angle: 180
-  });
-  assert.ok(!m1.partError, m1.partError);
-  assert.equal(m1.faces.length, baseModel.faces.length + 1);
-  const singleFlap = m1.faces.find(f => f.parentId === targetFlap.id && String(f.hingeId).startsWith('part_dflap_'));
-  assert.ok(singleFlap);
-  assert.equal(Math.abs(singleFlap.defaultAngle), 180);
+  // Seleccionar una solapa inferior sobre el modelo ya modificado -> crecen también las 4 inferiores
+  const bottomTarget = b1Data.bottomFlaps[0].face;
+  const maxBotH = Math.max(...b1Data.bottomFlaps.map(x => x.face.bounds.height));
+  const expectedBotDelta = maxBotH - 2;
+  const mBoth = DielineEngine.applyPartVariationToModel(mTop, 'double_flaps', { targetFaceId: bottomTarget.id });
+  assert.ok(!mBoth.partError, mBoth.partError);
+  assert.equal(mBoth.partDoubleFlapsSide, 'bottom');
+
+  for (const { face: orig } of b1Data.bottomFlaps) {
+    const updated = mBoth.faces.find(f => f.id === orig.id);
+    assert.ok(
+      Math.abs(updated.bounds.height - (orig.bounds.height + expectedBotDelta)) < 0.25,
+      `Solapa inferior ${orig.label} debe crecer +${expectedBotDelta.toFixed(2)} mm en Y`
+    );
+  }
+  for (const { face: orig } of b1Data.topFlaps) {
+    const updated = mBoth.faces.find(f => f.id === orig.id);
+    assert.ok(
+      Math.abs(updated.bounds.height - (orig.bounds.height + expectedTopDelta)) < 0.25,
+      'Las 4 solapas superiores deben mantenerse dobles'
+    );
+  }
+
+  // Seleccionar una cara de cuerpo en B1 avisa de elegir solapa superior o inferior
+  const bodyFace = baseModel.faces.find(f => f.role === 'BODY');
+  const errBody = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', { targetFaceId: bodyFace.id });
+  assert.ok(errBody.partError && errBody.partError.includes('solapa'));
+
+  // En una caja que NO es B1 americana (bandeja automontable 150010), avisa que solo se usa en B1
+  const entry = PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(x => x.num === 150010);
+  const trayModel = DielineEngine.buildDielineModelFromPacdora(entry.knifeData, entry);
+  const errTray = DielineEngine.applyPartVariationToModel(trayModel, 'double_flaps', { targetFaceId: trayModel.faces[0].id });
+  assert.ok(errTray.partError && errTray.partError.includes('B1'));
 });
 
 test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada (incluso paneles interiores de cuerpo)', () => {
   const baseModel = loadAmericanBoxModel();
-  // Seleccionar una cara interior de cuerpo (rodeada de hendidos, sin borde libre exterior)
   const bodyFace = baseModel.faces.find(f => f.role === 'BODY' && f.bounds.width > 80 && f.bounds.height > 60);
   assert.ok(bodyFace, 'Debe existir una cara de cuerpo interior');
 
-  // 1 ventana con esquinas redondeadas
   const m1 = DielineEngine.applyPartVariationToModel(baseModel, 'windows', {
     targetFaceId: bodyFace.id,
     count: 1,
@@ -119,7 +144,6 @@ test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada 
   assert.equal(updatedBody1.holes.length, 1);
   assert.ok(updatedBody1.areaMm2 < bodyFace.areaMm2);
 
-  // 2 ventanas con esquinas rectas (radius = 0)
   const m2 = DielineEngine.applyPartVariationToModel(baseModel, 'windows', {
     targetFaceId: bodyFace.id,
     count: 2,
@@ -133,7 +157,6 @@ test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada 
   assert.equal(updatedBody2.holes.length, 2);
   assert.equal(updatedBody2.holes[0].length, 4);
 
-  // 3 ventanas
   const m3 = DielineEngine.applyPartVariationToModel(baseModel, 'windows', {
     targetFaceId: bodyFace.id,
     count: 3,
@@ -144,14 +167,6 @@ test('Pieza Ventanas troquela 1, 2 o 3 ventanas en cualquier área seleccionada 
   });
   assert.ok(!m3.partError, m3.partError);
   assert.equal(m3.faces.find(f => f.id === bodyFace.id).holes.length, 3);
-
-  // Una pieza de borde exterior (Solapas dobles) sobre un panel interior sin borde libre avisa claramente
-  const interiorBody = baseModel.faces.find(f => {
-    if (f.role !== 'BODY') return false;
-    const res = DielineEngine.applyPartVariationToModel(baseModel, 'double_flaps', { targetFaceId: f.id });
-    return Boolean(res.partError);
-  });
-  assert.ok(interiorBody, 'Un panel interior rodeado de hendidos debe devolver partError al intentar solapas dobles');
 });
 
 test('index.html incluye las tarjetas Solapas dobles y Ventanas en Cambiar piezas', () => {

@@ -108,7 +108,9 @@
     solverAvailable: false,
     solverPending: false,
     activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip' | 'side_locks' | 'double_flaps' | 'windows'
-    partParams: {},
+    partParams: {},         // Última configuración usada por cada tipo de pieza
+    appliedParts: [],       // Historial de piezas confirmadas con 'Listo' en distintas áreas
+    draftPart: null,        // Pieza actualmente en edición antes de pulsar 'Listo'
     partTargetFaceId: null, // Área seleccionada a la que se aplica la pieza activa
     partHoverFaceId: null,  // Para resaltar el área afectada en 2D al pasar el cursor sobre la tarjeta
     activeTab: 'basic',     // 'dielines' | 'basic' | 'details' | 'parts' | 'info' | 'more'
@@ -212,7 +214,9 @@
       baseDieline: state.baseDieline, parametricDieline: state.parametricDieline,
       paramL: state.paramL, paramW: state.paramW, paramH: state.paramH,
       openParamsValues: state.openParamsValues, activePart: state.activePart,
-      partParams: state.partParams, boardId: state.boardId, caliper: state.caliper,
+      partParams: state.partParams, appliedParts: state.appliedParts,
+      draftPart: state.draftPart, partTargetFaceId: state.partTargetFaceId,
+      boardId: state.boardId, caliper: state.caliper,
       hingeAngles: state.hingeAngles, masterFold: state.masterFold
     }});
   }
@@ -699,6 +703,8 @@
     state.symmetryLinks = {};
     state.activePart = 'standard';
     state.partParams = {};
+    state.appliedParts = [];
+    state.draftPart = null;
     state.partTargetFaceId = null;
     document.getElementById('part-options-dialog')?.close();
     document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
@@ -895,9 +901,7 @@
     // Offsets are material-based estimates, not the original model's manufacturing rules.
     resized = {...resized, solverDimensions: {mfg: dims(mfg), inner: dims(mfg.map(v => Math.max(0, v - inside))), outer: dims(mfg.map(v => v + outside))}};
     state.parametricDieline = resized;
-    state.dieline = state.activePart === 'standard'
-      ? resized
-      : DielineEngine.applyPartVariationToModel(resized, state.activePart, { ...(state.partParams[state.activePart] || {}), targetFaceId: state.partTargetFaceId ?? getEffectivePartTargetFaceId() });
+    state.dieline = rebuildModelWithParts(resized, true);
     state.solverAvailable = true;
     state.solverPending = false;
     document.getElementById('param-sync-status').textContent = resized.dimensionErrors?.length
@@ -3099,13 +3103,49 @@
     partCards.forEach(card => {
       const partKey = card.getAttribute('data-part-key');
       card.addEventListener('click', () => {
+        const prevDraft = state.draftPart;
+        const targetFaceId = partKey === 'standard' ? null : getEffectivePartTargetFaceId();
+        // Si había una pieza en edición en otra área y el usuario cambió de área y pulsó otra tarjeta,
+        // la confirmamos primero para no perderla.
+        if (partKey !== 'standard' && prevDraft && String(prevDraft.targetFaceId) !== String(targetFaceId)) {
+          commitDraftPart();
+        }
         document.getElementById('part-options-dialog')?.close();
         partCards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         state.activePart = partKey;
-        state.partTargetFaceId = partKey === 'standard' ? null : getEffectivePartTargetFaceId();
-        applyCurrentPartVariation();
-        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows'].includes(partKey)) openPartOptions(partKey);
+        state.partTargetFaceId = targetFaceId;
+        recordUndoState();
+
+        if (partKey === 'standard') {
+          state.appliedParts = [];
+          state.draftPart = null;
+          applyCurrentPartVariation(false);
+          return;
+        }
+
+        const committedBase = rebuildModelWithParts(state.parametricDieline, false);
+        const savedParams = state.partParams[partKey] || {};
+        const settings = DielineEngine.getPartVariationSettings
+          ? DielineEngine.getPartVariationSettings(committedBase, partKey, { ...savedParams, targetFaceId })
+          : { params: { ...savedParams } };
+        const op = { partKey, targetFaceId, params: { ...settings.params } };
+        if (partKey === 'double_flaps' && DielineEngine.getB1DoubleFlapsData) {
+          op.side = DielineEngine.getB1DoubleFlapsData(committedBase, targetFaceId)?.side || null;
+        }
+
+        if (partKey === 'tear_strip') {
+          state.appliedParts.push(op);
+          state.draftPart = null;
+          applyCurrentPartVariation(false);
+          return;
+        }
+
+        state.draftPart = op;
+        applyCurrentPartVariation(false);
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows'].includes(partKey)) {
+          openPartOptions(partKey);
+        }
       });
 
       card.addEventListener('mouseenter', () => {
@@ -3557,22 +3597,87 @@
     return null;
   }
 
-  function applyCurrentPartVariation() {
+  function rebuildModelWithParts(baseModel, includeDraft = true) {
+    if (!baseModel || !DielineEngine.applyPartVariationToModel) return baseModel;
+    const ops = [...(state.appliedParts || [])];
+    if (includeDraft && state.draftPart && state.draftPart.partKey && state.draftPart.partKey !== 'standard') {
+      ops.push(state.draftPart);
+    }
+    if (ops.length === 0) return baseModel;
+    let current = baseModel;
+    let lastError = null;
+    let lastTargetFaceId = null;
+    let lastDoubleSide = null;
+    for (const op of ops) {
+      if (!op || !op.partKey || op.partKey === 'standard') continue;
+      const next = DielineEngine.applyPartVariationToModel(current, op.partKey, {
+        ...(op.params || {}),
+        targetFaceId: op.targetFaceId
+      });
+      if (next) {
+        lastError = next.partError || null;
+        if (next.partTargetFaceId !== undefined && next.partTargetFaceId !== null) {
+          lastTargetFaceId = next.partTargetFaceId;
+        }
+        if (next.partDoubleFlapsSide) lastDoubleSide = next.partDoubleFlapsSide;
+        current = next;
+      }
+    }
+    if (lastError) current = { ...current, partError: lastError };
+    if (lastTargetFaceId !== null) current = { ...current, partTargetFaceId: lastTargetFaceId };
+    if (lastDoubleSide) current = { ...current, partDoubleFlapsSide: lastDoubleSide };
+    return current;
+  }
+
+  function commitDraftPart() {
+    const draft = state.draftPart;
+    if (!draft || !draft.partKey || draft.partKey === 'standard') {
+      state.draftPart = null;
+      return;
+    }
+    // Guardar la última configuración usada para este tipo de pieza
+    if (draft.params && Object.keys(draft.params).length > 0) {
+      state.partParams[draft.partKey] = { ...(state.partParams[draft.partKey] || {}), ...draft.params };
+    }
+    if (!state.dieline?.partError) {
+      if (!Array.isArray(state.appliedParts)) state.appliedParts = [];
+      if (draft.partKey === 'double_flaps' && draft.side) {
+        const existingIdx = state.appliedParts.findIndex(p => p.partKey === 'double_flaps' && p.side === draft.side);
+        if (existingIdx >= 0) state.appliedParts[existingIdx] = { ...draft, params: { ...(draft.params || {}) } };
+        else state.appliedParts.push({ ...draft, params: { ...(draft.params || {}) } });
+      } else {
+        state.appliedParts.push({ ...draft, params: { ...(draft.params || {}) } });
+      }
+    }
+    state.draftPart = null;
+  }
+
+  function formatPartStatusMessage(model, partKey) {
+    if (!model) return 'Cambios en tiempo real en el plano y el 3D.';
+    if (model.partError) return model.partError;
+    if (partKey === 'double_flaps' && model.partDoubleFlapsSide) {
+      const sideLabel = model.partDoubleFlapsSide === 'top' ? '4 solapas superiores' : '4 solapas inferiores';
+      const clearance = model.partOptions?.clearance ?? 2;
+      return `Solapas dobles aplicadas a las ${sideLabel} (2×L - ${clearance} mm). Pulsa «Listo» para añadir más piezas.`;
+    }
+    const appliedFace = model.partTargetFaceId !== undefined && model.partTargetFaceId !== null
+      ? model.faces?.find(f => String(f.id) === String(model.partTargetFaceId))
+      : null;
+    return appliedFace
+      ? `Aplicado en «${appliedFace.label || appliedFace.name || '#' + appliedFace.id}». Pulsa «Listo» para seguir aplicando en otras áreas.`
+      : 'Cambios en tiempo real en el plano y el 3D.';
+  }
+
+  function applyCurrentPartVariation(shouldRecordUndo = true) {
     if (!state.parametricDieline || !DielineEngine.applyPartVariationToModel) return;
-    recordUndoState();
-    const targetFaceId = state.activePart === 'standard' ? null : (state.partTargetFaceId ?? getEffectivePartTargetFaceId());
-    const opts = { ...(state.partParams[state.activePart] || {}), targetFaceId };
-    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart, opts);
+    if (shouldRecordUndo) recordUndoState();
+    const modified = rebuildModelWithParts(state.parametricDieline, true);
     if (modified) {
       state.dieline = modified;
       const status = document.getElementById('part-options-status');
       if (status) {
-        const appliedFace = modified.partTargetFaceId !== undefined && modified.partTargetFaceId !== null
-          ? modified.faces?.find(f => String(f.id) === String(modified.partTargetFaceId))
-          : null;
-        status.textContent = modified.partError || (appliedFace
-          ? `Aplicado en «${appliedFace.label || appliedFace.name || '#' + appliedFace.id}». Cambios en tiempo real en el plano y el 3D.`
-          : 'Cambios en tiempo real en el plano y el 3D.');
+        const key = state.draftPart?.partKey || state.activePart;
+        status.textContent = formatPartStatusMessage(modified, key);
       }
       rebuild3DMesh();
       setMasterFold(state.masterFold);
@@ -3597,12 +3702,20 @@
     document.getElementById('part-options-title').textContent = titles[key] || 'Variación de pieza';
     const controls = new Map();
     if (!state.partParams[key]) state.partParams[key] = {};
-    const targetFaceId = state.partTargetFaceId ?? getEffectivePartTargetFaceId();
-    let settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, { ...state.partParams[key], targetFaceId });
-    state.partParams[key] = {...settings.params};
+    const committedBase = rebuildModelWithParts(state.parametricDieline, false);
+    const targetFaceId = state.draftPart?.targetFaceId ?? state.partTargetFaceId ?? getEffectivePartTargetFaceId();
+    let localParams = { ...(state.partParams[key] || {}), ...(state.draftPart?.params || {}) };
+    let settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId });
+    localParams = { ...settings.params };
+    if (state.draftPart && state.draftPart.partKey === key) {
+      state.draftPart.params = { ...localParams };
+    }
     const sync = () => {
-      settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, { ...state.partParams[key], targetFaceId });
-      state.partParams[key] = {...settings.params};
+      settings = DielineEngine.getPartVariationSettings(committedBase, key, { ...localParams, targetFaceId });
+      localParams = { ...settings.params };
+      if (state.draftPart && state.draftPart.partKey === key) {
+        state.draftPart.params = { ...localParams };
+      }
       for (const [name, control] of controls) {
         const limit = settings.limits[name];
         if (limit) {
@@ -3620,11 +3733,13 @@
       }
     };
     const change = (name, value) => {
-      state.partParams[key][name] = Number(value);
+      const numVal = Number(value);
+      localParams[name] = numVal;
+      state.partParams[key][name] = numVal;
       sync();
       if (!partUpdateFrame) partUpdateFrame = requestAnimationFrame(() => {
         partUpdateFrame = 0;
-        applyCurrentPartVariation();
+        applyCurrentPartVariation(false);
       });
     };
     const definitions = key === 'handle'
@@ -3634,7 +3749,7 @@
         : key === 'side_locks'
           ? [['count','Número de encastres'],['length','Largo del macho / hembra (mm)'],['distance','Distancia entre centros (mm)'],['radius','Radio de las esquinas (mm)'],['depth','Saliente del macho (mm)']]
           : key === 'double_flaps'
-            ? [['count','Número de solapas'],['depth','Fondo de solapa (mm)'],['gap','Separación central (mm)'],['margin','Margen lateral (mm)'],['angle','Ángulo de plegado']]
+            ? [['clearance','Holgura (-mm)']]
             : key === 'windows'
               ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)']]
               : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
@@ -3642,17 +3757,13 @@
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;
       let number, slider;
-      if (name === 'count' || name === 'angle') {
+      if (name === 'count') {
         number = document.createElement('select');
-        const selectOptions = name === 'angle'
-          ? [[90, '90°'], [180, '180° (doble pared)']]
-          : key === 'side_locks'
-            ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
-            : key === 'double_flaps'
-              ? [[2, 'Dos solapas'], [1, 'Una continua']]
-              : key === 'windows'
-                ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]
-                : [[1, 'Uno'], [2, 'Dos']];
+        const selectOptions = key === 'side_locks'
+          ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
+          : key === 'windows'
+            ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]
+            : [[1, 'Uno'], [2, 'Dos']];
         for (const [value, text] of selectOptions) {
           const option = document.createElement('option');
           option.value = value;
@@ -3673,14 +3784,13 @@
       fields.appendChild(row);
     }
     sync();
-    const appliedFace = state.dieline?.partTargetFaceId !== undefined && state.dieline?.partTargetFaceId !== null
-      ? state.dieline.faces?.find(f => String(f.id) === String(state.dieline.partTargetFaceId))
-      : null;
-    document.getElementById('part-options-status').textContent = state.dieline.partError || (appliedFace
-      ? `Aplicado en «${appliedFace.label || appliedFace.name || '#' + appliedFace.id}». Cambios en tiempo real en el plano y el 3D.`
-      : 'Cambios en tiempo real en el plano y el 3D.');
-    document.getElementById('part-options-close').onclick = () => dialog.close();
-    document.getElementById('part-options-done').onclick = () => dialog.close();
+    document.getElementById('part-options-status').textContent = formatPartStatusMessage(state.dieline, key);
+    const finishPartEdit = () => {
+      commitDraftPart();
+      dialog.close();
+    };
+    document.getElementById('part-options-close').onclick = finishPartEdit;
+    document.getElementById('part-options-done').onclick = finishPartEdit;
     if (!dialog.open) dialog.show();
   }
 
@@ -4520,7 +4630,7 @@
     ctx.restore();
   }
   function displayVectorModel(model) {
-    state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};state.partTargetFaceId=null;
+    state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};state.appliedParts=[];state.draftPart=null;state.partTargetFaceId=null;
     state.selectedFaceId=model.rootFaceId;state.hoveredFaceId=null;
     state.hingeAngles=Object.fromEntries(model.hinges.map(h=>[h.id,0]));
     if(state.artwork){

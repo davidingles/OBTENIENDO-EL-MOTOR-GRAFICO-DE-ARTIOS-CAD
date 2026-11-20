@@ -3053,6 +3053,161 @@
     return model;
   }
 
+  function getB1DoubleFlapsData(model, targetFaceId = null) {
+    if (!model || !Array.isArray(model.faces) || !Array.isArray(model.hinges)) {
+      return { isB1: false, error: 'Las solapas dobles solo se usan en cajas B1 americanas.' };
+    }
+    const bodyFaces = model.faces.filter(f => f.role === 'BODY');
+    if (bodyFaces.length < 4) {
+      return { isB1: false, error: 'Las solapas dobles solo se usan en cajas B1 americanas (con 4 solapas superiores y 4 inferiores).' };
+    }
+    const bodyIds = new Set(bodyFaces.map(f => f.id));
+    const faceById = new Map(model.faces.map(f => [f.id, f]));
+    const topFlaps = [];
+    const bottomFlaps = [];
+    const seenTop = new Set();
+    const seenBottom = new Set();
+
+    for (const h of model.hinges) {
+      if (!h.p1 || !h.p2 || Math.abs(h.p1.y - h.p2.y) > 1.5) continue;
+      const pId = h.parentFaceId ?? h.parentId;
+      const cId = h.childFaceId ?? h.childId;
+      let flapId = null;
+      if (bodyIds.has(pId) && !bodyIds.has(cId)) flapId = cId;
+      else if (bodyIds.has(cId) && !bodyIds.has(pId)) flapId = pId;
+      if (flapId === null || flapId === undefined) continue;
+      const face = faceById.get(flapId);
+      if (!face || face.role === 'GLUE_FLAP') continue;
+      const yFold = (h.p1.y + h.p2.y) * 0.5;
+      const cy = face.centroid ? face.centroid.y : (face.bounds.minY + face.bounds.maxY) * 0.5;
+      if (cy < yFold) {
+        if (!seenTop.has(face.id)) { seenTop.add(face.id); topFlaps.push({ face, yFold, side: 'top' }); }
+      } else {
+        if (!seenBottom.has(face.id)) { seenBottom.add(face.id); bottomFlaps.push({ face, yFold, side: 'bottom' }); }
+      }
+    }
+
+    if (topFlaps.length !== 4 || bottomFlaps.length !== 4) {
+      return { isB1: false, error: 'Las solapas dobles solo se usan en cajas B1 americanas (con 4 solapas superiores y 4 inferiores).' };
+    }
+
+    let side = null;
+    if (targetFaceId !== null && targetFaceId !== undefined) {
+      if (topFlaps.some(x => String(x.face.id) === String(targetFaceId))) side = 'top';
+      else if (bottomFlaps.some(x => String(x.face.id) === String(targetFaceId))) side = 'bottom';
+      else {
+        return {
+          isB1: true,
+          side: null,
+          topFlaps,
+          bottomFlaps,
+          error: 'Selecciona una solapa superior o inferior de la caja B1 americana para aplicar solapas dobles.'
+        };
+      }
+    } else {
+      side = 'top';
+    }
+
+    return {
+      isB1: true,
+      side,
+      flaps: side === 'top' ? topFlaps : bottomFlaps,
+      topFlaps,
+      bottomFlaps
+    };
+  }
+
+  function applyDoubleFlapsVariation(baseModel, params = {}, targetFaceId = null) {
+    const data = getB1DoubleFlapsData(baseModel, targetFaceId);
+    if (!data || !data.isB1 || !data.side) {
+      return { ...baseModel, partError: data?.error || 'Las solapas dobles solo se usan en cajas B1 americanas.' };
+    }
+
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces.map(f => ({
+        ...f,
+        polygon: f.polygon.map(p => ({ ...p })),
+        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+      })),
+      cutSegments: baseModel.cutSegments.map(s => ({ ...s })),
+      foldSegments: baseModel.foldSegments.map(s => ({ ...s })),
+      hinges: baseModel.hinges.map(h => ({ ...h })),
+      activePartVariation: 'double_flaps',
+      partTargetFaceId: targetFaceId ?? data.flaps[0].face.id,
+      partDoubleFlapsSide: data.side,
+      partOptions: params
+    };
+
+    const isTop = data.side === 'top';
+    const dir = isTop ? -1 : 1;
+    const clearance = Number.isFinite(Number(params.clearance)) ? Number(params.clearance) : 2;
+    const yOuter = isTop
+      ? Math.min(...data.flaps.map(x => x.face.bounds.minY))
+      : Math.max(...data.flaps.map(x => x.face.bounds.maxY));
+    const refHeight = Math.max(...data.flaps.map(x =>
+      Math.abs(x.yFold - (isTop ? x.face.bounds.minY : x.face.bounds.maxY))
+    ));
+    const delta = Math.max(0, refHeight - clearance);
+    const shiftY = dir * delta;
+    const minXSpan = Math.min(...data.flaps.map(x => x.face.bounds.minX));
+    const maxXSpan = Math.max(...data.flaps.map(x => x.face.bounds.maxX));
+
+    for (const { face: origFace, yFold } of data.flaps) {
+      const flap = model.faces.find(f => f.id === origFace.id);
+      if (!flap) continue;
+      for (const p of flap.polygon) {
+        if (isTop ? (p.y < yFold - 3) : (p.y > yFold + 3)) {
+          p.y += shiftY;
+        }
+      }
+    }
+
+    for (const s of model.cutSegments) {
+      if (s.x1 >= minXSpan - 1 && s.x1 <= maxXSpan + 1 && Math.abs(s.y1 - yOuter) < 1.5) {
+        s.y1 += shiftY;
+      }
+      if (s.x2 >= minXSpan - 1 && s.x2 <= maxXSpan + 1 && Math.abs(s.y2 - yOuter) < 1.5) {
+        s.y2 += shiftY;
+      }
+    }
+
+    const area = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) / 2;
+
+    for (const face of model.faces) {
+      const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      face.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+      face.bbox = { ...face.bounds };
+      face.points = face.polygon;
+      face.centroid = {
+        x: face.polygon.reduce((s, p) => s + p.x, 0) / face.polygon.length,
+        y: face.polygon.reduce((s, p) => s + p.y, 0) / face.polygon.length
+      };
+      face.areaMm2 = Math.abs(area(face.polygon)) - (face.holes || []).reduce((s, h) => s + Math.abs(area(h)), 0);
+      face.area = face.areaMm2;
+    }
+
+    const minX = Math.min(...model.faces.map(f => f.bounds.minX));
+    const maxX = Math.max(...model.faces.map(f => f.bounds.maxX));
+    const minY = Math.min(...model.faces.map(f => f.bounds.minY));
+    const maxY = Math.max(...model.faces.map(f => f.bounds.maxY));
+    model.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+    model.blankWidthMm = maxX - minX;
+    model.blankHeightMm = maxY - minY;
+    model.cutSegmentsMm = model.cutSegments;
+    model.foldSegmentsMm = model.foldSegments;
+    const segmentLength = s => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    model.totalCutLengthMm = model.cutSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalFoldLengthMm = model.foldSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalAreaMm2 = model.faces.reduce((s, f) => s + f.areaMm2, 0);
+    model.outsideArrowData = generateOutsideArrowData(model);
+    return model;
+  }
+
   function getPartVariationSettings(model, key, options = {}) {
     const clamp = (value, min, max, fallback) => Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : fallback));
     const limits = {}, params = {};
@@ -3071,6 +3226,11 @@
       field('distance', 10, maxDist, defDist);
       field('radius', 0, 5, 2.5);
       field('depth', 2, 8, 3.8);
+      return {params, limits};
+    }
+
+    if (key === 'double_flaps') {
+      field('clearance', 0, 10, 2);
       return {params, limits};
     }
 
@@ -3093,16 +3253,6 @@
     } else if (key === 'tab_lock') {
       field('length', 6, edge.length-8, 64);
       field('depth', 3, Math.max(3, edge.depth*0.8), 18);
-    } else if (key === 'double_flaps') {
-      params.count = Number(options.count) === 1 ? 1 : 2;
-      params.angle = Number(options.angle) === 180 ? 180 : 90;
-      const maxMargin = Math.max(0, Math.floor((edge.length - 16) * 0.25));
-      field('margin', 0, maxMargin, Math.min(2, maxMargin));
-      const usable = Math.max(8, edge.length - params.margin * 2);
-      const maxGap = Math.max(2, Math.floor(usable - 16));
-      field('gap', 2, maxGap, Math.min(maxGap, Math.max(4, usable * 0.04)));
-      const maxDepth = Math.max(10, Math.min(120, Math.max(edge.depth * 1.4, edge.length * 0.5)));
-      field('depth', 8, maxDepth, Math.min(35, Math.max(15, edge.depth * 0.65)));
     } else if (key === 'windows') {
       params.count = [1, 2, 3].includes(Number(options.count)) ? Number(options.count) : 1;
       const maxLen = Math.max(8, (edge.length - 8) / params.count - (params.count > 1 ? 4 : 0));
@@ -3129,6 +3279,10 @@
     if (partKey === 'side_locks') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
       return applySideLocksVariation(baseModel, params);
+    }
+    if (partKey === 'double_flaps') {
+      const {params} = getPartVariationSettings(baseModel, partKey, options);
+      return applyDoubleFlapsVariation(baseModel, params, options?.targetFaceId);
     }
     const allowFoldEdge = partKey === 'handle' || partKey === 'windows';
     const edge = getPartEdge(baseModel, options?.targetFaceId, { allowFoldEdge });
@@ -3209,45 +3363,6 @@
       const len=Math.hypot(b.x-a.x,b.y-a.y);
       model.hinges.push({id:hingeId,parentFaceId:flap.id,childFaceId:id,parentId:flap.id,childId:id,faceA:flap.id,faceB:id,
         p1:a,p2:b,midpoint:at(edge.length/2),length:len,lengthMm:len,defaultAngle:angle,animSteps:[{start:0.8,end:1,deltaDeg:angle}],isPartMod:true});
-    } else if(partKey==='double_flaps') {
-      const count = params.count === 1 ? 1 : 2;
-      const margin = params.margin ?? 2;
-      const gap = params.gap ?? 6;
-      const depth = params.depth ?? 25;
-      const foldMag = params.angle === 180 ? 180 : 90;
-      const usable = edge.length - margin * 2;
-      let spans;
-      if (count === 1) {
-        if (usable < 8) return {...baseModel, partError:'El borde seleccionado es demasiado corto para solapas dobles con estas medidas.'};
-        spans = [[margin, edge.length - margin]];
-      } else {
-        const eachLen = (usable - gap) / 2;
-        if (eachLen < 8) return {...baseModel, partError:'El borde seleccionado es demasiado corto para dos solapas dobles con estas medidas.'};
-        spans = [[margin, margin + eachLen], [margin + eachLen + gap, edge.length - margin]];
-      }
-      let nextId = Math.max(...model.faces.map(f=>Number(f.id)||0)) + 1;
-      for (let idx = 0; idx < spans.length; idx++) {
-        const [start, end] = spans[idx];
-        const spanLen = end - start;
-        const a = at(start), b = at(end);
-        const taper = Math.min(3, spanLen * 0.1, depth * 0.25);
-        const outer = [a, at(start + taper, -depth), at(end - taper, -depth), b];
-        removeEdgeCut(start, end);
-        addCuts(outer);
-        const id = nextId++;
-        const hingeId = 'part_dflap_' + id;
-        const polygon = positive(outer);
-        const centroid = {x:polygon.reduce((s,p)=>s+p.x,0)/polygon.length, y:polygon.reduce((s,p)=>s+p.y,0)/polygon.length};
-        const cross = (b.x - a.x) * (-(centroid.y - a.y)) - (-(b.y - a.y)) * (centroid.x - a.x);
-        const angle = cross >= 0 ? foldMag : -foldMag;
-        const label = count === 2 ? `Solapa doble ${idx + 1}` : 'Solapa doble';
-        model.faces.push({id, name:label, label, role:'FLAP_CLOSURE', polygon, holes:[], centroid, parentId:flap.id, hingeId, defaultAngle:angle});
-        model.foldSegments.push({x1:a.x, y1:a.y, x2:b.x, y2:b.y, type:'FOLD', isPartMod:true});
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        model.hinges.push({id:hingeId, parentFaceId:flap.id, childFaceId:id, parentId:flap.id, childId:id, faceA:flap.id, faceB:id,
-          p1:a, p2:b, midpoint:at((start + end) / 2), length:len, lengthMm:len, defaultAngle:angle,
-          animSteps:[{start:0.78, end:1, deltaDeg:angle}], isPartMod:true});
-      }
     } else if(partKey==='windows') {
       const count = [1, 2, 3].includes(Number(params.count)) ? Number(params.count) : 1;
       const {length:w, width:h, radius:r, distance} = params;
@@ -4082,6 +4197,7 @@
     inferFoldDimensionBands,
     enforceFlapLengthLimit,
     getSideLocksData,
+    getB1DoubleFlapsData,
     applyPartVariationToModel,
     getPartVariationSettings,
     resolvePartTargetFace,
