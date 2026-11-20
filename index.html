@@ -364,7 +364,7 @@
           <span class="drawer-title">Cambiar piezas</span>
         </div>
         <p class="parts-intro-text">
-          Variaciones experimentales: comprueba siempre la geometría 2D y 3D antes de exportar o fabricar. Pasa el cursor para resaltar la zona afectada.
+          Selecciona un área en el plano 2D o 3D y elige una pieza para aplicarla. Comprueba siempre la geometría 2D y 3D antes de exportar o fabricar.
         </p>
 
         <div class="parts-cards-grid">
@@ -464,6 +464,39 @@
             <div class="part-card-footer">
               <span class="part-card-title">Machos y hembras</span>
               <span class="info-tip-dot" title="Encastres laterales automontables con machos regulables y ranuras hembra redondeadas">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Solapas dobles -->
+          <div class="part-card" data-part-key="double_flaps">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <path d="M18 44V24h58v20M84 44V24h58v20" stroke="#009ee3" stroke-width="1.8" />
+                <path d="M22 24l3-12h46l3 12M86 24l3-12h46l3 12" stroke="#009ee3" stroke-width="1.8" />
+                <line x1="22" y1="24" x2="74" y2="24" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <line x1="86" y1="24" x2="138" y2="24" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <line x1="20" y1="42" x2="140" y2="42" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Solapas dobles</span>
+              <span class="info-tip-dot" title="Solapas articuladas dobles en el borde libre del área seleccionada">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Ventanas -->
+          <div class="part-card" data-part-key="windows">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <rect x="18" y="10" width="124" height="35" rx="3" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <rect x="38" y="16" width="84" height="23" rx="4" stroke="#009ee3" stroke-width="1.8" />
+                <line x1="48" y1="33" x2="60" y2="21" stroke="#009ee3" stroke-width="1.2" opacity="0.55" />
+                <line x1="57" y1="33" x2="66" y2="24" stroke="#009ee3" stroke-width="1.2" opacity="0.55" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Ventanas</span>
+              <span class="info-tip-dot" title="Ventana o ventanas troqueladas en el área seleccionada">ⓘ</span>
             </div>
           </div>
         </div>
@@ -639,13 +672,21 @@
           </button>
         </div>
         <div class="vector-editor-subrow">
-          <button id="tool-pick-base" class="btn-pick-base-under-vector" type="button" title="Elegir cuál es la base del troquel (apoyada en la superficie 3D)">
+          <button id="tool-pick-base" class="btn-pick-base-under-vector" type="button" title="Elegir la base del troquel para calcular las cotas (Ancho, Largo y Alto)">
             <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
               <rect x="4" y="14" width="16" height="5" rx="1"></rect>
               <path d="M12 3v8"></path>
               <polyline points="8 7 12 11 16 7"></polyline>
             </svg>
             <span>Elegir base</span>
+          </button>
+          <button id="tool-pick-support" class="btn-pick-base-under-vector btn-pick-support-under-vector" type="button" title="Seleccionar el área sobre la que se apoya y forma el troquel en 3D">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
+              <line x1="3" y1="19" x2="21" y2="19"></line>
+              <rect x="6" y="11" width="12" height="5" rx="1"></rect>
+              <path d="M12 4v5"></path>
+            </svg>
+            <span>Seleccionar apoyo</span>
           </button>
         </div>
         <div id="vector-controls" hidden>
@@ -884,6 +925,11 @@
   </dialog>
   <dialog id="art-options-dialog" class="part-options-dialog" aria-labelledby="art-options-title">
     <div class="part-options-head"><strong id="art-options-title">Imagen exterior</strong><button id="art-options-close" class="icon-btn" aria-label="Cerrar ajustes de imagen">×</button></div>
+    <label id="art-layer-row" class="art-field">Copia activa <select id="art-layer-select"></select></label>
+    <div class="art-copy-actions">
+      <button id="art-duplicate" type="button" class="btn-outline">Copiar imagen</button>
+      <button id="art-delete-copy" type="button" class="btn-outline">Eliminar</button>
+    </div>
     <label class="art-field">Aplicar a <select id="art-scope"><option value="all">Todo el troquel</option><option value="face">Cara seleccionada</option></select></label>
     <button id="art-fit" class="btn-outline">Ajustar sin deformar</button>
     <label class="art-field">Escala (%) <input id="art-scale-num" type="number" min="1" max="1000" step="1" value="100" /></label>
@@ -894,6 +940,7 @@
     <input id="art-angle" aria-label="Giro de imagen" type="range" min="-180" max="180" step="1" value="0" />
     <label><input id="art-mirror-x" type="checkbox" /> Reflejar horizontalmente</label>
     <label><input id="art-mirror-y" type="checkbox" /> Reflejar verticalmente</label>
+    <label><input id="art-multiply" type="checkbox" /> Multiplicar color (quitar blancos)</label>
     <button id="art-drag" class="btn-outline" aria-pressed="false">Mover imagen sobre el plano</button>
     <p class="part-options-status">Los cambios se ven en 2D y 3D. La imagen solo se aplica al exterior.</p>
     <button id="art-options-done" class="btn-primary-blue">Listo</button>

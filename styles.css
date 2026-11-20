@@ -1321,6 +1321,8 @@ html, body {
 #art-options-dialog > label:not(.art-field) { display:block; font-size:12px; margin:10px 0; }
 #art-drag { width:100%; margin:10px 0; justify-content:center; }
 #art-drag[aria-pressed="true"] { background:#e2f5ff; border-color:#0788c6; }
+.art-copy-actions { display:flex; gap:8px; margin:8px 0 12px; }
+.art-copy-actions > button { flex:1; justify-content:center; }
 .preview-3d-card.expanded .resize-3d-handle { display: none; }
 
 .preview-3d-card.expanded {
@@ -1751,6 +1753,8 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   margin-top: 6px;
   display: flex;
   align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .btn-pick-base-under-vector {
   display: inline-flex;
@@ -1776,6 +1780,11 @@ button:disabled { opacity: .4; cursor: not-allowed; }
   background: #e0f2fe;
   border-color: #0284c7;
   color: #0369a1;
+}
+.btn-pick-support-under-vector.active {
+  background: #fee2e2;
+  border-color: #dc2626;
+  color: #b91c1c;
 }
 
 .canvas-left-stack {

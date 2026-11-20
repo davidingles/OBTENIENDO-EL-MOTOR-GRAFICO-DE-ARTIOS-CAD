@@ -82,18 +82,19 @@ function createMockApp() {
   return { app: ctx._testApp, elements, makeEl };
 }
 
-test('pulsar Elegir base y pinchar un panel en el 2D actualiza medidas personalizadas, cotas 2D y 3D', async () => {
+test('pulsar Elegir base actualiza medidas y cotas sin cambiar el apoyo 3D; Seleccionar apoyo cambia el suelo 3D sin alterar las cotas', async () => {
   const { app, elements, makeEl } = createMockApp();
   app.initUIControls();
   app.init2DCanvasInteractions();
   app.loadSVGString(sampleTraySvg, 'bandeja.svg', true);
 
+  const initialSupportId = app.state.dieline.rootFaceId;
   assert.equal(elements.get('input-length').value, 200);
   assert.equal(elements.get('input-width').value, 100);
   assert.equal(elements.get('input-height').value, 40);
 
-  // Elegir una pared lateral (100x40) como nueva base
-  const wall = app.state.dieline.faces.find(f => f.id !== app.state.dieline.rootFaceId && Math.abs(f.bounds.width - 100) < 1);
+  // 1. Elegir una pared lateral (100x40) como nueva BASE de cotas (azul)
+  const wall = app.state.dieline.faces.find(f => f.id !== initialSupportId && Math.abs(f.bounds.width - 100) < 1);
   assert.ok(wall, 'Debe existir la pared de 100x40');
 
   elements.get('tool-pick-base').listeners.click[0]();
@@ -111,17 +112,38 @@ test('pulsar Elegir base y pinchar un panel en el 2D actualiza medidas personali
   await new Promise(r => setTimeout(r, 150));
 
   assert.equal(app.state.pickingBaseMode, false);
-  assert.equal(app.state.dieline.rootFaceId, wall.id);
+  assert.equal(app.state.dieline.dimensionBaseFaceId, wall.id);
+  assert.equal(app.state.dieline.rootFaceId, initialSupportId, 'Elegir base no debe cambiar el apoyo 3D');
   assert.equal(elements.get('input-length').value, 100);
   assert.equal(elements.get('input-width').value, 40);
   assert.equal(elements.get('input-height').value, 200);
 
-  // Verificar que en 3D la nueva base queda apoyada en el suelo (min.y ≈ 0) al plegar
+  // 2. Seleccionar otra pared (40x200) como APOYO 3D (rojo)
+  const sideWall = app.state.dieline.faces.find(f => f.id !== initialSupportId && f.id !== wall.id && Math.abs(f.bounds.height - 200) < 1);
+  assert.ok(sideWall, 'Debe existir la pared de 40x200');
+
+  elements.get('tool-pick-support').listeners.click[0]();
+  assert.equal(app.state.pickingSupportMode, true);
+
+  const tf2 = app.get2DTransform(makeEl('canvas-2d'), app.state.dieline.bounds);
+  const sx2 = tf2.toScreenX((sideWall.bounds.minX + sideWall.bounds.maxX) / 2);
+  const sy2 = tf2.toScreenY((sideWall.bounds.minY + sideWall.bounds.maxY) / 2);
+  elements.get('canvas-2d').listeners.pointerdown[0]({ button: 0, clientX: sx2, clientY: sy2 });
+  await new Promise(r => setTimeout(r, 150));
+
+  assert.equal(app.state.pickingSupportMode, false);
+  assert.equal(app.state.dieline.rootFaceId, sideWall.id, 'Seleccionar apoyo debe cambiar la cara apoyada en 3D');
+  assert.equal(app.state.dieline.dimensionBaseFaceId, wall.id, 'Seleccionar apoyo debe conservar la base de cotas');
+  assert.equal(elements.get('input-length').value, 100);
+  assert.equal(elements.get('input-width').value, 40);
+  assert.equal(elements.get('input-height').value, 200);
+
+  // Verificar que en 3D el nuevo apoyo queda apoyado en el suelo (min.y ≈ 0) al plegar
   app.setMasterFold(1);
   app.root.updateMatrixWorld(true);
-  const baseMesh = app.faceMeshMap.get(wall.id).mesh;
-  const box = new THREE.Box3().setFromObject(baseMesh);
-  assert.ok(Math.abs(box.min.y) < 1e-4, `La nueva base debe apoyar en el suelo (min.y=${box.min.y})`);
+  const supportMesh = app.faceMeshMap.get(sideWall.id).mesh;
+  const box = new THREE.Box3().setFromObject(supportMesh);
+  assert.ok(Math.abs(box.min.y) < 1e-4, `El nuevo apoyo debe apoyar en el suelo (min.y=${box.min.y})`);
 });
 
 test('establecer orden de plegado (+) crea pasos 1, 2 y controla el orden de rotación 3D', () => {

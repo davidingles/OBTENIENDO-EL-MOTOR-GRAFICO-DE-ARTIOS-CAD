@@ -107,9 +107,10 @@
     unit: 'mm',             // 'mm' | 'in'
     solverAvailable: false,
     solverPending: false,
-    activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip'
+    activePart: 'standard', // 'standard' | 'thumb_notch' | 'tab_lock' | 'handle' | 'tear_strip' | 'side_locks' | 'double_flaps' | 'windows'
     partParams: {},
-    partHoverFaceId: null,  // Para resaltar la solapa en 2D al pasar el cursor sobre la tarjeta
+    partTargetFaceId: null, // Área seleccionada a la que se aplica la pieza activa
+    partHoverFaceId: null,  // Para resaltar el área afectada en 2D al pasar el cursor sobre la tarjeta
     activeTab: 'basic',     // 'dielines' | 'basic' | 'details' | 'parts' | 'info' | 'more'
     selectedExportFormat: 'svg', // 'ai' | 'pdf' | 'dxf' | 'svg' | 'glb' | 'png'
     toolMode: 'select',     // 'select' | 'pan'
@@ -154,11 +155,14 @@
     customArtworkTex: null,
     customArtworkFlipY: false,
     artwork: null,
+    artworks: [],
+    activeArtworkIndex: -1,
     artworkEditing: false,
     hingeAngles: {},
     selectedHinges: new Set(),
     hingeSelectionMode: false,
     pickingBaseMode: false,
+    pickingSupportMode: false,
     foldOrderSteps: 0,
     activeFoldOrderStep: null,
     customFoldOrder: {},
@@ -582,13 +586,7 @@
       btn.addEventListener('click', () => {
         state.activeFoldOrderStep = state.activeFoldOrderStep === step ? null : step;
         if (state.activeFoldOrderStep) {
-          state.pickingBaseMode = false;
-          const pb = document.getElementById('tool-pick-base');
-          if (pb) {
-            pb.classList?.remove('active');
-            const sp = pb.querySelector?.('span');
-            if (sp) sp.textContent = 'Elegir base';
-          }
+          resetPickModes();
         }
         const c2d = document.getElementById('canvas-2d');
         if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
@@ -611,6 +609,23 @@
     }
   }
 
+  function resetPickModes() {
+    state.pickingBaseMode = false;
+    state.pickingSupportMode = false;
+    const pb = document.getElementById('tool-pick-base');
+    if (pb) {
+      pb.classList?.remove('active');
+      const sp = pb.querySelector?.('span');
+      if (sp) sp.textContent = 'Elegir base';
+    }
+    const ps = document.getElementById('tool-pick-support');
+    if (ps) {
+      ps.classList?.remove('active');
+      const sp = ps.querySelector?.('span');
+      if (sp) sp.textContent = 'Seleccionar apoyo';
+    }
+  }
+
   async function setBaseFace(faceId) {
     if (faceId === null || faceId === undefined || !state.baseDieline) return;
     const c2d = document.getElementById('canvas-2d');
@@ -620,26 +635,50 @@
     if (pickBaseBtn) pickBaseBtn.disabled = true;
     await new Promise(r => setTimeout(r, 16));
     try {
-      const artwork = state.artwork ? { ...state.artwork } : null;
-      const model = DielineEngine.rerootDielineModel(state.baseDieline, faceId);
-      state.pickingBaseMode = false;
-      if (pickBaseBtn) {
-        pickBaseBtn.classList.remove('active');
-        const span = pickBaseBtn.querySelector('span');
-        if (span) span.textContent = 'Elegir base';
-      }
-      applyNewDielineModel(model, state.fileName, true, state.canAddToLibrary);
+      const savedArtworks = state.artworks.length ? state.artworks.map(a => ({ ...a })) : (state.artwork ? [{ ...state.artwork }] : null);
+      const savedActiveIdx = state.activeArtworkIndex;
+      const model = DielineEngine.setDimensionBaseFace(state.baseDieline, faceId);
+      resetPickModes();
+      applyNewDielineModel(model, state.fileName, false, state.canAddToLibrary);
       syncParametricInputsUI(model);
-      if (artwork) await loadArtworkData(artwork.dataUrl, artwork);
+      if (savedArtworks && savedArtworks.length) await restoreArtworkLayers(savedArtworks, savedActiveIdx);
     } catch (error) {
       alert(error.message);
     } finally {
       document.body.style.cursor = '';
       if (c2d) {
-        c2d.style.cursor = state.pickingBaseMode ? 'crosshair' : '';
+        c2d.style.cursor = (state.pickingBaseMode || state.pickingSupportMode) ? 'crosshair' : '';
         c2d.style.pointerEvents = '';
       }
       if (pickBaseBtn) pickBaseBtn.disabled = false;
+    }
+  }
+
+  async function setSupportFace(faceId) {
+    if (faceId === null || faceId === undefined || !state.baseDieline) return;
+    const c2d = document.getElementById('canvas-2d');
+    const pickSupportBtn = document.getElementById('tool-pick-support');
+    document.body.style.cursor = 'wait';
+    if (c2d) { c2d.style.cursor = 'wait'; c2d.style.pointerEvents = 'none'; }
+    if (pickSupportBtn) pickSupportBtn.disabled = true;
+    await new Promise(r => setTimeout(r, 16));
+    try {
+      const savedArtworks = state.artworks.length ? state.artworks.map(a => ({ ...a })) : (state.artwork ? [{ ...state.artwork }] : null);
+      const savedActiveIdx = state.activeArtworkIndex;
+      const model = DielineEngine.rerootDielineModel(state.baseDieline, faceId, { keepDimensionBase: true });
+      resetPickModes();
+      applyNewDielineModel(model, state.fileName, true, state.canAddToLibrary);
+      syncParametricInputsUI(model);
+      if (savedArtworks && savedArtworks.length) await restoreArtworkLayers(savedArtworks, savedActiveIdx);
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      document.body.style.cursor = '';
+      if (c2d) {
+        c2d.style.cursor = (state.pickingBaseMode || state.pickingSupportMode) ? 'crosshair' : '';
+        c2d.style.pointerEvents = '';
+      }
+      if (pickSupportBtn) pickSupportBtn.disabled = false;
     }
   }
 
@@ -660,6 +699,7 @@
     state.symmetryLinks = {};
     state.activePart = 'standard';
     state.partParams = {};
+    state.partTargetFaceId = null;
     document.getElementById('part-options-dialog')?.close();
     document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset.partKey === 'standard'));
     state.solverAvailable = true;
@@ -855,7 +895,9 @@
     // Offsets are material-based estimates, not the original model's manufacturing rules.
     resized = {...resized, solverDimensions: {mfg: dims(mfg), inner: dims(mfg.map(v => Math.max(0, v - inside))), outer: dims(mfg.map(v => v + outside))}};
     state.parametricDieline = resized;
-    state.dieline = state.activePart === 'standard' ? resized : DielineEngine.applyPartVariationToModel(resized, state.activePart, state.partParams[state.activePart]);
+    state.dieline = state.activePart === 'standard'
+      ? resized
+      : DielineEngine.applyPartVariationToModel(resized, state.activePart, { ...(state.partParams[state.activePart] || {}), targetFaceId: state.partTargetFaceId ?? getEffectivePartTargetFaceId() });
     state.solverAvailable = true;
     state.solverPending = false;
     document.getElementById('param-sync-status').textContent = resized.dimensionErrors?.length
@@ -1050,24 +1092,26 @@
       const y3d = -y;
       const crush = evaluateCreaseCrushField(x, y, faceHingeData, creaseW, crushDepth);
 
-      const zInner = +halfT * crush.scaleZ;
-      const zOuter = -halfT * crush.scaleZ;
+      // Exterior (+Z) coincide con la cara impresa visible en el plano 2D (sin espejar)
+      // Interior (-Z) es la cara interna hacia la que pliegan las paredes
+      const zOuter = +halfT * crush.scaleZ;
+      const zInner = -halfT * crush.scaleZ;
 
       // Como x3d = x, y3d = -y:
-      // dzInner/dx3d = +halfT * gradX ; dzInner/dy3d = -halfT * gradY
-      const dzIdx = halfT * crush.gradX;
-      const dzIdy = -halfT * crush.gradY;
+      // dzOuter/dx3d = +halfT * gradX ; dzOuter/dy3d = -halfT * gradY
+      const dzOdx = halfT * crush.gradX;
+      const dzOdy = -halfT * crush.gradY;
 
-      // Normal unitaria de la cara interior (+Z) inclinada hacia el canal chafado
-      const lenI = Math.hypot(dzIdx, dzIdy, 1.0);
-      const nIx = -dzIdx / lenI;
-      const nIy = -dzIdy / lenI;
-      const nIz = 1.0 / lenI;
+      // Normal unitaria de la cara exterior (+Z) inclinada hacia el canal chafado
+      const lenO = Math.hypot(dzOdx, dzOdy, 1.0);
+      const nOx = -dzOdx / lenO;
+      const nOy = -dzOdy / lenO;
+      const nOz = 1.0 / lenO;
 
-      // Normal unitaria de la cara exterior (-Z) inclinada simétricamente hacia el canal chafado
-      const nOx = -dzIdx / lenI;
-      const nOy = -dzIdy / lenI;
-      const nOz = -1.0 / lenI;
+      // Normal unitaria de la cara interior (-Z) inclinada simétricamente hacia el canal chafado
+      const nIx = -dzOdx / lenO;
+      const nIy = -dzOdy / lenO;
+      const nIz = -1.0 / lenO;
 
       // UVs Cara Exterior e Interior
       let uOut, vOut;
@@ -1102,22 +1146,22 @@
 
       // Al transformar de 2D SVG (CW, área > 0) a 3D (x3d = x, y3d = -y), el polígono queda en sentido horario (CW) visto desde +Z.
       // Por tanto, para que la orientación de caras (Face Orientation / Front-Face CCW) sea 100% exterior:
-      // - Cara Exterior (Grupo 0, normal hacia -Z): orden (v0, v1, v2) -> producto vectorial hacia -Z (visible desde fuera).
-      // - Cara Interior (Grupo 1, normal hacia +Z): orden (v0, v2, v1) -> producto vectorial hacia +Z (visible desde dentro).
+      // - Cara Exterior (Grupo 0, normal hacia +Z, cara impresa 2D): orden (v0, v2, v1) -> producto vectorial hacia +Z.
+      // - Cara Interior (Grupo 1, normal hacia -Z): orden (v0, v1, v2) -> producto vectorial hacia -Z.
       const v0 = vList[0];
       for (let i = 1; i < vList.length - 1; i++) {
         const v1 = vList[i];
         const v2 = vList[i + 1];
 
-        // Cara Exterior (Grupo 0, mira hacia -Z, orientación CCW vista desde fuera)
+        // Cara Exterior (Grupo 0, mira hacia +Z, orientación CCW vista desde fuera)
         pushVertex(0, v0.x3d, v0.y3d, v0.zOuter, v0.nOx, v0.nOy, v0.nOz, v0.uOut, v0.vOut, v0.shade);
-        pushVertex(0, v1.x3d, v1.y3d, v1.zOuter, v1.nOx, v1.nOy, v1.nOz, v1.uOut, v1.vOut, v1.shade);
         pushVertex(0, v2.x3d, v2.y3d, v2.zOuter, v2.nOx, v2.nOy, v2.nOz, v2.uOut, v2.vOut, v2.shade);
+        pushVertex(0, v1.x3d, v1.y3d, v1.zOuter, v1.nOx, v1.nOy, v1.nOz, v1.uOut, v1.vOut, v1.shade);
 
-        // Cara Interior (Grupo 1, mira hacia +Z, orientación CCW vista desde dentro)
+        // Cara Interior (Grupo 1, mira hacia -Z, orientación CCW vista desde dentro)
         pushVertex(1, v0.x3d, v0.y3d, v0.zInner, v0.nIx, v0.nIy, v0.nIz, v0.uIn, v0.vIn, v0.shade);
-        pushVertex(1, v2.x3d, v2.y3d, v2.zInner, v2.nIx, v2.nIy, v2.nIz, v2.uIn, v2.vIn, v2.shade);
         pushVertex(1, v1.x3d, v1.y3d, v1.zInner, v1.nIx, v1.nIy, v1.nIz, v1.uIn, v1.vIn, v1.shade);
+        pushVertex(1, v2.x3d, v2.y3d, v2.zInner, v2.nIx, v2.nIy, v2.nIz, v2.uIn, v2.vIn, v2.shade);
       }
     }
 
@@ -1169,13 +1213,14 @@
         const vTop = 0.94;
 
         // Dos triángulos con orientación CCW vista desde fuera del canto (normal = enX, enY, 0)
-        pushVertex(2, e0.x3d, e0.y3d, e0.zOuter, enX, enY, 0, u0, vBot, e0.shade);
-        pushVertex(2, e0.x3d, e0.y3d, e0.zInner, enX, enY, 0, u0, vTop, e0.shade);
-        pushVertex(2, e1.x3d, e1.y3d, e1.zInner, enX, enY, 0, u1, vTop, e1.shade);
+        // Como ahora zInner (-Z) < zOuter (+Z), avanzamos de zInner a zOuter para conservar la normal exterior
+        pushVertex(2, e0.x3d, e0.y3d, e0.zInner, enX, enY, 0, u0, vBot, e0.shade);
+        pushVertex(2, e0.x3d, e0.y3d, e0.zOuter, enX, enY, 0, u0, vTop, e0.shade);
+        pushVertex(2, e1.x3d, e1.y3d, e1.zOuter, enX, enY, 0, u1, vTop, e1.shade);
 
-        pushVertex(2, e0.x3d, e0.y3d, e0.zOuter, enX, enY, 0, u0, vBot, e0.shade);
-        pushVertex(2, e1.x3d, e1.y3d, e1.zInner, enX, enY, 0, u1, vTop, e1.shade);
-        pushVertex(2, e1.x3d, e1.y3d, e1.zOuter, enX, enY, 0, u1, vBot, e1.shade);
+        pushVertex(2, e0.x3d, e0.y3d, e0.zInner, enX, enY, 0, u0, vBot, e0.shade);
+        pushVertex(2, e1.x3d, e1.y3d, e1.zOuter, enX, enY, 0, u1, vTop, e1.shade);
+        pushVertex(2, e1.x3d, e1.y3d, e1.zInner, enX, enY, 0, u1, vBot, e1.shade);
       }
 
       perimeterRunMM += segLen;
@@ -1500,13 +1545,14 @@
       const rad = THREE.MathUtils.degToRad(deg);
 
       // Rotación pura alrededor del eje de la línea roja en el centro exacto del espesor (z = 0)
+      // Sentido invertido (-rad) para plegar hacia el interior (-Z) manteniendo el exterior (+Z) sin espejar
       pivotGroup.position.copy(basePos);
-      pivotGroup.setRotationFromAxisAngle(axis3d, rad);
+      pivotGroup.setRotationFromAxisAngle(axis3d, -rad);
     }
 
-    // The root is the same base panel identified in 2D. Its interior (+Z)
-    // faces up (+Y); folding never changes this panel's contact with the floor.
-    dielineRootGroup.rotation.set(-Math.PI / 2, 0, 0);
+    // The root is the support panel ("apoyo") identified in 2D. Its exterior (+Z)
+    // faces down (-Y) onto the floor and its interior (-Z) faces up (+Y).
+    dielineRootGroup.rotation.set(Math.PI / 2, 0, 0);
     dielineRootGroup.position.set(0, 0, 0);
 
     dielineRootGroup.updateMatrixWorld(true);
@@ -1583,7 +1629,7 @@
       for (let k = 0; k <= numSamples; k++) {
         const progress = k / numSamples;
         const deg = computeHingeAngleAtProgress(hinge, childFace, progress, 'phased');
-        qTemp.setFromAxisAngle(axis3d, THREE.MathUtils.degToRad(deg));
+        qTemp.setFromAxisAngle(axis3d, -THREE.MathUtils.degToRad(deg));
         quatValuesFold[k * 4 + 0] = qTemp.x;
         quatValuesFold[k * 4 + 1] = qTemp.y;
         quatValuesFold[k * 4 + 2] = qTemp.z;
@@ -1606,7 +1652,7 @@
           progress = Math.max(0, 1.0 - (tSec - 5.0) / 4.0);
         }
         const deg = computeHingeAngleAtProgress(hinge, childFace, progress, 'phased');
-        qTemp.setFromAxisAngle(axis3d, THREE.MathUtils.degToRad(deg));
+        qTemp.setFromAxisAngle(axis3d, -THREE.MathUtils.degToRad(deg));
         quatValuesCycle[k * 4 + 0] = qTemp.x;
         quatValuesCycle[k * 4 + 1] = qTemp.y;
         quatValuesCycle[k * 4 + 2] = qTemp.z;
@@ -1736,7 +1782,7 @@
     root.bind(new THREE.Skeleton(bones));
     for (const data of pivots) {
       const angle = Math.max(-90, Math.min(90, state.hingeAngles[data.hinge.id] || 0));
-      boneByPivot.get(data.object).setRotationFromAxisAngle(data.axis3d, THREE.MathUtils.degToRad(angle));
+      boneByPivot.get(data.object).setRotationFromAxisAngle(data.axis3d, -THREE.MathUtils.degToRad(angle));
     }
     root.updateMatrixWorld(true);
     root.skeleton.update();
@@ -2042,6 +2088,13 @@
         }
         return;
       }
+      if (state.pickingSupportMode && e.button === 0) {
+        const hitFace = hitTest2DCanvas(e);
+        if (hitFace) {
+          setSupportFace(hitFace.id);
+        }
+        return;
+      }
       if (state.pickingDimensionArea && e.button === 0) {
         const hitFace = hitTest2DCanvas(e);
         if (hitFace) {
@@ -2100,7 +2153,17 @@
       if (state.artwork && state.artworkEditing && state.toolMode !== 'pan' && e.button === 0 && !e.shiftKey) {
         const tf = get2DTransform(canvas, state.dieline.bounds), rect = canvas.getBoundingClientRect();
         const ratio = canvas.width/rect.width;
-        artworkDrag = {x:tf.toWorldX((e.clientX-rect.left)*ratio), y:tf.toWorldY((e.clientY-rect.top)*ratio), centerX:state.artwork.centerX,centerY:state.artwork.centerY};
+        const wx = tf.toWorldX((e.clientX-rect.left)*ratio), wy = tf.toWorldY((e.clientY-rect.top)*ratio);
+        if (state.artworks.length > 1) {
+          for (let i = state.artworks.length - 1; i >= 0; i--) {
+            const uv = ArtworkLayout.imageUV({ x: wx, y: wy }, state.artworks[i]);
+            if (uv.u >= 0 && uv.u <= 1 && uv.v >= 0 && uv.v <= 1) {
+              setActiveArtworkIndex(i);
+              break;
+            }
+          }
+        }
+        artworkDrag = {x:wx, y:wy, centerX:state.artwork.centerX,centerY:state.artwork.centerY};
         e.preventDefault();return;
       }
       const rawP = vectorWorldPoint(e, canvas);
@@ -2382,8 +2445,12 @@
 
     // 1. Rellenar caras detectadas del troquel
     if (state.view2D.showFaces) {
+      const dimBaseFaceId = model.dimensionBaseFaceId ?? model.rootFaceId;
+      const supportFaceId = model.rootFaceId;
       for (const face of model.faces) {
         const isSelected = face.id === state.selectedFaceId;
+        const isDimBase = face.id === dimBaseFaceId;
+        const isSupport = face.id === supportFaceId;
 
         ctx.beginPath();
         face.polygon.forEach((p, idx) => {
@@ -2404,8 +2471,14 @@
 
         if (face.id === state.partHoverFaceId) {
           ctx.fillStyle = 'rgba(56, 189, 248, 0.45)'; // Resaltado azul celeste intenso de la pestaña Parts
+        } else if (isDimBase && isSupport) {
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.24)'; // Base (azul suave) + Apoyo (borde rojo suave)
+        } else if (isSupport) {
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.22)'; // Apoyo 3D (rojo suave)
+        } else if (isDimBase) {
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.24)'; // Base de cotas (azul suave)
         } else if (isSelected) {
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.28)';
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
         } else if (face.role === 'BODY') {
           ctx.fillStyle = 'rgba(198, 156, 109, 0.16)';
         } else if (face.role === 'GLUE_FLAP') {
@@ -2414,6 +2487,16 @@
           ctx.fillStyle = 'rgba(198, 156, 109, 0.10)';
         }
         ctx.fill('evenodd');
+
+        // Si la misma cara es Base (azul) y Apoyo (rojo), pintamos un contorno interior rojo suave
+        if (isDimBase && isSupport) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+          ctx.lineWidth = Math.max(2, 2.2 * dpr);
+          ctx.setLineDash([6 * dpr, 4 * dpr]);
+          ctx.stroke();
+          ctx.restore();
+        }
       }
     }
 
@@ -3020,8 +3103,9 @@
         partCards.forEach(c => c.classList.remove('active'));
         card.classList.add('active');
         state.activePart = partKey;
+        state.partTargetFaceId = partKey === 'standard' ? null : getEffectivePartTargetFaceId();
         applyCurrentPartVariation();
-        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks'].includes(partKey)) openPartOptions(partKey);
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows'].includes(partKey)) openPartOptions(partKey);
       });
 
       card.addEventListener('mouseenter', () => {
@@ -3032,10 +3116,12 @@
               state.partHoverFaceId = data.hl.id;
               render2FDieline();
             }
-          } else if (DielineEngine.findPrimaryLidFlapFace) {
-            const flap = DielineEngine.findPrimaryLidFlapFace(state.dieline);
-            if (flap) {
-              state.partHoverFaceId = flap.id;
+          } else {
+            const targetId = getEffectivePartTargetFaceId();
+            const face = (targetId !== null && state.dieline.faces.find(f => String(f.id) === String(targetId)))
+              || (DielineEngine.findPrimaryLidFlapFace ? DielineEngine.findPrimaryLidFlapFace(state.dieline) : null);
+            if (face) {
+              state.partHoverFaceId = face.id;
               render2FDieline();
             }
           }
@@ -3238,7 +3324,9 @@
     });
 
     document.getElementById('tool-pick-base')?.addEventListener('click', () => {
-      state.pickingBaseMode = !state.pickingBaseMode;
+      const next = !state.pickingBaseMode;
+      resetPickModes();
+      state.pickingBaseMode = next;
       if (state.pickingBaseMode) {
         state.activeFoldOrderStep = null;
         renderFoldOrderUI();
@@ -3253,16 +3341,28 @@
       if (c2d) c2d.style.cursor = state.pickingBaseMode ? 'crosshair' : '';
     });
 
+    document.getElementById('tool-pick-support')?.addEventListener('click', () => {
+      const next = !state.pickingSupportMode;
+      resetPickModes();
+      state.pickingSupportMode = next;
+      if (state.pickingSupportMode) {
+        state.activeFoldOrderStep = null;
+        renderFoldOrderUI();
+      }
+      const pickSupportBtn = document.getElementById('tool-pick-support');
+      if (pickSupportBtn) {
+        pickSupportBtn.classList.toggle('active', state.pickingSupportMode);
+        const span = pickSupportBtn.querySelector('span');
+        if (span) span.textContent = state.pickingSupportMode ? 'Pincha en el apoyo...' : 'Seleccionar apoyo';
+      }
+      const c2d = document.getElementById('canvas-2d');
+      if (c2d) c2d.style.cursor = state.pickingSupportMode ? 'crosshair' : '';
+    });
+
     document.getElementById('btn-add-fold-step')?.addEventListener('click', () => {
       state.foldOrderSteps = (state.foldOrderSteps || 0) + 1;
       state.activeFoldOrderStep = state.foldOrderSteps;
-      state.pickingBaseMode = false;
-      const pb = document.getElementById('tool-pick-base');
-      if (pb) {
-        pb.classList?.remove('active');
-        const sp = pb.querySelector?.('span');
-        if (sp) sp.textContent = 'Elegir base';
-      }
+      resetPickModes();
       const c2d = document.getElementById('canvas-2d');
       if (c2d) c2d.style.cursor = 'crosshair';
       renderFoldOrderUI();
@@ -3440,14 +3540,40 @@
     });
   }
 
+  function getEffectivePartTargetFaceId() {
+    const baseFaces = state.parametricDieline?.faces || state.dieline?.faces || [];
+    if (state.selectedFaceId !== null && state.selectedFaceId !== undefined) {
+      if (baseFaces.some(f => String(f.id) === String(state.selectedFaceId))) {
+        return state.selectedFaceId;
+      }
+      const curFace = state.dieline?.faces?.find(f => String(f.id) === String(state.selectedFaceId));
+      if (curFace && curFace.parentId !== undefined && curFace.parentId !== null && baseFaces.some(f => String(f.id) === String(curFace.parentId))) {
+        return curFace.parentId;
+      }
+    }
+    if (state.partTargetFaceId !== null && state.partTargetFaceId !== undefined && baseFaces.some(f => String(f.id) === String(state.partTargetFaceId))) {
+      return state.partTargetFaceId;
+    }
+    return null;
+  }
+
   function applyCurrentPartVariation() {
     if (!state.parametricDieline || !DielineEngine.applyPartVariationToModel) return;
     recordUndoState();
-    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart, state.partParams[state.activePart]);
+    const targetFaceId = state.activePart === 'standard' ? null : (state.partTargetFaceId ?? getEffectivePartTargetFaceId());
+    const opts = { ...(state.partParams[state.activePart] || {}), targetFaceId };
+    const modified = DielineEngine.applyPartVariationToModel(state.parametricDieline, state.activePart, opts);
     if (modified) {
       state.dieline = modified;
       const status = document.getElementById('part-options-status');
-      if (status) status.textContent = modified.partError || 'Cambios en tiempo real en el plano y el 3D.';
+      if (status) {
+        const appliedFace = modified.partTargetFaceId !== undefined && modified.partTargetFaceId !== null
+          ? modified.faces?.find(f => String(f.id) === String(modified.partTargetFaceId))
+          : null;
+        status.textContent = modified.partError || (appliedFace
+          ? `Aplicado en «${appliedFace.label || appliedFace.name || '#' + appliedFace.id}». Cambios en tiempo real en el plano y el 3D.`
+          : 'Cambios en tiempo real en el plano y el 3D.');
+      }
       rebuild3DMesh();
       setMasterFold(state.masterFold);
       render2FDieline();
@@ -3460,14 +3586,22 @@
     const fields = document.getElementById('part-options-fields');
     if (!dialog || !fields || !state.parametricDieline) return;
     fields.replaceChildren();
-    const titles = {handle:'Asa', thumb_notch:'Uñero', tab_lock:'Pestaña de cierre', side_locks:'Machos y hembras'};
+    const titles = {
+      handle: 'Asa',
+      thumb_notch: 'Uñero',
+      tab_lock: 'Pestaña de cierre',
+      side_locks: 'Machos y hembras',
+      double_flaps: 'Solapas dobles',
+      windows: 'Ventanas'
+    };
     document.getElementById('part-options-title').textContent = titles[key] || 'Variación de pieza';
     const controls = new Map();
     if (!state.partParams[key]) state.partParams[key] = {};
-    let settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, state.partParams[key]);
+    const targetFaceId = state.partTargetFaceId ?? getEffectivePartTargetFaceId();
+    let settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, { ...state.partParams[key], targetFaceId });
     state.partParams[key] = {...settings.params};
     const sync = () => {
-      settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, state.partParams[key]);
+      settings = DielineEngine.getPartVariationSettings(state.parametricDieline, key, { ...state.partParams[key], targetFaceId });
       state.partParams[key] = {...settings.params};
       for (const [name, control] of controls) {
         const limit = settings.limits[name];
@@ -3482,7 +3616,7 @@
         } else if (control.number) {
           control.number.value = settings.params[name];
         }
-        control.row.hidden = name === 'distance' && Number(settings.params.count) < 2;
+        control.row.hidden = (name === 'distance' || name === 'gap') && Number(settings.params.count) < 2;
       }
     };
     const change = (name, value) => {
@@ -3499,23 +3633,33 @@
         ? [['count','Número de uñeros'],['radius','Radio del uñero (mm)'],['distance','Distancia entre centros (mm)']]
         : key === 'side_locks'
           ? [['count','Número de encastres'],['length','Largo del macho / hembra (mm)'],['distance','Distancia entre centros (mm)'],['radius','Radio de las esquinas (mm)'],['depth','Saliente del macho (mm)']]
-          : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
+          : key === 'double_flaps'
+            ? [['count','Número de solapas'],['depth','Fondo de solapa (mm)'],['gap','Separación central (mm)'],['margin','Margen lateral (mm)'],['angle','Ángulo de plegado']]
+            : key === 'windows'
+              ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)']]
+              : [['length','Ancho de la pestaña (mm)'],['depth','Fondo de la pestaña (mm)']];
     for (const [name, label] of definitions) {
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;
       let number, slider;
-      if (name === 'count') {
+      if (name === 'count' || name === 'angle') {
         number = document.createElement('select');
-        const countOptions = key === 'side_locks'
-          ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
-          : [[1, 'Uno'], [2, 'Dos']];
-        for (const [value, text] of countOptions) {
+        const selectOptions = name === 'angle'
+          ? [[90, '90°'], [180, '180° (doble pared)']]
+          : key === 'side_locks'
+            ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
+            : key === 'double_flaps'
+              ? [[2, 'Dos solapas'], [1, 'Una continua']]
+              : key === 'windows'
+                ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]
+                : [[1, 'Uno'], [2, 'Dos']];
+        for (const [value, text] of selectOptions) {
           const option = document.createElement('option');
           option.value = value;
           option.textContent = text;
           number.appendChild(option);
         }
-        number.value = settings.params.count || countOptions[0][0];
+        number.value = settings.params[name] ?? selectOptions[0][0];
         number.addEventListener('change', () => change(name, number.value));
         row.append(title, number);
       } else {
@@ -3529,7 +3673,12 @@
       fields.appendChild(row);
     }
     sync();
-    document.getElementById('part-options-status').textContent = state.dieline.partError || 'Cambios en tiempo real en el plano y el 3D.';
+    const appliedFace = state.dieline?.partTargetFaceId !== undefined && state.dieline?.partTargetFaceId !== null
+      ? state.dieline.faces?.find(f => String(f.id) === String(state.dieline.partTargetFaceId))
+      : null;
+    document.getElementById('part-options-status').textContent = state.dieline.partError || (appliedFace
+      ? `Aplicado en «${appliedFace.label || appliedFace.name || '#' + appliedFace.id}». Cambios en tiempo real en el plano y el 3D.`
+      : 'Cambios en tiempo real en el plano y el 3D.');
     document.getElementById('part-options-close').onclick = () => dialog.close();
     document.getElementById('part-options-done').onclick = () => dialog.close();
     if (!dialog.open) dialog.show();
@@ -4371,7 +4520,7 @@
     ctx.restore();
   }
   function displayVectorModel(model) {
-    state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};
+    state.dieline=model;state.baseDieline=vectorClone(model);state.parametricDieline=model;state.activePart='standard';state.partParams={};state.partTargetFaceId=null;
     state.selectedFaceId=model.rootFaceId;state.hoveredFaceId=null;
     state.hingeAngles=Object.fromEntries(model.hinges.map(h=>[h.id,0]));
     if(state.artwork){
@@ -5073,12 +5222,12 @@
           const t=Math.max(0,Math.min(1,(0.94-step.start)/Math.max(0.00001,step.end-step.start)));
           return sum+step.deltaDeg*t*t*(3-2*t);
         },0);
-        pivot.setRotationFromAxisAngle(p2.sub(p1).normalize(),THREE.MathUtils.degToRad(degrees));
+        pivot.setRotationFromAxisAngle(p2.sub(p1).normalize(),-THREE.MathUtils.degToRad(degrees));
       }
     };
     const base=byId.get(model.rootFaceId);
     build(model.rootFaceId,root,new THREE.Vector3(base.centroid.x,-base.centroid.y,0));
-    root.rotation.x=-Math.PI/2;root.updateMatrixWorld(true);
+    root.rotation.x=Math.PI/2;root.updateMatrixWorld(true);
     if(baseMesh) root.position.y=-new THREE.Box3().setFromObject(baseMesh).min.y;
     root.updateMatrixWorld(true);
     return root;
@@ -5433,8 +5582,22 @@
   }
 
   let artworkImage=null,artworkCanvas=null,artworkTextureCanvas=null,artworkDrag=null,artworkFrame=0;
+  const artworkImageCache=new Map();
+  let nextArtworkLayerId=1;
+  function getArtworkList(){
+    if(state.artworks&&state.artworks.length)return state.artworks;
+    return state.artwork?[state.artwork]:[];
+  }
+  function setActiveArtworkIndex(index){
+    if(!state.artworks.length){state.activeArtworkIndex=-1;state.artwork=null;artworkImage=null;return;}
+    const clamped=Math.max(0,Math.min(state.artworks.length-1,index));
+    state.activeArtworkIndex=clamped;
+    state.artwork=state.artworks[clamped];
+    artworkImage=artworkImageCache.get(state.artwork.dataUrl)||artworkImage;
+    syncArtworkControls();
+  }
   function clearArtwork(){
-    state.artwork=null;state.artworkEditing=false;artworkImage=null;artworkCanvas=null;artworkTextureCanvas=null;
+    state.artwork=null;state.artworks=[];state.activeArtworkIndex=-1;state.artworkEditing=false;artworkImage=null;artworkCanvas=null;artworkTextureCanvas=null;
     state.customArtworkTex?.dispose();state.customArtworkTex=null;
     document.getElementById('btn-art-settings')?.classList.add('hidden');
     document.getElementById('art-options-dialog')?.close();
@@ -5449,28 +5612,48 @@
     state.artwork.baseWidth=state.artwork.width;state.artwork.baseHeight=state.artwork.height;
     syncArtworkControls();scheduleArtworkRefresh();
   }
-  function refreshArtworkAtlas(model){
-    if(!model||!state.artwork||!artworkImage)return;
-    const bounds=model.bounds,ratio=Math.min(2048/Math.max(bounds.width,bounds.height),8);
-    const width=Math.max(1,Math.round(bounds.width*ratio)),height=Math.max(1,Math.round(bounds.height*ratio));
-    artworkCanvas=artworkCanvas||document.createElement('canvas');artworkTextureCanvas=artworkTextureCanvas||document.createElement('canvas');
-    for(const canvas of [artworkCanvas,artworkTextureCanvas]){canvas.width=width;canvas.height=height;}
-    const ctx=artworkCanvas.getContext('2d');ctx.setTransform(width/bounds.width,0,0,height/bounds.height,-bounds.minX*width/bounds.width,-bounds.minY*height/bounds.height);
+  function drawArtworkLayerOnWorldCtx(ctx,layout,img,model,onlyFaceId=null){
+    if(!layout||!img)return;
+    if(onlyFaceId!==null&&layout.scope==='face'&&layout.faceId!==onlyFaceId)return;
     ctx.save();
-    if(state.artwork.scope==='face'){
-      const face=model.faces.find(f=>f.id===state.artwork.faceId);
+    if(onlyFaceId===null&&layout.scope==='face'){
+      const face=model.faces.find(f=>f.id===layout.faceId);
       ctx.beginPath();
       if(face)for(const ring of [face.polygon,...(face.holes||[])]){ring.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();}
       ctx.clip('evenodd');
     }
-    const layout=state.artwork;
-    ctx.translate(layout.centerX,layout.centerY);ctx.rotate(layout.rotation*Math.PI/180);ctx.scale(layout.mirrorX?-1:1,layout.mirrorY?-1:1);
-    ctx.globalAlpha=layout.opacity??1;ctx.drawImage(artworkImage,-layout.width/2,-layout.height/2,layout.width,layout.height);ctx.restore();
-    const textureCtx = artworkTextureCanvas.getContext('2d'), board = resolveMaterialFinish(state.boardId);
-    textureCtx.fillStyle = '#' + board.colorHex.toString(16).padStart(6, '0');
-    textureCtx.fillRect(0, 0, width, height);
-    // Color liso de fondo sin texturas de cartón repetitivas; solo la imagen del arte encima
-    textureCtx.drawImage(artworkCanvas, 0, 0);
+    ctx.globalCompositeOperation=layout.blendMode==='multiply'?'multiply':'source-over';
+    ctx.translate(layout.centerX,layout.centerY);ctx.rotate((layout.rotation||0)*Math.PI/180);ctx.scale(layout.mirrorX?-1:1,layout.mirrorY?-1:1);
+    ctx.globalAlpha=layout.opacity??1;
+    ctx.drawImage(img,-layout.width/2,-layout.height/2,layout.width,layout.height);
+    ctx.restore();
+  }
+  function refreshArtworkAtlas(model){
+    const layers=getArtworkList();
+    if(!model||!layers.length)return;
+    const bounds=model.bounds,ratio=Math.min(2048/Math.max(bounds.width,bounds.height),8);
+    const width=Math.max(1,Math.round(bounds.width*ratio)),height=Math.max(1,Math.round(bounds.height*ratio));
+    artworkCanvas=artworkCanvas||document.createElement('canvas');artworkTextureCanvas=artworkTextureCanvas||document.createElement('canvas');
+    for(const canvas of [artworkCanvas,artworkTextureCanvas]){canvas.width=width;canvas.height=height;}
+    const sx=width/bounds.width,sy=height/bounds.height,tx=-bounds.minX*sx,ty=-bounds.minY*sy;
+    const ctx=artworkCanvas.getContext('2d');
+    ctx.setTransform(sx,0,0,sy,tx,ty);
+    for(const layer of layers){
+      const img=artworkImageCache.get(layer.dataUrl)||artworkImage;
+      drawArtworkLayerOnWorldCtx(ctx,layer,img,model,null);
+    }
+    const textureCtx=artworkTextureCanvas.getContext('2d'), board=resolveMaterialFinish(state.boardId);
+    textureCtx.setTransform(1,0,0,1,0,0);
+    textureCtx.globalCompositeOperation='source-over';
+    textureCtx.fillStyle='#'+board.colorHex.toString(16).padStart(6,'0');
+    textureCtx.fillRect(0,0,width,height);
+    // Componer cada capa directamente sobre el cartón para que 'multiply' funda los blancos con el color del cartón
+    textureCtx.setTransform(sx,0,0,sy,tx,ty);
+    for(const layer of layers){
+      const img=artworkImageCache.get(layer.dataUrl)||artworkImage;
+      drawArtworkLayerOnWorldCtx(textureCtx,layer,img,model,null);
+    }
+    textureCtx.setTransform(1,0,0,1,0,0);
     if(!state.customArtworkTex){
       state.customArtworkTex=new THREE.CanvasTexture(artworkTextureCanvas);
       state.customArtworkTex.encoding=THREE.sRGBEncoding;
@@ -5480,28 +5663,91 @@
     state.customArtworkTex.image=artworkTextureCanvas;state.customArtworkTex.needsUpdate=true;
   }
   function drawArtwork2D(ctx,tf,model){
-    if(!artworkCanvas||!state.artwork)return;
+    const layers=getArtworkList();
+    if(!layers.length)return;
     for(const face of model.faces){
       ctx.save();ctx.beginPath();
       for(const ring of [face.polygon,...(face.holes||[])]){ring.forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y)));ctx.closePath();}
-      ctx.clip('evenodd');ctx.drawImage(artworkCanvas,tf.toScreenX(model.bounds.minX),tf.toScreenY(model.bounds.minY),model.bounds.width*tf.scale,model.bounds.height*tf.scale);ctx.restore();
+      ctx.clip('evenodd');
+      ctx.save();
+      ctx.translate(tf.toScreenX(0),tf.toScreenY(0));
+      ctx.scale(tf.scale,tf.scale);
+      for(const layer of layers){
+        const img=artworkImageCache.get(layer.dataUrl)||artworkImage;
+        drawArtworkLayerOnWorldCtx(ctx,layer,img,model,face.id);
+      }
+      ctx.restore();
+      ctx.restore();
     }
     if(state.artworkEditing){
-      ctx.save();ctx.setLineDash([5,4]);ctx.lineWidth=1.5;ctx.strokeStyle='#0788c6';ctx.beginPath();
-      ArtworkLayout.corners(state.artwork).forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y)));ctx.closePath();ctx.stroke();ctx.restore();
+      for(const layer of layers){
+        const isActive=layer===state.artwork;
+        ctx.save();ctx.setLineDash([5,4]);ctx.lineWidth=isActive?1.8:1.1;ctx.strokeStyle=isActive?'#0788c6':'rgba(7,136,198,0.45)';ctx.beginPath();
+        ArtworkLayout.corners(layer).forEach((p,i)=>i?ctx.lineTo(tf.toScreenX(p.x),tf.toScreenY(p.y)):ctx.moveTo(tf.toScreenX(p.x),tf.toScreenY(p.y)));ctx.closePath();ctx.stroke();ctx.restore();
+      }
     }
   }
   function scheduleArtworkRefresh(){
     if(!artworkFrame)artworkFrame=requestAnimationFrame(()=>{artworkFrame=0;refreshArtworkAtlas(state.dieline);render2FDieline();});
   }
-  async function loadArtworkData(dataUrl,saved=null){
+  async function loadImageFromDataUrl(dataUrl){
+    if(artworkImageCache.has(dataUrl))return artworkImageCache.get(dataUrl);
     const image=await new Promise((resolve,reject)=>{const img=new Image();img.onload=()=>resolve(img);img.onerror=()=>reject(new Error('No se pudo leer la imagen.'));img.src=dataUrl;});
+    artworkImageCache.set(dataUrl,image);
+    return image;
+  }
+  async function loadArtworkData(dataUrl,saved=null){
+    const image=await loadImageFromDataUrl(dataUrl);
     if(!state.dieline)throw new Error('Abre primero un troquel.');
     artworkImage=image;
     const fit=ArtworkLayout.fit(state.dieline.bounds,image.naturalWidth,image.naturalHeight);
-    state.artwork=saved?{...saved,dataUrl}:{...fit,dataUrl,scope:'all',faceId:state.selectedFaceId,baseWidth:fit.width,baseHeight:fit.height};
+    const layer=saved
+      ? {...saved,dataUrl,id:saved.id||nextArtworkLayerId++,blendMode:saved.blendMode||'normal'}
+      : {...fit,id:nextArtworkLayerId++,dataUrl,scope:'all',faceId:state.selectedFaceId,baseWidth:fit.width,baseHeight:fit.height,blendMode:'normal'};
+    state.artworks=[layer];
+    state.activeArtworkIndex=0;
+    state.artwork=layer;
     refreshArtworkAtlas(state.dieline);rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();
-    document.getElementById('btn-art-settings').classList.remove('hidden');
+    document.getElementById('btn-art-settings')?.classList.remove('hidden');
+  }
+  async function restoreArtworkLayers(savedLayers,activeIdx=0){
+    if(!savedLayers||!savedLayers.length||!state.dieline)return;
+    for(const item of savedLayers){
+      if(item?.dataUrl)await loadImageFromDataUrl(item.dataUrl);
+    }
+    state.artworks=savedLayers.map(item=>({...item,id:item.id||nextArtworkLayerId++,blendMode:item.blendMode||'normal'}));
+    state.activeArtworkIndex=Math.max(0,Math.min(state.artworks.length-1,activeIdx>=0?activeIdx:0));
+    state.artwork=state.artworks[state.activeArtworkIndex];
+    artworkImage=artworkImageCache.get(state.artwork.dataUrl)||null;
+    refreshArtworkAtlas(state.dieline);rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();
+    document.getElementById('btn-art-settings')?.classList.remove('hidden');
+  }
+  function duplicateActiveArtwork(){
+    if(!state.artwork||!state.dieline)return;
+    const source=state.artwork;
+    const offset=Math.max(10,Math.min(30,Math.min(source.width,source.height)*0.15));
+    const copy={...source,id:nextArtworkLayerId++,centerX:source.centerX+offset,centerY:source.centerY+offset};
+    if(!state.artworks.length)state.artworks=[source];
+    state.artworks.push(copy);
+    state.activeArtworkIndex=state.artworks.length-1;
+    state.artwork=copy;
+    artworkImage=artworkImageCache.get(copy.dataUrl)||artworkImage;
+    state.artworkEditing=true;
+    syncArtworkControls();
+    refreshArtworkAtlas(state.dieline);
+    render2FDieline();
+  }
+  function deleteActiveArtwork(){
+    if(!state.artworks.length){clearArtwork();rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();return;}
+    state.artworks.splice(state.activeArtworkIndex,1);
+    if(!state.artworks.length){
+      clearArtwork();
+      rebuild3DMesh();setMasterFold(state.masterFold);render2FDieline();
+      return;
+    }
+    setActiveArtworkIndex(Math.min(state.activeArtworkIndex,state.artworks.length-1));
+    refreshArtworkAtlas(state.dieline);
+    render2FDieline();
   }
   async function pasteArtworkFromClipboard(event) {
     if (event.defaultPrevented) return;
@@ -5538,15 +5784,35 @@
     const set=(id,value)=>{const el=document.getElementById(id);if(el&&el!==document.activeElement)el.value=Number(value.toFixed(3));};
     set('art-scale',layout.width/(layout.baseWidth||layout.width)*100);set('art-scale-num',layout.width/(layout.baseWidth||layout.width)*100);
     set('art-x',layout.centerX-centerX);set('art-y',layout.centerY-centerY);set('art-angle',layout.rotation);set('art-angle-num',layout.rotation);
-    document.getElementById('art-scope').value=layout.scope;
-    document.getElementById('art-mirror-x').checked=layout.mirrorX;document.getElementById('art-mirror-y').checked=layout.mirrorY;
-    document.getElementById('art-drag').setAttribute('aria-pressed',String(state.artworkEditing));
+    const layerSelect=document.getElementById('art-layer-select');
+    if(layerSelect){
+      const layers=getArtworkList();
+      layerSelect.innerHTML='';
+      layers.forEach((item,idx)=>{
+        const opt=document.createElement('option');
+        opt.value=String(idx);
+        opt.textContent=idx===0?'Imagen 1':`Copia ${idx+1}`;
+        layerSelect.appendChild(opt);
+      });
+      layerSelect.value=String(Math.max(0,state.activeArtworkIndex));
+    }
+    const scopeEl=document.getElementById('art-scope');if(scopeEl)scopeEl.value=layout.scope;
+    const mxEl=document.getElementById('art-mirror-x');if(mxEl)mxEl.checked=!!layout.mirrorX;
+    const myEl=document.getElementById('art-mirror-y');if(myEl)myEl.checked=!!layout.mirrorY;
+    const mulEl=document.getElementById('art-multiply');if(mulEl)mulEl.checked=layout.blendMode==='multiply';
+    const dragEl=document.getElementById('art-drag');if(dragEl)dragEl.setAttribute('aria-pressed',String(state.artworkEditing));
   }
-  function openArtworkOptions(){if(!state.artwork)return;syncArtworkControls();const dialog=document.getElementById('art-options-dialog');if(!dialog.open)dialog.show();}
+  function openArtworkOptions(){if(!state.artwork)return;syncArtworkControls();const dialog=document.getElementById('art-options-dialog');if(dialog&&!dialog.open)dialog.show();}
   function initArtworkControls(){
     const close=()=>{state.artworkEditing=false;artworkDrag=null;document.getElementById('art-options-dialog').close();render2FDieline();};
     document.getElementById('art-options-close').onclick=close;document.getElementById('art-options-done').onclick=close;
     document.getElementById('art-fit').onclick=fitArtwork;
+    const layerSelect=document.getElementById('art-layer-select');
+    if(layerSelect)layerSelect.onchange=e=>{setActiveArtworkIndex(Number(e.target.value));render2FDieline();};
+    const dupBtn=document.getElementById('art-duplicate');
+    if(dupBtn)dupBtn.onclick=duplicateActiveArtwork;
+    const delBtn=document.getElementById('art-delete-copy');
+    if(delBtn)delBtn.onclick=deleteActiveArtwork;
     document.getElementById('art-scope').onchange=e=>{if(!state.artwork)return;state.artwork.scope=e.target.value;state.artwork.faceId=state.selectedFaceId;fitArtwork();};
     for(const id of ['art-scale','art-scale-num','art-x','art-y','art-angle','art-angle-num'])document.getElementById(id).addEventListener('input',e=>{
       if(!state.artwork||e.target.value==='')return;
@@ -5559,6 +5825,8 @@
       syncArtworkControls();scheduleArtworkRefresh();
     });
     for(const [id,key] of [['art-mirror-x','mirrorX'],['art-mirror-y','mirrorY']])document.getElementById(id).onchange=e=>{if(state.artwork){state.artwork[key]=e.target.checked;scheduleArtworkRefresh();}};
+    const mulEl=document.getElementById('art-multiply');
+    if(mulEl)mulEl.onchange=e=>{if(state.artwork){state.artwork.blendMode=e.target.checked?'multiply':'normal';scheduleArtworkRefresh();}};
     document.getElementById('art-drag').onclick=()=>{state.artworkEditing=!state.artworkEditing;syncArtworkControls();render2FDieline();};
   }
 

@@ -68,7 +68,47 @@ test('la imagen pegada recorre FileReader y el importador, actualiza el atlas y 
   await ui.paste(pasteEvent({items:[item(file)]}));
   assert.equal(ui.state.artwork.dataUrl,'data:image/png;base64,iVBORw==');
   assert.equal(ui.state.artwork.scope,'all');
+  assert.equal(ui.state.artwork.blendMode,'normal');
+  assert.equal(ui.state.artworks.length,1);
   assert.equal(ui.state.artworkEditing,true);
   assert.equal(ui.state.toolMode,'select');
   assert.deepEqual(ui.calls.map(c=>c.type),['atlas','mesh','controls']);
+});
+
+test('duplicar imagen y activar multiplicar color funciona sobre copias independientes',async()=>{
+  const ops=[];
+  const elements=new Map();
+  const makeEl=id=>{if(!elements.has(id))elements.set(id,{id,value:'',checked:false,innerHTML:'',classList:{remove(){},add(){}},appendChild(){},addEventListener(){},setAttribute(){},close(){},show(){}});return elements.get(id);};
+  class Image{naturalWidth=100;naturalHeight=50;set src(v){this._s=v;Promise.resolve().then(()=>this.onload());}}
+  const ctx2d={setTransform(){},save(){},restore(){},beginPath(){},moveTo(){},lineTo(){},closePath(){},clip(){},translate(){},rotate(){},scale(){},fillRect(){},
+    set globalCompositeOperation(v){ops.push(v);},drawImage(){}};
+  const context={THREE:require('../assets/libs/three.min'),DielineEngine:require('../dieline-engine'),UserLibrary:require('../library-models'),ArtworkLayout:require('../artwork-layout'),
+    console,performance,Image,requestAnimationFrame:fn=>fn(0),window:{addEventListener(){}},
+    document:{activeElement:null,getElementById:makeEl,createElement:()=>({width:0,height:0,getContext:()=>ctx2d})},alert(){}};
+  vm.createContext(context);
+  const source=fs.readFileSync(require.resolve('../app'),'utf8').replace(/\}\)\(\);\s*$/,`
+    rebuild3DMesh=()=>{};setMasterFold=()=>{};render2FDieline=()=>{};
+    state.dieline={bounds:{minX:0,minY:0,width:200,height:100},faces:[{id:0,polygon:[{x:0,y:0},{x:200,y:0},{x:200,y:100},{x:0,y:100}],bounds:{minX:0,minY:0,width:200,height:100}}]};
+    initArtworkControls();
+    globalThis._art={state,loadArtworkData,duplicateActiveArtwork,deleteActiveArtwork,refreshArtworkAtlas};
+  })();`);
+  vm.runInContext(source,context);
+  const art=context._art;
+  await art.loadArtworkData('data:image/png;base64,iVBORw==');
+  assert.equal(art.state.artworks.length,1);
+  // Activar multiplicar color en la imagen 1
+  const mul=elements.get('art-multiply');
+  mul.checked=true;mul.onchange({target:mul});
+  assert.equal(art.state.artwork.blendMode,'multiply');
+  assert.ok(ops.includes('multiply'),'Debe usar globalCompositeOperation = multiply');
+  // Copiar imagen
+  art.duplicateActiveArtwork();
+  assert.equal(art.state.artworks.length,2);
+  assert.equal(art.state.activeArtworkIndex,1);
+  assert.notEqual(art.state.artworks[1].centerX,art.state.artworks[0].centerX);
+  assert.equal(art.state.artworks[1].blendMode,'multiply');
+  // Eliminar la copia vuelve a la imagen original
+  art.deleteActiveArtwork();
+  assert.equal(art.state.artworks.length,1);
+  assert.equal(art.state.activeArtworkIndex,0);
 });

@@ -54,12 +54,31 @@ test('la base marcada en 2D permanece horizontal, inmóvil y apoyada en el suelo
     const base = ui.meshes.get(model.rootFaceId).mesh;
     const box = new THREE.Box3().setFromObject(base);
     assert.ok(Math.abs(box.min.y) < 1e-5, `apoyo en ${t}: ${box.min.y}`);
-    const up = new THREE.Vector3(0, 0, 1).transformDirection(base.matrixWorld);
-    assert.ok(up.distanceTo(new THREE.Vector3(0, 1, 0)) < 1e-6);
+    const interiorUp = new THREE.Vector3(0, 0, -1).transformDirection(base.matrixWorld);
+    assert.ok(interiorUp.distanceTo(new THREE.Vector3(0, 1, 0)) < 1e-6);
+    const exteriorDown = new THREE.Vector3(0, 0, 1).transformDirection(base.matrixWorld);
+    assert.ok(exteriorDown.distanceTo(new THREE.Vector3(0, -1, 0)) < 1e-6);
     const matrix = base.matrixWorld.elements;
     if (!reference) reference = matrix.slice();
     matrix.forEach((value, i) => assert.ok(Math.abs(value - reference[i]) < 1e-6));
   }
+});
+
+test('el plegado 3D mantiene la cara impresa (+Z) hacia el exterior sin espejar y las paredes suben hacia +Y', () => {
+  const ui = app();
+  const model = engine.buildDielineModelFromPacdora(entry.knifeData, entry);
+  ui.setup(model);
+  ui.setMasterFold(1);
+  ui.root.updateMatrixWorld(true);
+  const baseMesh = ui.meshes.get(model.rootFaceId).mesh;
+  const geom = baseMesh.geometry;
+  const extGroup = geom.groups[0];
+  const n = geom.attributes.normal;
+  // El grupo 0 (exterior impreso) apunta a +Z en espacio local (misma orientación que 2D, sin espejar)
+  assert.ok(n.getZ(extGroup.start) > 0.9, `Normal exterior esperada > +0.9, recibida ${n.getZ(extGroup.start)}`);
+  // Al plegar al 100%, el conjunto del modelo se eleva por encima del suelo (max.y > 10mm)
+  const fullBox = new THREE.Box3().setFromObject(ui.root);
+  assert.ok(fullBox.max.y > 10, `Las paredes plegadas deben elevarse en +Y (max.y=${fullBox.max.y})`);
 });
 
 test('los preferidos se conservan al reabrir y pueden desmarcarse',()=>{

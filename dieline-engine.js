@@ -2718,7 +2718,19 @@
     return {length:+Math.max(bw,bh).toFixed(3),width:+Math.min(bw,bh).toFixed(3),depth:+(candidates.length?candidates[Math.floor(candidates.length/2)]:(model.boxDimensionsMm?.depth||40)).toFixed(3)};
   }
 
-  function rerootDielineModel(model, rootFaceId) {
+  function setDimensionBaseFace(model, baseFaceId) {
+    if (!model.faces.some(f => f.id === baseFaceId)) throw new Error('Panel base no encontrado.');
+    const nextModel = {
+      ...model,
+      dimensionBaseFaceId: baseFaceId,
+      hasExplicitBase: true,
+      boxDimensionsMm: dimensionsFromBase(model, baseFaceId)
+    };
+    nextModel.sizeArrowData = generateSizeArrowData(nextModel);
+    return reconcileDimensionMeasurements(nextModel);
+  }
+
+  function rerootDielineModel(model, rootFaceId, options = {}) {
     if(!model.faces.some(f=>f.id===rootFaceId))throw new Error('Panel base no encontrado.');
     const faces=model.faces.map(f=>({...f,isRoot:f.id===rootFaceId,parentId:null}));
     const hinges=[],visited=new Set([rootFaceId]),queue=[rootFaceId];
@@ -2730,7 +2742,18 @@
       hinges.push({...h,parentFaceId:parent,childFaceId:child,parentId:parent,childId:child,defaultAngle:(h.defaultAngle??90)*(reverse?-1:1),animSteps:h.animSteps?.map(s=>({...s,deltaDeg:s.deltaDeg*(reverse?-1:1)}))});
     }}
     if(visited.size!==faces.length)throw new Error('Hay paneles sin unión de hendido. Revisa la clasificación de las capas.');
-    const nextModel={...model,faces,hinges,rootFaceId,hasExplicitBase:true,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
+    if (options && options.keepDimensionBase) {
+      const dimensionBaseFaceId = model.dimensionBaseFaceId ?? model.rootFaceId;
+      const nextModel = {
+        ...model,
+        faces,
+        hinges,
+        rootFaceId,
+        dimensionBaseFaceId
+      };
+      return reconcileDimensionMeasurements(nextModel);
+    }
+    const nextModel={...model,faces,hinges,rootFaceId,dimensionBaseFaceId:rootFaceId,hasExplicitBase:true,boxDimensionsMm:dimensionsFromBase(model,rootFaceId)};
     nextModel.sizeArrowData=generateSizeArrowData(nextModel);
     return reconcileDimensionMeasurements(nextModel);
   }
@@ -2756,28 +2779,50 @@
   }
 
   /**
-   * Applies a structural Part variation (`standard` | `thumb_notch` | `tab_lock` | `handle` | `tear_strip`)
+   * Resolves the target face for a Part variation:
+   * - If `targetFaceId` matches a face in `model.faces`, uses that selected face.
+   * - Otherwise falls back to `findPrimaryLidFlapFace(model)`.
+   */
+  function resolvePartTargetFace(model, targetFaceId) {
+    if (!model || !Array.isArray(model.faces) || model.faces.length === 0) return null;
+    if (targetFaceId !== undefined && targetFaceId !== null) {
+      const selected = model.faces.find(f => String(f.id) === String(targetFaceId));
+      if (selected) return selected;
+    }
+    return findPrimaryLidFlapFace(model) || model.faces[0];
+  }
+
+  /**
+   * Applies a structural Part variation (`standard` | `thumb_notch` | `tab_lock` | `handle` | `tear_strip` | `side_locks` | `double_flaps` | `windows`)
    * to a dieline model in 1:1 mm, returning a modified model whose 2D cut/crease segments and 3D faces/holes
    * reflect the selected part!
    */
-  function getPartEdge(model) {
-    const face = findPrimaryLidFlapFace(model);
-    if (!face) return null;
-    let best = null;
+  function getPartEdge(model, targetFaceId = null, opts = {}) {
+    const face = resolvePartTargetFace(model, targetFaceId);
+    if (!face || !Array.isArray(face.polygon) || face.polygon.length < 3) return null;
+    const allowFoldEdge = !!opts.allowFoldEdge;
+    const centroid = face.centroid || {
+      x: (face.bounds.minX + face.bounds.maxX) / 2,
+      y: (face.bounds.minY + face.bounds.maxY) / 2
+    };
+    let bestFree = null;
+    let bestAny = null;
     for (let i = 0; i < face.polygon.length; i++) {
       const a = face.polygon[i], b = face.polygon[(i + 1) % face.polygon.length];
       const length = Math.hypot(b.x-a.x, b.y-a.y);
       if (length < 8) continue;
       const tx = (b.x-a.x)/length, ty = (b.y-a.y)/length;
       const onEdge = p => Math.abs((p.x-a.x)*ty-(p.y-a.y)*tx) < 0.2;
-      const isFold = model.hinges.some(h => (h.parentFaceId === face.id || h.childFaceId === face.id) && onEdge(h.p1) && onEdge(h.p2));
-      if (isFold || (best && best.length >= length)) continue;
+      const isFold = (model.hinges || []).some(h => (h.parentFaceId === face.id || h.childFaceId === face.id) && onEdge(h.p1) && onEdge(h.p2));
       let nx = -ty, ny = tx;
-      if (nx*(face.centroid.x-a.x)+ny*(face.centroid.y-a.y) < 0) { nx=-nx; ny=-ny; }
-      best = {face, index:i, a, b, tx, ty, nx, ny, length,
-        depth: Math.max(...face.polygon.map(p => (p.x-a.x)*nx+(p.y-a.y)*ny))};
+      if (nx*(centroid.x-a.x)+ny*(centroid.y-a.y) < 0) { nx=-nx; ny=-ny; }
+      const depth = Math.max(...face.polygon.map(p => (p.x-a.x)*nx+(p.y-a.y)*ny));
+      const candidate = {face, index:i, a, b, tx, ty, nx, ny, length, depth, isFold};
+      if (!isFold && (!bestFree || length > bestFree.length)) bestFree = candidate;
+      if (!bestAny || length > bestAny.length) bestAny = candidate;
     }
-    return best;
+    if (bestFree) return bestFree;
+    return allowFoldEdge ? bestAny : null;
   }
 
   
@@ -3029,7 +3074,8 @@
       return {params, limits};
     }
 
-    const edge = getPartEdge(model);
+    const allowFoldEdge = key === 'handle' || key === 'windows';
+    const edge = getPartEdge(model, options?.targetFaceId, { allowFoldEdge });
     if (!edge) return {params:{}, limits:{}};
     if (key === 'handle') {
       field('length', 4, edge.length-8, 86);
@@ -3047,19 +3093,48 @@
     } else if (key === 'tab_lock') {
       field('length', 6, edge.length-8, 64);
       field('depth', 3, Math.max(3, edge.depth*0.8), 18);
+    } else if (key === 'double_flaps') {
+      params.count = Number(options.count) === 1 ? 1 : 2;
+      params.angle = Number(options.angle) === 180 ? 180 : 90;
+      const maxMargin = Math.max(0, Math.floor((edge.length - 16) * 0.25));
+      field('margin', 0, maxMargin, Math.min(2, maxMargin));
+      const usable = Math.max(8, edge.length - params.margin * 2);
+      const maxGap = Math.max(2, Math.floor(usable - 16));
+      field('gap', 2, maxGap, Math.min(maxGap, Math.max(4, usable * 0.04)));
+      const maxDepth = Math.max(10, Math.min(120, Math.max(edge.depth * 1.4, edge.length * 0.5)));
+      field('depth', 8, maxDepth, Math.min(35, Math.max(15, edge.depth * 0.65)));
+    } else if (key === 'windows') {
+      params.count = [1, 2, 3].includes(Number(options.count)) ? Number(options.count) : 1;
+      const maxLen = Math.max(8, (edge.length - 8) / params.count - (params.count > 1 ? 4 : 0));
+      const defLen = params.count === 1 ? edge.length * 0.55 : params.count === 2 ? edge.length * 0.32 : edge.length * 0.22;
+      field('length', 6, maxLen, Math.min(maxLen, Math.max(12, defLen)));
+      const maxW = Math.max(8, edge.depth - 8);
+      field('width', 6, maxW, Math.min(maxW, Math.max(12, edge.depth * 0.55)));
+      field('radius', 0, Math.min(params.length, params.width) / 2, Math.min(6, Math.min(params.length, params.width) / 4));
+      const minDist = params.length + 4;
+      const maxDist = params.count === 3
+        ? Math.max(minDist, (edge.length - params.length - 8) / 2)
+        : Math.max(minDist, edge.length - params.length - 8);
+      const defDist = params.count === 3
+        ? Math.min(maxDist, Math.max(minDist, params.length + 14))
+        : Math.min(maxDist, Math.max(minDist, edge.length * 0.42));
+      field('distance', minDist, maxDist, defDist);
     }
     return {params, limits};
   }
 
   function applyPartVariationToModel(baseModel, partKey, options = {}) {
     if (!baseModel || !partKey || partKey === 'standard') return baseModel;
-    if (partKey === 'tear_strip') return applyLegacyPartVariation(baseModel, partKey);
+    if (partKey === 'tear_strip') return applyLegacyPartVariation(baseModel, partKey, options);
     if (partKey === 'side_locks') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
       return applySideLocksVariation(baseModel, params);
     }
-    const edge = getPartEdge(baseModel);
-    if (!edge) return baseModel;
+    const allowFoldEdge = partKey === 'handle' || partKey === 'windows';
+    const edge = getPartEdge(baseModel, options?.targetFaceId, { allowFoldEdge });
+    if (!edge) {
+      return { ...baseModel, partError: 'El área seleccionada no tiene borde exterior libre para aplicar esta pieza. Selecciona una solapa o un panel con borde exterior.' };
+    }
     const {params} = getPartVariationSettings(baseModel, partKey, options);
     const model = {...baseModel,
       faces: baseModel.faces.map(f => ({...f, polygon:f.polygon.map(p=>({...p})), holes:(f.holes||[]).map(h=>h.map(p=>({...p})))})),
@@ -3134,6 +3209,80 @@
       const len=Math.hypot(b.x-a.x,b.y-a.y);
       model.hinges.push({id:hingeId,parentFaceId:flap.id,childFaceId:id,parentId:flap.id,childId:id,faceA:flap.id,faceB:id,
         p1:a,p2:b,midpoint:at(edge.length/2),length:len,lengthMm:len,defaultAngle:angle,animSteps:[{start:0.8,end:1,deltaDeg:angle}],isPartMod:true});
+    } else if(partKey==='double_flaps') {
+      const count = params.count === 1 ? 1 : 2;
+      const margin = params.margin ?? 2;
+      const gap = params.gap ?? 6;
+      const depth = params.depth ?? 25;
+      const foldMag = params.angle === 180 ? 180 : 90;
+      const usable = edge.length - margin * 2;
+      let spans;
+      if (count === 1) {
+        if (usable < 8) return {...baseModel, partError:'El borde seleccionado es demasiado corto para solapas dobles con estas medidas.'};
+        spans = [[margin, edge.length - margin]];
+      } else {
+        const eachLen = (usable - gap) / 2;
+        if (eachLen < 8) return {...baseModel, partError:'El borde seleccionado es demasiado corto para dos solapas dobles con estas medidas.'};
+        spans = [[margin, margin + eachLen], [margin + eachLen + gap, edge.length - margin]];
+      }
+      let nextId = Math.max(...model.faces.map(f=>Number(f.id)||0)) + 1;
+      for (let idx = 0; idx < spans.length; idx++) {
+        const [start, end] = spans[idx];
+        const spanLen = end - start;
+        const a = at(start), b = at(end);
+        const taper = Math.min(3, spanLen * 0.1, depth * 0.25);
+        const outer = [a, at(start + taper, -depth), at(end - taper, -depth), b];
+        removeEdgeCut(start, end);
+        addCuts(outer);
+        const id = nextId++;
+        const hingeId = 'part_dflap_' + id;
+        const polygon = positive(outer);
+        const centroid = {x:polygon.reduce((s,p)=>s+p.x,0)/polygon.length, y:polygon.reduce((s,p)=>s+p.y,0)/polygon.length};
+        const cross = (b.x - a.x) * (-(centroid.y - a.y)) - (-(b.y - a.y)) * (centroid.x - a.x);
+        const angle = cross >= 0 ? foldMag : -foldMag;
+        const label = count === 2 ? `Solapa doble ${idx + 1}` : 'Solapa doble';
+        model.faces.push({id, name:label, label, role:'FLAP_CLOSURE', polygon, holes:[], centroid, parentId:flap.id, hingeId, defaultAngle:angle});
+        model.foldSegments.push({x1:a.x, y1:a.y, x2:b.x, y2:b.y, type:'FOLD', isPartMod:true});
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        model.hinges.push({id:hingeId, parentFaceId:flap.id, childFaceId:id, parentId:flap.id, childId:id, faceA:flap.id, faceB:id,
+          p1:a, p2:b, midpoint:at((start + end) / 2), length:len, lengthMm:len, defaultAngle:angle,
+          animSteps:[{start:0.78, end:1, deltaDeg:angle}], isPartMod:true});
+      }
+    } else if(partKey==='windows') {
+      const count = [1, 2, 3].includes(Number(params.count)) ? Number(params.count) : 1;
+      const {length:w, width:h, radius:r, distance} = params;
+      const mid = edge.length / 2, d = edge.depth / 2;
+      const centers = count === 1 ? [mid]
+        : count === 2 ? [mid - distance / 2, mid + distance / 2]
+        : [mid - distance, mid, mid + distance];
+      const windowPolys = [];
+      for (const c of centers) {
+        const pts = [];
+        if (r < 0.1) {
+          pts.push(at(c + w / 2, d + h / 2), at(c - w / 2, d + h / 2), at(c - w / 2, d - h / 2), at(c + w / 2, d - h / 2));
+        } else {
+          const corners = [
+            [c + w / 2 - r, d + h / 2 - r, 0],
+            [c - w / 2 + r, d + h / 2 - r, Math.PI / 2],
+            [c - w / 2 + r, d - h / 2 + r, Math.PI],
+            [c + w / 2 - r, d - h / 2 + r, Math.PI * 1.5]
+          ];
+          for (const [u, v, start] of corners) {
+            for (let i = 0; i <= 8; i++) {
+              const angle = start + i * Math.PI / 16;
+              pts.push(at(u + Math.cos(angle) * r, v + Math.sin(angle) * r));
+            }
+          }
+        }
+        if (!pts.every(p => pointInPolygon(p, flap.polygon))) {
+          return {...baseModel, partError:'La ventana no cabe en esta área. Reduce sus medidas o el número de ventanas.'};
+        }
+        windowPolys.push(pts);
+      }
+      for (const pts of windowPolys) {
+        flap.holes.push(positive(pts));
+        addCuts(pts, true);
+      }
     }
     for(const face of model.faces) {
       const xs=face.polygon.map(p=>p.x),ys=face.polygon.map(p=>p.y);
@@ -3153,10 +3302,10 @@
     return model;
   }
 
-  function applyLegacyPartVariation(baseModel, partKey) {
+  function applyLegacyPartVariation(baseModel, partKey, options = {}) {
     if (!baseModel || !partKey || partKey === 'standard') return baseModel;
 
-    const targetFlap = findPrimaryLidFlapFace(baseModel);
+    const targetFlap = resolvePartTargetFace(baseModel, options?.targetFaceId);
     if (!targetFlap) return baseModel;
 
     // Clone faces and segments so baseModel remains pristine
@@ -3610,7 +3759,7 @@
     if (!model || !Array.isArray(model.faces) || !model.faces.length) return [];
     let dims = model.boxDimensionsMm;
     if (!dims || !Number.isFinite(dims.length) || !Number.isFinite(dims.width)) {
-      dims = dimensionsFromBase(model, model.rootFaceId) || { length: 200, width: 150, depth: 100 };
+      dims = dimensionsFromBase(model, model.dimensionBaseFaceId ?? model.rootFaceId) || { length: 200, width: 150, depth: 100 };
     }
     const L = +Number(dims.length || 200).toFixed(1);
     const W = +Number(dims.width || 150).toFixed(1);
@@ -3673,7 +3822,8 @@
         });
       }
     } else {
-      const baseFace = model.faces.find(f => f.id === model.rootFaceId) || model.faces[0];
+      const dimBaseId = model.dimensionBaseFaceId ?? model.rootFaceId;
+      const baseFace = model.faces.find(f => f.id === dimBaseId) || model.faces[0];
       const baseIsHorizontal = baseFace.bounds.width >= baseFace.bounds.height;
 
       if (baseIsHorizontal) {
@@ -3934,9 +4084,11 @@
     getSideLocksData,
     applyPartVariationToModel,
     getPartVariationSettings,
+    resolvePartTargetFace,
     findPrimaryLidFlapFace,
     findSymmetricFace,
     rerootDielineModel,
+    setDimensionBaseFace,
     dimensionsFromBase,
     generateSizeArrowData,
     generateOutsideArrowData,
