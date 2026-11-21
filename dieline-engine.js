@@ -3416,6 +3416,16 @@
     };
   }
 
+  function getB1RetranqueoXReductionMm(retranqueoMm) {
+    const r = Number(retranqueoMm) || 0;
+    if (r <= 0) return 0;
+    if (Math.abs(r - 1.5) < 1e-3) return 1;
+    if (Math.abs(r - 3) < 1e-3) return 2;
+    if (Math.abs(r - 4.5) < 1e-3) return 3;
+    if (Math.abs(r - 7) < 1e-3) return 4;
+    return 0;
+  }
+
   function applyB1Retranqueo(baseModel, retranqueoMm) {
     const targetR = Number(retranqueoMm);
     if (!baseModel || !Number.isFinite(targetR) || targetR < 0) return baseModel;
@@ -3424,8 +3434,13 @@
 
     const prevR = Number(baseModel.b1RetranqueoMm) || 0;
     const d = targetR - prevR;
-    if (Math.abs(d) < 1e-6) {
-      return { ...baseModel, b1RetranqueoMm: targetR };
+    const prevXRed = Number.isFinite(Number(baseModel.b1RetranqueoXRedMm))
+      ? Number(baseModel.b1RetranqueoXRedMm)
+      : getB1RetranqueoXReductionMm(prevR);
+    const nextXRed = getB1RetranqueoXReductionMm(targetR);
+    const dx = nextXRed - prevXRed;
+    if (Math.abs(d) < 1e-6 && Math.abs(dx) < 1e-6) {
+      return { ...baseModel, b1RetranqueoMm: targetR, b1RetranqueoXRedMm: nextXRed };
     }
 
     const model = {
@@ -3443,7 +3458,8 @@
         p2: h.p2 ? { ...h.p2 } : h.p2,
         midpoint: h.midpoint ? { ...h.midpoint } : h.midpoint
       })),
-      b1RetranqueoMm: targetR
+      b1RetranqueoMm: targetR,
+      b1RetranqueoXRedMm: nextXRed
     };
     delete model.bleedSegments;
     delete model.bleedSegmentsMm;
@@ -3563,6 +3579,41 @@
         const sh2 = findEndpointShift(s.x2, s.y2);
         if (sh1 !== null) s.y1 += sh1;
         if (sh2 !== null) s.y2 += sh2;
+      }
+    }
+
+    // 2b. Reduce X width of Cara 1 (columns[0]) and Cara 4 (columns[3]) by dx mm each
+    if (Math.abs(dx) > 1e-6) {
+      const col1 = info.columns[0].bodyFace.bounds;
+      const col4 = info.columns[3].bodyFace.bounds;
+      const xMid1 = (col1.minX + col1.maxX) * 0.5;
+      const xMid4 = (col4.minX + col4.maxX) * 0.5;
+      const shiftX = x => {
+        if (x <= xMid1) return x + dx;
+        if (x >= xMid4) return x - dx;
+        return x;
+      };
+
+      for (const face of model.faces) {
+        for (const p of face.polygon) p.x = shiftX(p.x);
+        for (const hole of (face.holes || [])) {
+          for (const p of hole) p.x = shiftX(p.x);
+        }
+      }
+      for (const h of model.hinges) {
+        if (h.p1) h.p1.x = shiftX(h.p1.x);
+        if (h.p2) h.p2.x = shiftX(h.p2.x);
+        if (h.midpoint && h.p1 && h.p2) {
+          h.midpoint.x = (h.p1.x + h.p2.x) * 0.5;
+        }
+      }
+      for (const s of model.cutSegments) {
+        s.x1 = shiftX(s.x1);
+        s.x2 = shiftX(s.x2);
+      }
+      for (const s of model.foldSegments) {
+        s.x1 = shiftX(s.x1);
+        s.x2 = shiftX(s.x2);
       }
     }
 

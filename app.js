@@ -3498,6 +3498,12 @@
         if (Number.isFinite(val)) applyB1RetranqueoOption(val);
       });
     });
+    document.getElementById('btn-b1-retranqueo-done')?.addEventListener('click', () => {
+      const menu = document.getElementById('b1-retranqueos-menu');
+      const btn = document.getElementById('btn-b1-retranqueos');
+      menu?.classList?.add?.('hidden');
+      if (typeof btn?.setAttribute === 'function') btn.setAttribute('aria-expanded', 'false');
+    });
     initArtworkControls();
 
     const bindCheck = (id, prop, callback) => {

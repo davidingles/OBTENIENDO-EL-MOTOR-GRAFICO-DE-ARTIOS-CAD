@@ -299,3 +299,31 @@ test('real Pacdora FEFCO 0201 is detected as B1 (and FEFCO 0427 is rejected)', (
     assert.equal(DielineEngine.detectB1AmericanBox(modelNonB1).isB1, false);
   }
 });
+
+test('applyB1Retranqueo reduces X width of faces 1 and 4 by 1/2/3/4 mm for 1.5/3/4.5/7 mm without altering faces 2, 3 or glue flap', () => {
+  const base = makeSyntheticB1Model();
+  const cases = [
+    [1.5, 1],
+    [3, 2],
+    [4.5, 3],
+    [7, 4],
+    [0, 0]
+  ];
+
+  let current = base;
+  for (const [optMm, expectedRed] of cases) {
+    current = DielineEngine.applyB1Retranqueo(current, optMm);
+    const byId = new Map(current.faces.map(f => [f.id, f]));
+    assert.equal(byId.get(0).bounds.width, 100 - expectedRed, `Cara 1 width for ${optMm} mm`);
+    assert.equal(byId.get(1).bounds.width, 200, `Cara 2 width unchanged for ${optMm} mm`);
+    assert.equal(byId.get(2).bounds.width, 100, `Cara 3 width unchanged for ${optMm} mm`);
+    assert.equal(byId.get(3).bounds.width, 200 - expectedRed, `Cara 4 width for ${optMm} mm`);
+    assert.equal(byId.get(100).bounds.width, 30, `Glue flap width unchanged for ${optMm} mm`);
+    assert.equal(byId.get(10).bounds.width, 99 - expectedRed, `Cara 1 top flap width for ${optMm} mm`);
+    assert.equal(byId.get(13).bounds.width, 199 - expectedRed, `Cara 4 top flap width for ${optMm} mm`);
+  }
+
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  assert.ok(html.includes('id="btn-b1-retranqueo-done"'), 'LISTO button exists in index.html');
+  assert.ok(html.includes('>LISTO<'), 'LISTO label exists in index.html');
+});
