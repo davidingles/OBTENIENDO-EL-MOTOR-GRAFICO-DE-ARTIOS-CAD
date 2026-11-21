@@ -3469,6 +3469,7 @@
 
     // 1. Update polygons, hinges, and narrow horizontal foldSegments
     const outerBands = [];
+    const wideHorizontalFolds = [];
     for (const col of info.columns) {
       const bodyFace = faceById.get(String(col.bodyFace.id));
       const topFlap = faceById.get(String(col.topFlap.id));
@@ -3544,9 +3545,11 @@
           if (Math.abs(my - col.yTopHinge) <= 1.5) {
             s.y1 += topCreaseShift;
             s.y2 += topCreaseShift;
+            wideHorizontalFolds.push(s);
           } else if (Math.abs(my - col.yBotHinge) <= 1.5) {
             s.y1 += botCreaseShift;
             s.y2 += botCreaseShift;
+            wideHorizontalFolds.push(s);
           }
         }
       }
@@ -3614,6 +3617,54 @@
       for (const s of model.foldSegments) {
         s.x1 = shiftX(s.x1);
         s.x2 = shiftX(s.x2);
+      }
+    }
+
+    // 2c. Trim shifted wide horizontal foldSegments to their intersection with cutSegments (or restore on 0 mm)
+    for (const s of wideHorizontalFolds) {
+      const prevTrimLeft = Number.isFinite(Number(s._b1TrimLeftMm)) ? Number(s._b1TrimLeftMm) : 0;
+      const prevTrimRight = Number.isFinite(Number(s._b1TrimRightMm)) ? Number(s._b1TrimRightMm) : 0;
+      const origMinX = Math.min(s.x1, s.x2) - prevTrimLeft;
+      const origMaxX = Math.max(s.x1, s.x2) + prevTrimRight;
+      let newMinX = origMinX;
+      let newMaxX = origMaxX;
+
+      if (targetR > 0) {
+        const y = (s.y1 + s.y2) * 0.5;
+        const maxTrim = Math.min(20, (origMaxX - origMinX) * 0.25);
+        const eps = 1e-4;
+        for (const c of model.cutSegments) {
+          const dy = c.y2 - c.y1;
+          if (Math.abs(dy) < 1e-6) continue;
+          const cMinY = Math.min(c.y1, c.y2);
+          const cMaxY = Math.max(c.y1, c.y2);
+          if (y < cMinY - eps || y > cMaxY + eps) continue;
+          const t = Math.max(0, Math.min(1, (y - c.y1) / dy));
+          const ix = c.x1 + t * (c.x2 - c.x1);
+          if (ix >= origMinX - 1e-3 && ix <= origMinX + maxTrim && ix > newMinX) {
+            newMinX = ix;
+          }
+          if (ix <= origMaxX + 1e-3 && ix >= origMaxX - maxTrim && ix < newMaxX) {
+            newMaxX = ix;
+          }
+        }
+      }
+
+      if (newMaxX > newMinX + 1e-3) {
+        if (s.x1 <= s.x2) {
+          s.x1 = newMinX;
+          s.x2 = newMaxX;
+        } else {
+          s.x1 = newMaxX;
+          s.x2 = newMinX;
+        }
+        if (targetR > 0) {
+          s._b1TrimLeftMm = Math.max(0, newMinX - origMinX);
+          s._b1TrimRightMm = Math.max(0, origMaxX - newMaxX);
+        } else {
+          delete s._b1TrimLeftMm;
+          delete s._b1TrimRightMm;
+        }
       }
     }
 

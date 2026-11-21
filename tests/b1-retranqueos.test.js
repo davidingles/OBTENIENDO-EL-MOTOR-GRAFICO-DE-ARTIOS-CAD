@@ -327,3 +327,61 @@ test('applyB1Retranqueo reduces X width of faces 1 and 4 by 1/2/3/4 mm for 1.5/3
   assert.ok(html.includes('id="btn-b1-retranqueo-done"'), 'LISTO button exists in index.html');
   assert.ok(html.includes('>LISTO<'), 'LISTO label exists in index.html');
 });
+
+test('applyB1Retranqueo trims shifted wide horizontal foldSegments to cut intersections and restores on 0 mm', () => {
+  const base = makeSyntheticB1Model();
+  const r3 = DielineEngine.applyB1Retranqueo(base, 3);
+
+  // Panel 1 (wide, X=[130, 330], slot cuts at 131 and 329): folds at y=47 and y=203 must be trimmed to [131, 329]
+  const col1Folds = r3.foldSegments.filter(s => Math.abs(s.y1 - s.y2) < 1e-6 && (s.x1 + s.x2) * 0.5 > 130 && (s.x1 + s.x2) * 0.5 < 330);
+  assert.equal(col1Folds.length, 2);
+  for (const f of col1Folds) {
+    assert.ok(Math.abs(Math.min(f.x1, f.x2) - 131) < 1e-4);
+    assert.ok(Math.abs(Math.max(f.x1, f.x2) - 329) < 1e-4);
+  }
+
+  // Panel 3 (wide, X=[430, 628] after -2mm X reduction, left slot cut at 431, right outer cut at 628)
+  const col3Folds = r3.foldSegments.filter(s => Math.abs(s.y1 - s.y2) < 1e-6 && (s.x1 + s.x2) * 0.5 > 430 && (s.x1 + s.x2) * 0.5 < 630);
+  assert.equal(col3Folds.length, 2);
+  for (const f of col3Folds) {
+    assert.ok(Math.abs(Math.min(f.x1, f.x2) - 431) < 1e-4);
+    assert.ok(Math.abs(Math.max(f.x1, f.x2) - 628) < 1e-4);
+  }
+
+  // Resetting to 0 mm restores original unclipped endpoints
+  const r0 = DielineEngine.applyB1Retranqueo(r3, 0);
+  const col1Folds0 = r0.foldSegments.filter(s => Math.abs(s.y1 - s.y2) < 1e-6 && (s.x1 + s.x2) * 0.5 > 130 && (s.x1 + s.x2) * 0.5 < 330);
+  for (const f of col1Folds0) {
+    assert.ok(Math.abs(Math.min(f.x1, f.x2) - 130) < 1e-4);
+    assert.ok(Math.abs(Math.max(f.x1, f.x2) - 330) < 1e-4);
+  }
+  const col3Folds0 = r0.foldSegments.filter(s => Math.abs(s.y1 - s.y2) < 1e-6 && (s.x1 + s.x2) * 0.5 > 430 && (s.x1 + s.x2) * 0.5 <= 630);
+  for (const f of col3Folds0) {
+    assert.ok(Math.abs(Math.min(f.x1, f.x2) - 430) < 1e-4);
+    assert.ok(Math.abs(Math.max(f.x1, f.x2) - 630) < 1e-4);
+  }
+
+  // Also verify on real ARTIOS_DEFAULT_SVG: shifted wide folds must not cross any cut segment
+  const ctx = loadBrowserScript('artios-assets.js');
+  const artiosBase = DielineEngine.buildDielineModel(ctx.ARTIOS_DEFAULT_SVG);
+  const artiosR3 = DielineEngine.applyB1Retranqueo(artiosBase, 3);
+  const artiosInfo = DielineEngine.detectB1AmericanBox(artiosR3);
+  for (const col of artiosInfo.wideColumns) {
+    const bxMin = col.bodyFace.bounds.minX - 0.5;
+    const bxMax = col.bodyFace.bounds.maxX + 0.5;
+    const wideFolds = artiosR3.foldSegments.filter(s => Math.abs(s.y1 - s.y2) <= 1.5 && (s.x1 + s.x2) * 0.5 >= bxMin && (s.x1 + s.x2) * 0.5 <= bxMax);
+    assert.equal(wideFolds.length, 2);
+    for (const f of wideFolds) {
+      const fMinX = Math.min(f.x1, f.x2);
+      const fMaxX = Math.max(f.x1, f.x2);
+      const fy = (f.y1 + f.y2) * 0.5;
+      for (const c of artiosR3.cutSegments) {
+        if (Math.abs(c.y2 - c.y1) < 1e-6) continue;
+        if (fy < Math.min(c.y1, c.y2) - 1e-4 || fy > Math.max(c.y1, c.y2) + 1e-4) continue;
+        const t = Math.max(0, Math.min(1, (fy - c.y1) / (c.y2 - c.y1)));
+        const ix = c.x1 + t * (c.x2 - c.x1);
+        assert.ok(!(ix > fMinX + 1e-3 && ix < fMaxX - 1e-3), `Fold segment [${fMinX}, ${fMaxX}] at y=${fy} should not cross cut at x=${ix}`);
+      }
+    }
+  }
+});
