@@ -2308,7 +2308,8 @@
       const inferred=foldBands.filter(b=>b.axis===axis);
       if (!inferred.length) continue;
       for (let i=intervals.length-1;i>=0;i--) {
-        if (inferred.some(b=>intervals[i].min<b.max && intervals[i].max>b.min)) intervals.splice(i,1);
+        const cur = intervals[i];
+        if (inferred.some(b => Math.min(cur.max, b.max) - Math.max(cur.min, b.min) > 0.5)) intervals.splice(i,1);
       }
       intervals.push(...inferred);
     }

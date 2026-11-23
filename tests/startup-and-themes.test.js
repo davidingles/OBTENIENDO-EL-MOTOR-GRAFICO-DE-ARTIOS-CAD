@@ -193,6 +193,16 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
   assert.equal(el('input-length').value, '400');
   assert.equal(el('input-width').value, '250');
   assert.equal(el('input-height').value, '180');
+
+  const topFlaps = api.state.dieline.faces.filter(f => f.label.startsWith('Solapa Sup.'));
+  const botFlaps = api.state.dieline.faces.filter(f => f.label.startsWith('Solapa Inf.'));
+  assert.equal(topFlaps.length, 4);
+  assert.equal(botFlaps.length, 4);
+  for (const tf of topFlaps) {
+    assert.ok(Math.abs(tf.bounds.height - botFlaps[0].bounds.height) < 0.5,
+      `La solapa superior ${tf.label} (${tf.bounds.height.toFixed(2)} mm) debe coincidir con la inferior (${botFlaps[0].bounds.height.toFixed(2)} mm)`);
+    assert.ok(tf.bounds.height > 100, `La solapa superior ${tf.label} no debe quedar aplastada (${tf.bounds.height.toFixed(2)} mm)`);
+  }
 });
 
 test('Nuevo Troquel lista los modelos de Biblioteca - Mis modelos y filtra por cartón y búsqueda', () => {
