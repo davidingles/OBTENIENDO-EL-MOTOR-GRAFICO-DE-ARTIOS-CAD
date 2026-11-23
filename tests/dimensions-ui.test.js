@@ -321,7 +321,7 @@ test('UI del canvas (añadir troquel, Doblaje, sliders) y cotas SVG descentradas
   assert.equal(headerSection.includes('btn-header-add-die'), false, 'Añadir troquel ya no está en la cabecera');
   assert.equal(headerSection.includes('menu-open-projects'), false, 'Abrir proyecto guardado eliminado del menú Abrir');
   assert.equal(headerSection.includes('menu-open-artwork'), false, 'Cargar diseño / Arte ya no está en la cabecera');
-  assert.match(html, /class="vector-editor"[\s\S]*?id="vector-toggle"[\s\S]*?id="btn-header-add-die"[^>]*title="Añade troquel a la biblioteca"[\s\S]*?id="menu-open-artwork"[^>]*title="Cargar diseño \/ Arte · Ctrl \+ V"/);
+  assert.match(html, /class="vector-editor"[\s\S]*?id="btn-header-add-die"[^>]*title="Añade troquel a la biblioteca"[\s\S]*?id="menu-open-artwork"[^>]*title="Cargar diseño \/ Arte · Ctrl \+ V"/);
   assert.match(html, /data-drawer-tab="more"[\s\S]*?<span>Doblaje<\/span>/);
   assert.match(html, /id="dimension-mode-switch"[\s\S]*?id="slider-dimension-size"/);
   assert.match(html, /id="btn-toggle-area-names"[\s\S]*?id="slider-area-name-size"/);

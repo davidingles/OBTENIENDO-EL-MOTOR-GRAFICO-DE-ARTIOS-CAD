@@ -2207,8 +2207,8 @@
       const arrowHit = hitTestArrow(state.dieline, rawP, 12 / (tf.scale || 1));
       if (arrowHit && state.toolMode === 'select' && e.button === 0 && !e.shiftKey) {
         if (!vectorEditing) {
-          const toggleBtn = document.getElementById('vector-toggle');
-          if (toggleBtn) toggleBtn.click();
+          document.getElementById('vector-tool-select')?.click();
+          vectorEditing = true;
         }
         vectorSelection = { type: 'dimension', arrow: arrowHit };
         vectorRefreshControls();
@@ -3605,9 +3605,9 @@
     const allUser = Array.isArray(userLibraryModels) && userLibraryModels.length
       ? userLibraryModels
       : (Array.isArray(window.BUNDLED_USER_MODELS) ? UserLibrary.normalize(window.BUNDLED_USER_MODELS) : []);
-    const exact = allUser.find(m => /^b1 caja americana$/i.test(String(m.name || '').trim()));
-    if (exact) return exact;
-    return allUser.find(m => /\bb1\b/i.test(String(m.name || '')) && !/sin-retranqueos/i.test(String(m.name || ''))) || null;
+    const sinRetranqueos = allUser.find(m => /caja-b1-americana-sin-retranqueos/i.test(String(m.name || '').trim()) || (/b1/i.test(String(m.name || '')) && /sin[- ]?retranqueos/i.test(String(m.name || ''))));
+    if (sinRetranqueos) return sinRetranqueos;
+    return allUser.find(m => /\bb1\b/i.test(String(m.name || ''))) || null;
   }
 
   async function startNewB1Box() {
@@ -5258,8 +5258,10 @@
         render2FDieline();
       }
     };
-    document.getElementById('vector-toggle').onclick = () => toggle(!vectorEditing);
-    document.getElementById('vector-close').onclick = () => toggle(false);
+    const toggleBtnEl = document.getElementById('vector-toggle');
+    if (toggleBtnEl) toggleBtnEl.onclick = () => toggle(!vectorEditing);
+    const closeBtnEl = document.getElementById('vector-close');
+    if (closeBtnEl) closeBtnEl.onclick = () => toggle(false);
     for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet','scale']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => {

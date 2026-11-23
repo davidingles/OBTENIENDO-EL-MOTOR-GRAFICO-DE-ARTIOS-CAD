@@ -150,6 +150,7 @@ test('index.html incluye botones de inicio, modales accesibles y botones de tema
   assert.match(html, /id="btn-start-new-dieline"[\s\S]*?Nuevo Troquel/);
 
   assert.match(html, /id="vector-controls" class="vector-dock-bar">/, 'La barra de herramientas de vectores debe estar siempre visible (sin atributo hidden)');
+  assert.equal(html.includes('id="vector-toggle"'), false, 'El botón Editar vectores ya no debe existir al estar la barra siempre visible');
   assert.ok(html.indexOf('id="vector-editor"') < html.indexOf('class="canvas-2d-stage"'), 'La barra de vectores debe ir arriba del área del canvas');
 
   assert.match(html, /id="new-b1-dialog"[^>]*aria-labelledby="new-b1-title"/);
@@ -172,6 +173,8 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
 
   assert.ok(api.state.dieline, 'Debe cargar un troquel en el canvas');
   assert.equal(engine.detectB1AmericanBox(api.state.dieline).isB1, true, 'El modelo cargado debe ser una caja B1');
+  assert.match(String(api.state.fileName || ''), /sin-retranqueos/i, 'La caja B1 inicial debe cargarse sin retranqueos');
+  assert.equal(Number(api.state.dieline.b1RetranqueoMm || 0), 0, 'No debe tener retranqueo aplicado al inicio');
   assert.equal(el('new-b1-dialog').open, true, 'Debe abrirse la modal accesible de medidas');
 
   el('new-b1-length').value = '400';
