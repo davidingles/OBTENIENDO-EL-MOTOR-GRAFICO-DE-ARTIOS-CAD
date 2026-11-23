@@ -383,9 +383,7 @@
     rimLight.position.set(0, -380, 280);
     scene.add(rimLight);
 
-    gridHelper = new THREE.GridHelper(1000, 50, 0x9faebe, 0xd0d8e0);
-    gridHelper.position.y = -0.2;
-    scene.add(gridHelper);
+    update3DGridTheme(isDarkTheme());
 
     const planeGeo = new THREE.PlaneGeometry(2500, 2500);
     const planeMat = new THREE.ShadowMaterial({ opacity: 0.34 });
@@ -3573,6 +3571,28 @@
     }, 2800);
   }
 
+  function update3DGridTheme(dark = isDarkTheme()) {
+    if (!scene || typeof THREE === 'undefined' || !THREE.GridHelper) return;
+    if (gridHelper) {
+      scene.remove(gridHelper);
+      gridHelper.geometry?.dispose?.();
+      if (Array.isArray(gridHelper.material)) gridHelper.material.forEach(m => m?.dispose?.());
+      else gridHelper.material?.dispose?.();
+    }
+    const centerColor = dark ? 0x1b2434 : 0xe2e6ec;
+    const gridColor = dark ? 0x141c2a : 0xe8ecf1;
+    gridHelper = new THREE.GridHelper(1000, 50, centerColor, gridColor);
+    gridHelper.position.y = -0.2;
+    const mats = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.transparent = true;
+      mat.opacity = dark ? 0.65 : 0.6;
+    }
+    gridHelper.visible = state.showGrid !== false;
+    scene.add(gridHelper);
+  }
+
   function applyAppTheme(theme, persist = true) {
     const normalized = theme === 'dark' ? 'dark' : 'light';
     state.theme = normalized;
@@ -3592,6 +3612,7 @@
     if (scene && scene.background && typeof scene.background.set === 'function') {
       scene.background.set(normalized === 'dark' ? 0x0d131d : 0xf1f3f6);
     }
+    update3DGridTheme(normalized === 'dark');
     render2FDieline();
   }
 
@@ -3753,6 +3774,12 @@
       await loadFefcoModel(b1Entry, true);
     } else if (window.ARTIOS_DEFAULT_SVG) {
       loadSVGString(window.ARTIOS_DEFAULT_SVG, 'b1 caja americana.svg', true);
+    }
+    // En Nueva Caja B1 la base por defecto siempre es 'Cara Cuerpo 3'
+    const baseFace3 = state.baseDieline?.faces?.find(f => /^cara\s+cuerpo\s+3$/i.test(String(f.label || '').trim()));
+    if (baseFace3 && typeof DielineEngine?.setDimensionBaseFace === 'function') {
+      const withBase3 = DielineEngine.setDimensionBaseFace(state.baseDieline, baseFace3.id);
+      applyNewDielineModel(withBase3, state.fileName || 'caja-b1-americana-sin-retranqueos', true, state.canAddToLibrary);
     }
     openNewB1DimensionsModal();
   }

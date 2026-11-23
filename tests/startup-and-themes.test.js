@@ -176,6 +176,8 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
   assert.equal(engine.detectB1AmericanBox(api.state.dieline).isB1, true, 'El modelo cargado debe ser una caja B1');
   assert.match(String(api.state.fileName || ''), /sin-retranqueos/i, 'La caja B1 inicial debe cargarse sin retranqueos');
   assert.equal(Number(api.state.dieline.b1RetranqueoMm || 0), 0, 'No debe tener retranqueo aplicado al inicio');
+  const baseFace = api.state.dieline.faces.find(f => f.id === api.state.dieline.dimensionBaseFaceId);
+  assert.equal(baseFace?.label, 'Cara Cuerpo 3', 'La base por defecto de Nueva Caja B1 debe ser Cara Cuerpo 3');
   assert.equal(el('new-b1-dialog').open, true, 'Debe abrirse la modal accesible de medidas');
 
   el('new-b1-length').value = '400';
