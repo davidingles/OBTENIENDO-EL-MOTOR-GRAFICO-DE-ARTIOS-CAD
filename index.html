@@ -638,107 +638,49 @@
     </aside>
 
     <!-- =========================================================================
-         ÁREA CENTRAL: CANVAS 2D CON LEYENDA Y TOOLBAR FLOTANTE INFERIOR
+         ÁREA CENTRAL: BARRA DE VECTORES INTEGRADA + CANVAS 2D CON CONTROLES
          ========================================================================= -->
     <section class="canvas-2d-viewport">
 
-      <!-- Leyenda superior izquierda (Bleed, Trim, Crease) -->
-      <div class="dieline-legend-card">
-        <div class="legend-entry">
-          <span class="legend-swatch trim"></span>
-          <span class="legend-text">Corte</span>
-        </div>
-        <div class="legend-entry">
-          <span class="legend-swatch crease"></span>
-          <span class="legend-text">Hendido</span>
-        </div>
-      </div>
-
-      <!-- Controles flotantes bajo la leyenda (Foto 2): Switch 3 estados de cotas y toggle de nombres de área -->
-      <div class="canvas-left-stack">
-        <div class="canvas-view-controls">
-          <div class="canvas-control-row">
-            <div class="control-label-micro">Cotas</div>
-            <div class="segmented-control-3" id="dimension-mode-switch" role="radiogroup" aria-label="Visualización de cotas">
-              <button type="button" class="seg-btn-3" data-mode="none" title="No mostrar cotas">Ocultas</button>
-              <button type="button" class="seg-btn-3 active" data-mode="main" title="Mostrar las 3 cotas principales (L, W, H)">Principales</button>
-              <button type="button" class="seg-btn-3" data-mode="all" title="Mostrar todas las cotas del troquel">Todas</button>
-            </div>
-            <input type="range" id="slider-dimension-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de las cotas" aria-label="Tamaño de las cotas" />
-          </div>
-          <div class="canvas-control-row">
-            <button type="button" class="btn-toggle-areas active" id="btn-toggle-area-names" title="Mostrar u ocultar los nombres de cada área">
-              <span class="btn-toggle-dot"></span>
-              <span class="btn-toggle-text">Nombres de áreas</span>
-            </button>
-            <input type="range" id="slider-area-name-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de los nombres de áreas" aria-label="Tamaño de los nombres de áreas" />
-          </div>
-        </div>
-
-        <div class="fold-order-controls" id="fold-order-controls">
-          <div class="fold-order-header">
-            <span class="control-label-micro">Establecer orden de plegado</span>
-          </div>
-          <div class="fold-order-steps-row">
-            <button type="button" id="btn-reset-fold-order" class="btn-fold-order-reset" title="Borrar toda la animación y empezar de cero">Reset</button>
-            <button type="button" id="btn-add-fold-step" class="btn-fold-order-add" title="Añadir paso de plegado (+)">+</button>
-            <div id="fold-order-steps" class="fold-order-steps"></div>
-          </div>
-        </div>
-        <button type="button" id="btn-rotate-dieline" class="btn-rotate-dieline" title="Girar todo el troquel 90° en sentido horario">↻ Girar troquel 90°</button>
-        <div class="b1-retranqueos-control hidden" id="b1-retranqueos-control">
-          <button type="button" id="btn-b1-retranqueos" class="btn-b1-retranqueos" aria-expanded="false" title="Aplicar retranqueos para troquel en caja B1 americana">
-            <span>RETRANQUEOS PARA TROQUEL</span>
-            <span class="b1-retranqueo-badge hidden" id="b1-retranqueo-badge"></span>
-          </button>
-          <div class="b1-retranqueos-menu hidden" id="b1-retranqueos-menu" role="group" aria-label="Retranqueos para troquel">
-            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="1.5">1,5 mm</button>
-            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="3">3 mm</button>
-            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="4.5">4,5 mm</button>
-            <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="7">7 mm</button>
-            <button type="button" class="btn-b1-retranqueo-opt btn-b1-retranqueo-reset hidden" id="btn-b1-retranqueo-reset" data-retranqueo="0" title="Quitar retranqueo">0 mm</button>
-            <button type="button" class="btn-b1-retranqueo-done" id="btn-b1-retranqueo-done">LISTO</button>
-          </div>
-        </div>
-      </div>
-
+      <!-- Barra superior integrada de herramientas de vectores (unida a la cabecera, de izquierda a derecha) -->
       <div class="vector-editor" id="vector-editor">
-        <div class="vector-editor-top">
-          <button id="vector-toggle" type="button" aria-expanded="false">Editar vectores</button>
-          <button id="btn-header-add-die" class="btn-canvas-add-die" type="button" title="Añade troquel a la biblioteca" aria-label="Añade troquel a la biblioteca">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.2" fill="none">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </button>
-          <button id="menu-open-artwork" class="btn-canvas-add-die" type="button" title="Cargar diseño / Arte · Ctrl + V" aria-label="Cargar diseño / Arte">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-              <polyline points="21 15 16 10 5 21"></polyline>
-            </svg>
-          </button>
-        </div>
-        <div class="vector-editor-subrow">
-          <button id="tool-pick-base" class="btn-pick-base-under-vector" type="button" title="Elegir la base del troquel para calcular las cotas (Ancho, Largo y Alto)">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
-              <rect x="4" y="14" width="16" height="5" rx="1"></rect>
-              <path d="M12 3v8"></path>
-              <polyline points="8 7 12 11 16 7"></polyline>
-            </svg>
-            <span>Elegir base</span>
-          </button>
-          <button id="tool-pick-support" class="btn-pick-base-under-vector btn-pick-support-under-vector" type="button" title="Seleccionar el área sobre la que se apoya y forma el troquel en 3D">
-            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none">
-              <line x1="3" y1="19" x2="21" y2="19"></line>
-              <rect x="6" y="11" width="12" height="5" rx="1"></rect>
-              <path d="M12 4v5"></path>
-            </svg>
-            <span>Seleccionar apoyo</span>
-          </button>
-        </div>
-        <div id="vector-controls" hidden>
-          <div class="vector-panel-heading">Herramientas 2D <button id="vector-close" type="button" aria-label="Cerrar editor">×</button></div>
+        <div id="vector-controls" class="vector-dock-bar">
+          <div class="vector-editor-top">
+            <button id="vector-toggle" type="button" aria-expanded="false" class="vector-mode-pill" title="Activar o desactivar edición de vectores">Editar vectores</button>
+            <button id="btn-header-add-die" class="btn-canvas-add-die" type="button" title="Añade troquel a la biblioteca" aria-label="Añade troquel a la biblioteca">
+              <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2.2" fill="none">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <button id="menu-open-artwork" class="btn-canvas-add-die" type="button" title="Cargar diseño / Arte · Ctrl + V" aria-label="Cargar diseño / Arte">
+              <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                <polyline points="21 15 16 10 5 21"></polyline>
+              </svg>
+            </button>
+            <button id="tool-pick-base" class="btn-pick-base-under-vector" type="button" title="Elegir la base del troquel para calcular las cotas (Ancho, Largo y Alto)">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+                <rect x="4" y="14" width="16" height="5" rx="1"></rect>
+                <path d="M12 3v8"></path>
+                <polyline points="8 7 12 11 16 7"></polyline>
+              </svg>
+              <span>Elegir base</span>
+            </button>
+            <button id="tool-pick-support" class="btn-pick-base-under-vector btn-pick-support-under-vector" type="button" title="Seleccionar el área sobre la que se apoya y forma el troquel en 3D">
+              <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" stroke-width="2" fill="none">
+                <line x1="3" y1="19" x2="21" y2="19"></line>
+                <rect x="6" y="11" width="12" height="5" rx="1"></rect>
+                <path d="M12 4v5"></path>
+              </svg>
+              <span>Seleccionar apoyo</span>
+            </button>
+            <button id="vector-close" type="button" class="vector-close-compat" aria-label="Cerrar editor">×</button>
+          </div>
+
+          <span class="vector-bar-sep" aria-hidden="true"></span>
+
           <div class="vector-tools" role="group" aria-label="Herramientas de vectores">
             <button id="vector-tool-select" type="button" class="active">↖ Seleccionar</button>
             <button id="vector-tool-dimension" type="button">📏 Acotar</button>
@@ -751,19 +693,32 @@
             <button id="vector-tool-fillet" type="button">◜ Radio</button>
             <button id="vector-tool-scale" type="button">⤢ Escalar</button>
           </div>
-          <label>Tipo de trazo <select id="vector-kind"><option value="cut">Azul · Corte</option><option value="fold">Rojo · Hendido</option></select></label>
-          <div id="vector-color-controls" hidden><button id="vector-apply-kind" type="button">Aplicar tipo a la selección</button></div>
-          <label id="vector-value-label">Radio / chaflán (mm) <input id="vector-value" type="text" inputmode="decimal" value="5"></label>
-          <p id="vector-help">Selecciona un trazo o el interior de un agujero. Mayús para desplazar. Esc cancela.</p>
-          <div id="vector-selection">Sin selección</div>
-          <div id="vector-hole-controls" hidden>
-            <label>Ancho (mm) <input id="vector-hole-width" type="text" inputmode="decimal"></label>
-            <label>Alto (mm) <input id="vector-hole-height" type="text" inputmode="decimal"></label>
-            <button id="vector-apply-hole" type="button">Cambiar tamaño del agujero</button>
-          </div>
 
-          <div class="vector-history"><button id="vector-undo" type="button">↶ Deshacer</button><button id="vector-redo" type="button">↷ Rehacer</button></div>
-          <p id="vector-status" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
+          <span class="vector-bar-sep" aria-hidden="true"></span>
+
+          <div class="vector-inline-params">
+            <label class="vector-inline-field" title="Tipo de trazo">
+              <span>Trazo</span>
+              <select id="vector-kind"><option value="cut">Azul · Corte</option><option value="fold">Rojo · Hendido</option></select>
+            </label>
+            <div id="vector-color-controls" hidden><button id="vector-apply-kind" type="button">Aplicar tipo</button></div>
+            <label id="vector-value-label" class="vector-inline-field" title="Radio / chaflán (mm)">
+              <span>R/Ch</span>
+              <input id="vector-value" type="text" inputmode="decimal" value="5">
+            </label>
+            <div class="vector-history">
+              <button id="vector-undo" type="button" title="Deshacer (Ctrl + Z)">↶</button>
+              <button id="vector-redo" type="button" title="Rehacer (Ctrl + Alt + Z)">↷</button>
+            </div>
+            <div id="vector-selection" class="vector-selection-inline">Sin selección</div>
+            <div id="vector-hole-controls" hidden>
+              <label>Ancho (mm) <input id="vector-hole-width" type="text" inputmode="decimal"></label>
+              <label>Alto (mm) <input id="vector-hole-height" type="text" inputmode="decimal"></label>
+              <button id="vector-apply-hole" type="button">Aplicar</button>
+            </div>
+            <p id="vector-help" class="vector-sr-only">Selecciona un trazo o el interior de un agujero. Mayús para desplazar. Esc cancela.</p>
+            <p id="vector-status" class="vector-sr-only" role="status">Exportar descarga el plano sin guardar en la biblioteca.</p>
+          </div>
         </div>
 
         <!-- Modal discreto de medidas de herramienta (Línea / Círculo / Asa / Mover y Copiar) -->
@@ -877,40 +832,90 @@
           </div>
         </div>
       </div>
-      <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
-      <canvas id="canvas-2d"></canvas>
 
-      <!-- Pantalla inicial sobre canvas vacío -->
-      <div id="empty-canvas-start" class="empty-canvas-start" role="region" aria-label="Acciones iniciales">
-        <div class="empty-canvas-card">
-          <h2 class="empty-canvas-title">¿Cómo quieres empezar?</h2>
-          <p class="empty-canvas-subtitle">Crea una caja B1 con tus medidas o elige un troquel guardado de tu biblioteca.</p>
-          <div class="empty-canvas-actions">
-            <button id="btn-start-new-b1" type="button" class="start-action-btn start-action-b1">
-              <span class="start-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
-                </svg>
-              </span>
-              <span class="start-action-label">NUEVA CAJA B1</span>
-              <span class="start-action-hint">Introduce largo, ancho y alto en mm</span>
-            </button>
-            <button id="btn-start-new-dieline" type="button" class="start-action-btn start-action-library">
-              <span class="start-action-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-                  <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-                  <rect x="3" y="14" width="7" height="7" rx="1"></rect>
-                  <rect x="14" y="14" width="7" height="7" rx="1"></rect>
-                </svg>
-              </span>
-              <span class="start-action-label">Nuevo Troquel</span>
-              <span class="start-action-hint">Abrir galería de Biblioteca · Mis modelos</span>
-            </button>
+      <!-- Área principal del lienzo 2D bajo la barra integrada -->
+      <div class="canvas-2d-stage">
+        <!-- Leyenda superior izquierda (Corte, Hendido) -->
+        <div class="dieline-legend-card">
+          <div class="legend-entry">
+            <span class="legend-swatch trim"></span>
+            <span class="legend-text">Corte</span>
+          </div>
+          <div class="legend-entry">
+            <span class="legend-swatch crease"></span>
+            <span class="legend-text">Hendido</span>
           </div>
         </div>
+
+        <!-- Controles izquierdos bajo la leyenda -->
+        <div class="canvas-left-stack">
+          <div class="canvas-view-controls">
+            <div class="canvas-control-row">
+              <div class="control-label-micro">Cotas</div>
+              <div class="segmented-control-3" id="dimension-mode-switch" role="radiogroup" aria-label="Visualización de cotas">
+                <button type="button" class="seg-btn-3" data-mode="none" title="No mostrar cotas">Ocultas</button>
+                <button type="button" class="seg-btn-3 active" data-mode="main" title="Mostrar las 3 cotas principales (L, W, H)">Principales</button>
+                <button type="button" class="seg-btn-3" data-mode="all" title="Mostrar todas las cotas del troquel">Todas</button>
+              </div>
+              <input type="range" id="slider-dimension-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de las cotas" aria-label="Tamaño de las cotas" />
+            </div>
+            <div class="canvas-control-row">
+              <button type="button" class="btn-toggle-areas active" id="btn-toggle-area-names" title="Mostrar u ocultar los nombres de cada área">
+                <span class="btn-toggle-dot"></span>
+                <span class="btn-toggle-text">Nombres de áreas</span>
+              </button>
+              <input type="range" id="slider-area-name-size" class="canvas-micro-slider" min="0.6" max="2.0" step="0.05" value="1" title="Tamaño de los nombres de áreas" aria-label="Tamaño de los nombres de áreas" />
+            </div>
+          </div>
+
+          <div class="fold-order-controls" id="fold-order-controls">
+            <div class="fold-order-header">
+              <span class="control-label-micro">Establecer orden de plegado</span>
+            </div>
+            <div class="fold-order-steps-row">
+              <button type="button" id="btn-reset-fold-order" class="btn-fold-order-reset" title="Borrar toda la animación y empezar de cero">Reset</button>
+              <button type="button" id="btn-add-fold-step" class="btn-fold-order-add" title="Añadir paso de plegado (+)">+</button>
+              <div id="fold-order-steps" class="fold-order-steps"></div>
+            </div>
+          </div>
+          <button type="button" id="btn-rotate-dieline" class="btn-rotate-dieline" title="Girar todo el troquel 90° en sentido horario">↻ Girar troquel 90°</button>
+          <div class="start-quick-actions" role="group" aria-label="Crear o elegir troquel">
+            <button id="btn-start-new-b1" type="button" class="btn-quick-new-b1" title="Crear una nueva caja americana B1 indicando largo, ancho y alto">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
+              <span>NUEVA CAJA B1</span>
+            </button>
+            <button id="btn-start-new-dieline" type="button" class="btn-quick-new-dieline" title="Abrir Biblioteca · Mis modelos en una galería amplia">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+              </svg>
+              <span>Nuevo Troquel</span>
+            </button>
+          </div>
+          <div class="b1-retranqueos-control hidden" id="b1-retranqueos-control">
+            <button type="button" id="btn-b1-retranqueos" class="btn-b1-retranqueos" aria-expanded="false" title="Aplicar retranqueos para troquel en caja B1 americana">
+              <span>RETRANQUEOS PARA TROQUEL</span>
+              <span class="b1-retranqueo-badge hidden" id="b1-retranqueo-badge"></span>
+            </button>
+            <div class="b1-retranqueos-menu hidden" id="b1-retranqueos-menu" role="group" aria-label="Retranqueos para troquel">
+              <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="1.5">1,5 mm</button>
+              <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="3">3 mm</button>
+              <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="4.5">4,5 mm</button>
+              <button type="button" class="btn-b1-retranqueo-opt" data-retranqueo="7">7 mm</button>
+              <button type="button" class="btn-b1-retranqueo-opt btn-b1-retranqueo-reset hidden" id="btn-b1-retranqueo-reset" data-retranqueo="0" title="Quitar retranqueo">0 mm</button>
+              <button type="button" class="btn-b1-retranqueo-done" id="btn-b1-retranqueo-done">LISTO</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
+        <canvas id="canvas-2d"></canvas>
       </div>
 
     </section>

@@ -2757,3 +2757,295 @@ html[data-theme="dark"] .app-theme-toast {
   border-color: #38bdf8;
   color: #f8fafc;
 }
+
+/* ============================================================================
+   BARRA SUPERIOR INTEGRADA DE EDICIÓN DE VECTORES (UNIDA A LA CABECERA)
+   ============================================================================ */
+.canvas-2d-viewport {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.canvas-2d-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vector-editor {
+  position: relative;
+  top: auto;
+  left: auto;
+  width: 100%;
+  flex: 0 0 auto;
+  z-index: 12;
+  background: var(--bg-topbar, #ffffff);
+  border-bottom: 1px solid var(--border-subtle, #e0e5eb);
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary, #1c2633);
+}
+
+#vector-controls.vector-dock-bar {
+  position: static;
+  top: auto;
+  left: auto;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  display: flex !important;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.vector-editor-top {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.vector-bar-sep {
+  width: 1px;
+  height: 22px;
+  background: var(--border-subtle, #dce3eb);
+  flex-shrink: 0;
+}
+
+.vector-editor button {
+  padding: 5px 8px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+#vector-toggle.vector-mode-pill {
+  box-shadow: none;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+#vector-toggle.vector-mode-pill[aria-expanded="true"] {
+  background: #e0f2fe;
+  border-color: #0284c7;
+  color: #0369a1;
+}
+
+.vector-close-compat {
+  display: none !important;
+}
+
+.btn-canvas-add-die {
+  width: 30px !important;
+  height: 30px !important;
+  box-shadow: none !important;
+}
+
+.vector-editor .btn-pick-base-under-vector {
+  height: 30px;
+  padding: 0 9px;
+  box-shadow: none;
+  font-size: 11.5px;
+}
+
+.vector-tools {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.vector-tools button {
+  text-align: center;
+}
+
+.vector-inline-params {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.vector-inline-field {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  margin: 0 !important;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #536274);
+  white-space: nowrap;
+}
+
+.vector-editor .vector-inline-field select {
+  width: auto;
+  height: 30px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  border-radius: 6px;
+}
+
+.vector-editor .vector-inline-field input {
+  width: 48px;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid #d5dce5;
+  border-radius: 6px;
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.vector-history {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0;
+}
+
+.vector-history button {
+  padding: 0 8px;
+  font-size: 14px;
+}
+
+#vector-selection.vector-selection-inline {
+  border-top: none;
+  padding-top: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #536274);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vector-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.vector-tool-modal {
+  top: calc(100% + 8px);
+  left: 16px;
+}
+
+/* Desplazar tarjeta 3D justo debajo de la barra superior integrada */
+.right-floating-container {
+  top: 56px;
+  height: calc((100% - 68px) * 2 / 3);
+  max-height: calc((100% - 68px) * 2 / 3);
+}
+
+/* ============================================================================
+   BOTONES NUEVA CAJA B1 Y NUEVO TROQUEL DEBAJO DE 'GIRAR TROQUEL 90°'
+   ============================================================================ */
+.start-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 245px;
+}
+
+.btn-quick-new-b1,
+.btn-quick-new-dieline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(32, 48, 70, 0.08);
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s;
+}
+
+.btn-quick-new-b1 {
+  border: 1px solid #0788c6;
+  background: #0788c6;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+.btn-quick-new-b1:hover {
+  background: #0369a1;
+  border-color: #0369a1;
+}
+
+.btn-quick-new-dieline {
+  border: 1px solid #cbd5e1;
+  background: rgba(255, 255, 255, 0.96);
+  color: #1e293b;
+}
+.btn-quick-new-dieline:hover {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+  color: #0369a1;
+}
+
+.btn-quick-new-b1:focus-visible,
+.btn-quick-new-dieline:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+}
+
+/* Modo oscuro para barra integrada y botones rápidos */
+html[data-theme="dark"] .vector-editor {
+  background: var(--bg-topbar);
+  border-bottom-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+html[data-theme="dark"] #vector-controls.vector-dock-bar {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+html[data-theme="dark"] .vector-bar-sep {
+  background: #263349;
+}
+html[data-theme="dark"] #vector-toggle.vector-mode-pill[aria-expanded="true"],
+html[data-theme="dark"] .vector-tools button.active {
+  background: rgba(56, 189, 248, 0.22);
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
+html[data-theme="dark"] .vector-inline-field,
+html[data-theme="dark"] #vector-selection.vector-selection-inline {
+  color: #94a3b8;
+}
+html[data-theme="dark"] .btn-quick-new-dieline {
+  background: #151e2e;
+  border-color: #2c3b55;
+  color: #e2e8f0;
+}
+html[data-theme="dark"] .btn-quick-new-dieline:hover {
+  background: #1f2d45;
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}

@@ -5238,9 +5238,10 @@
     };
     const adjImg = document.getElementById('vector-adjust-image');
     if (adjImg) adjImg.onclick = () => { if (state.artwork) openArtworkOptions(); else vectorMessage('Sube primero una imagen.'); };
+    if (controls) controls.hidden = false;
     const toggle = on => {
       vectorEditing = on;
-      controls.hidden = !on;
+      if (controls) controls.hidden = false;
       const toggleBtn = document.getElementById('vector-toggle');
       if (toggleBtn?.setAttribute) toggleBtn.setAttribute('aria-expanded', String(on));
       vectorSelection = null;
@@ -5261,7 +5262,10 @@
     document.getElementById('vector-close').onclick = () => toggle(false);
     for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet','scale']) {
       const btn = document.getElementById('vector-tool-'+tool);
-      if (btn) btn.onclick = () => setVectorTool(tool);
+      if (btn) btn.onclick = () => {
+        if (!vectorEditing) toggle(true);
+        setVectorTool(tool);
+      };
     }
 
     // Herramienta Escalar: origen por defecto (centro del diseño) + factor de multiplicación

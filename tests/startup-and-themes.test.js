@@ -141,9 +141,16 @@ test('index.html incluye botones de inicio, modales accesibles y botones de tema
   assert.ok(cimpackIdx > darkIdx, 'El botón theme Cimpack debe ir a la derecha del icono de modo oscuro');
   assert.match(html, /id="btn-theme-cimpack"[^>]*>theme Cimpack</);
 
-  assert.match(html, /id="empty-canvas-start"/);
+  assert.equal(html.includes('id="empty-canvas-start"'), false, 'No debe existir tarjeta/modal central sobre el canvas vacío');
+  const rotateIdx = html.indexOf('id="btn-rotate-dieline"');
+  const b1Idx = html.indexOf('id="btn-start-new-b1"');
+  const newDieIdx = html.indexOf('id="btn-start-new-dieline"');
+  assert.ok(rotateIdx > 0 && b1Idx > rotateIdx && newDieIdx > b1Idx, 'NUEVA CAJA B1 y Nuevo Troquel deben ir debajo de Girar troquel 90°');
   assert.match(html, /id="btn-start-new-b1"[\s\S]*?NUEVA CAJA B1/);
   assert.match(html, /id="btn-start-new-dieline"[\s\S]*?Nuevo Troquel/);
+
+  assert.match(html, /id="vector-controls" class="vector-dock-bar">/, 'La barra de herramientas de vectores debe estar siempre visible (sin atributo hidden)');
+  assert.ok(html.indexOf('id="vector-editor"') < html.indexOf('class="canvas-2d-stage"'), 'La barra de vectores debe ir arriba del área del canvas');
 
   assert.match(html, /id="new-b1-dialog"[^>]*aria-labelledby="new-b1-title"/);
   assert.match(html, /for="new-b1-length"/);
@@ -154,20 +161,17 @@ test('index.html incluye botones de inicio, modales accesibles y botones de tema
   assert.match(html, /id="my-models-modal-grid"/);
 });
 
-test('al iniciar la app el canvas comienza vacío y la pantalla inicial es visible', () => {
-  const { api, el } = setupApp();
-  api.updateEmptyCanvasStartUI();
+test('al iniciar la app el canvas comienza vacío', () => {
+  const { api } = setupApp();
   assert.equal(api.state.dieline, null);
-  assert.equal(el('empty-canvas-start').classList.contains('hidden'), false);
 });
 
-test('NUEVA CAJA B1 carga la caja B1, oculta el inicio, abre la modal y aplica largo, ancho y alto', async () => {
+test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, ancho y alto', async () => {
   const { api, el } = setupApp();
   await api.startNewB1Box();
 
   assert.ok(api.state.dieline, 'Debe cargar un troquel en el canvas');
   assert.equal(engine.detectB1AmericanBox(api.state.dieline).isB1, true, 'El modelo cargado debe ser una caja B1');
-  assert.equal(el('empty-canvas-start').classList.contains('hidden'), true, 'La pantalla inicial debe ocultarse');
   assert.equal(el('new-b1-dialog').open, true, 'Debe abrirse la modal accesible de medidas');
 
   el('new-b1-length').value = '400';
