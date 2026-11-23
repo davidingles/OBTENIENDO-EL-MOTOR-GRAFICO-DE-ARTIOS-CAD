@@ -706,6 +706,11 @@
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
+    state.canAddToLibrary = false;
+    document.getElementById('btn-add-library')?.classList.add('hidden');
+    clearArtwork();
+    state.baseDieline = model;
+    state.dieline = model;
     if (typeof setHeaderActiveModel === 'function') {
       const entry = state.activeFefcoEntry;
       const cleanName = entry
@@ -715,11 +720,6 @@
         : String(displayTitle || '').replace(/\.[^.]+$/, '');
       setHeaderActiveModel(cleanName, false);
     }
-    state.canAddToLibrary = false;
-    document.getElementById('btn-add-library')?.classList.add('hidden');
-    clearArtwork();
-    state.baseDieline = model;
-    state.dieline = model;
     if (typeof updateEmptyCanvasStartUI === 'function') updateEmptyCanvasStartUI();
     state.openParamsValues = {};
     state.symmetryLinks = {};

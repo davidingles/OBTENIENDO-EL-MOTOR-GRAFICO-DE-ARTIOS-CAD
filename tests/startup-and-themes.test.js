@@ -122,6 +122,7 @@ function setupApp() {
         applyAppTheme,
         updateEmptyCanvasStartUI,
         resetAppToInitialState,
+        loadFefcoModel,
         startNewB1Box,
         applyNewB1DimensionsFromModal,
         getMyModelsForModal,
@@ -275,4 +276,14 @@ test('Fondo automático existe en PIEZAS y genera pliegues oblicuos a 45° y pes
   assert.equal(tabs.length, 2, 'Debe generar las 2 pestañas oblicuas de pegado del fondo automático');
   const obliqueHinges = withAutoBottom.hinges.filter(h => Number.isFinite(h.preservedPlanarSlope) && Math.abs(Math.abs(h.preservedPlanarSlope) - 1) < 0.05);
   assert.equal(obliqueHinges.length, 2, 'Debe crear las 2 bisagras oblicuas a 45°');
+});
+
+test('al abrir un troquel por primera vez desde el canvas vacío su nombre aparece en la cabecera al primer clic', async () => {
+  const { api, el } = setupApp();
+  assert.equal(api.state.dieline, null);
+  const firstModel = global.BUNDLED_USER_MODELS[0];
+  await api.loadFefcoModel(firstModel, true);
+  assert.equal(el('header-active-model').classList.contains('hidden'), false, 'El contenedor del nombre en cabecera debe ser visible al primer clic');
+  assert.equal(el('header-active-model-name').textContent, firstModel.name, 'Debe mostrar el nombre del modelo al primer clic');
+  assert.equal(el('header-active-model-modified').classList.contains('hidden'), true, 'No debe mostrar modificado recién abierto');
 });
