@@ -312,20 +312,9 @@
     init2DCanvasInteractions();
     userLibraryReady = loadUserLibrary();
 
-    // Cargar por defecto el modelo 150010 de los pantallazos del usuario
-    const pacIndex = window.PACDORA_CATALOG_INDEX;
-    const allModels = (pacIndex && Array.isArray(pacIndex.models))
-      ? pacIndex.models
-      : (window.FEFCO_CATALOG || []);
-
-    const target150010 = allModels.find(m => Number(m.num) === 150010 || Number(m.id) === 1);
-    if (target150010) {
-      loadFefcoModel(target150010, true);
-    } else if (window.FEFCO_CATALOG && window.FEFCO_CATALOG.length > 0) {
-      loadFefcoModel(window.FEFCO_CATALOG[0], true);
-    } else if (window.ARTIOS_DEFAULT_SVG) {
-      loadSVGString(window.ARTIOS_DEFAULT_SVG, 'b1 caja americana.svg', true);
-    }
+    // Iniciar con el canvas vacío mostrando las acciones iniciales (NUEVA CAJA B1 / Nuevo Troquel)
+    updateEmptyCanvasStartUI();
+    render2FDieline();
 
     requestAnimationFrame(animateLoop);
   });
@@ -339,7 +328,7 @@
     const height = container.clientHeight || 600;
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf1f3f6);
+    scene.background = new THREE.Color(isDarkTheme() ? 0x0d131d : 0xf1f3f6);
 
     camera = new THREE.PerspectiveCamera(38, width / height, 1, 15000);
     camera.position.set(360, 290, 420);
@@ -715,6 +704,7 @@
     clearArtwork();
     state.baseDieline = model;
     state.dieline = model;
+    if (typeof updateEmptyCanvasStartUI === 'function') updateEmptyCanvasStartUI();
     state.openParamsValues = {};
     state.symmetryLinks = {};
     state.activePart = 'standard';
@@ -2427,12 +2417,12 @@
 
   function render2FDieline() {
     const canvas = document.getElementById('canvas-2d');
-    if (!canvas || !state.dieline) return;
+    if (!canvas) return;
 
     const container = canvas.parentElement;
     const dpr = window.devicePixelRatio || 1;
-    const w = container.clientWidth;
-    const h = container.clientHeight;
+    const w = container?.clientWidth || 0;
+    const h = container?.clientHeight || 0;
     if (w === 0 || h === 0) return;
 
     if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
@@ -2440,19 +2430,25 @@
       canvas.height = Math.floor(h * dpr);
     }
 
+    const dark = isDarkTheme();
     const ctx = canvas.getContext('2d');
     ctx.save();
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#f1f3f6';
+    ctx.fillStyle = dark ? '#0d131d' : '#f1f3f6';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (!state.dieline) {
+      ctx.restore();
+      return;
+    }
 
     const model = state.dieline;
     const bounds = model.bounds;
     const tf = get2DTransform(canvas, bounds);
 
     const stepMM = 50;
-    ctx.strokeStyle = 'rgba(80, 98, 120, 0.08)';
+    ctx.strokeStyle = dark ? 'rgba(148, 163, 184, 0.09)' : 'rgba(80, 98, 120, 0.08)';
     ctx.lineWidth = 1;
     const startX = Math.floor((bounds.minX - 100) / stepMM) * stepMM;
     const endX = Math.ceil((bounds.maxX + 100) / stepMM) * stepMM;
@@ -2686,12 +2682,14 @@
           const tw = ctx.measureText(valDisp).width;
           const padX = 3 * dimScale * dpr;
           const boxH = 14 * dimScale * dpr;
-          ctx.fillStyle = isSelectedDim ? '#f0fdff' : 'rgba(255, 255, 255, 0.94)';
+          ctx.fillStyle = isSelectedDim
+            ? (dark ? '#0c4a6e' : '#f0fdff')
+            : (dark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.94)');
           ctx.fillRect(mx - tw * 0.5 - padX, my - boxH * 0.5, tw + padX * 2, boxH);
-          ctx.strokeStyle = isSelectedDim ? '#00cce5' : '#0284c7';
+          ctx.strokeStyle = isSelectedDim ? '#00cce5' : (dark ? '#38bdf8' : '#0284c7');
           ctx.lineWidth = (isSelectedDim ? 1.4 : 0.8) * dpr;
           ctx.strokeRect(mx - tw * 0.5 - padX, my - boxH * 0.5, tw + padX * 2, boxH);
-          ctx.fillStyle = isSelectedDim ? '#0891b2' : '#0284c7';
+          ctx.fillStyle = isSelectedDim ? (dark ? '#67e8f9' : '#0891b2') : (dark ? '#7dd3fc' : '#0284c7');
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(valDisp, mx, my);
@@ -2721,7 +2719,7 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const isSelectedLabel = (Array.isArray(state.selectedFaceIds) && state.selectedFaceIds.some(id => String(id) === String(face.id))) || face.id === state.selectedFaceId;
-        ctx.fillStyle = isSelectedLabel ? '#006ca8' : '#39475a';
+        ctx.fillStyle = isSelectedLabel ? (dark ? '#38bdf8' : '#006ca8') : (dark ? '#cbd5e1' : '#39475a');
         const shortName = face.label.replace('Superior', 'Sup.').replace('Inferior', 'Inf.');
         ctx.fillText(shortName, 0, -6 * areaScale * dpr);
         ctx.restore();
@@ -3545,6 +3543,357 @@
 
     // 13. Inicializar catálogo de dielines dentro de la pestaña Dielines
     initDrawerCatalogUI();
+
+    // 14. Inicializar pantalla inicial (canvas vacío), modales de inicio y selector de temas
+    initStartupAndThemeUI();
+  }
+
+  // ============================================================================
+  // TEMAS (MODO OSCURO + THEME CIMPACK) Y PANTALLA INICIAL (CAJA B1 / MIS MODELOS)
+  // ============================================================================
+  const THEME_STORAGE_KEY = 'troqueles-vicente-theme-v1';
+  let themeToastTimer = null;
+  let myModelsModalObserver = null;
+  let myModelsModalBoardFilter = 'ALL';
+  let myModelsModalSearch = '';
+
+  function isDarkTheme() {
+    if (state.theme === 'dark') return true;
+    return typeof document !== 'undefined' && document.documentElement?.getAttribute?.('data-theme') === 'dark';
+  }
+
+  function showThemeToast(message) {
+    const toast = document.getElementById('app-theme-toast');
+    if (!toast) return;
+    toast.textContent = message;
+    toast.classList.remove('hidden');
+    clearTimeout(themeToastTimer);
+    themeToastTimer = setTimeout(() => {
+      toast.classList.add('hidden');
+    }, 2800);
+  }
+
+  function applyAppTheme(theme, persist = true) {
+    const normalized = theme === 'dark' ? 'dark' : 'light';
+    state.theme = normalized;
+    if (typeof document !== 'undefined' && document.documentElement) {
+      if (normalized === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      else document.documentElement.removeAttribute('data-theme');
+    }
+    const darkBtn = document.getElementById('btn-theme-dark');
+    if (darkBtn) {
+      const isDark = normalized === 'dark';
+      darkBtn.setAttribute('aria-pressed', String(isDark));
+      darkBtn.title = isDark ? 'Activar modo claro' : 'Activar modo oscuro';
+    }
+    if (persist) {
+      try { window.localStorage?.setItem(THEME_STORAGE_KEY, normalized); } catch {}
+    }
+    if (scene && scene.background && typeof scene.background.set === 'function') {
+      scene.background.set(normalized === 'dark' ? 0x0d131d : 0xf1f3f6);
+    }
+    render2FDieline();
+  }
+
+  function updateEmptyCanvasStartUI() {
+    const startOverlay = document.getElementById('empty-canvas-start');
+    if (!startOverlay) return;
+    startOverlay.classList.toggle('hidden', Boolean(state.dieline));
+  }
+
+  function findDefaultB1ModelEntry() {
+    const allUser = Array.isArray(userLibraryModels) && userLibraryModels.length
+      ? userLibraryModels
+      : (Array.isArray(window.BUNDLED_USER_MODELS) ? UserLibrary.normalize(window.BUNDLED_USER_MODELS) : []);
+    const exact = allUser.find(m => /^b1 caja americana$/i.test(String(m.name || '').trim()));
+    if (exact) return exact;
+    return allUser.find(m => /\bb1\b/i.test(String(m.name || '')) && !/sin-retranqueos/i.test(String(m.name || ''))) || null;
+  }
+
+  async function startNewB1Box() {
+    try { await userLibraryReady; } catch {}
+    const b1Entry = findDefaultB1ModelEntry();
+    if (b1Entry) {
+      await loadFefcoModel(b1Entry, true);
+    } else if (window.ARTIOS_DEFAULT_SVG) {
+      loadSVGString(window.ARTIOS_DEFAULT_SVG, 'b1 caja americana.svg', true);
+    }
+    openNewB1DimensionsModal();
+  }
+
+  function syncNewB1ModalInputsFromState() {
+    const lEl = document.getElementById('new-b1-length');
+    const wEl = document.getElementById('new-b1-width');
+    const hEl = document.getElementById('new-b1-height');
+    if (lEl) lEl.value = String(+Number(state.paramL || 300).toFixed(2));
+    if (wEl) wEl.value = String(+Number(state.paramW || 200).toFixed(2));
+    if (hEl) hEl.value = String(+Number(state.paramH || 150).toFixed(2));
+  }
+
+  function openNewB1DimensionsModal() {
+    const dialog = document.getElementById('new-b1-dialog');
+    if (!dialog) return;
+    syncNewB1ModalInputsFromState();
+    const status = document.getElementById('new-b1-status');
+    if (status) status.textContent = '';
+    if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+    const lEl = document.getElementById('new-b1-length');
+    if (lEl) {
+      lEl.focus?.();
+      lEl.select?.();
+    }
+  }
+
+  function applyNewB1DimensionsFromModal(closeOnSuccess = false) {
+    const lEl = document.getElementById('new-b1-length');
+    const wEl = document.getElementById('new-b1-width');
+    const hEl = document.getElementById('new-b1-height');
+    const status = document.getElementById('new-b1-status');
+    const dialog = document.getElementById('new-b1-dialog');
+
+    const parseDim = el => {
+      const raw = String(el?.value ?? '').trim();
+      if (!raw || /[+\-*/×÷(]\s*$/.test(raw)) return NaN;
+      return parseMathValue(raw);
+    };
+
+    const nl = parseDim(lEl);
+    const nw = parseDim(wEl);
+    const nh = parseDim(hEl);
+
+    const invalid = [
+      { val: nl, el: lEl, label: 'Largo' },
+      { val: nw, el: wEl, label: 'Ancho' },
+      { val: nh, el: hEl, label: 'Alto' }
+    ].find(item => !Number.isFinite(item.val) || item.val <= 0 || item.val > 2000);
+
+    if (invalid) {
+      if (closeOnSuccess) {
+        if (status) status.textContent = `Introduce un valor válido para ${invalid.label} (entre 1 y 2000 mm).`;
+        invalid.el?.focus?.();
+      }
+      return false;
+    }
+
+    if (status) status.textContent = '';
+    applyParametricResizeRealTime(nl, nw, nh);
+    const sideL = document.getElementById('input-length');
+    const sideW = document.getElementById('input-width');
+    const sideH = document.getElementById('input-height');
+    if (sideL) sideL.value = String(+nl.toFixed(2));
+    if (sideW) sideW.value = String(+nw.toFixed(2));
+    if (sideH) sideH.value = String(+nh.toFixed(2));
+    if (closeOnSuccess && dialog?.open && typeof dialog.close === 'function') {
+      dialog.close();
+    }
+    return true;
+  }
+
+  function getMyModelsForModal() {
+    const allModels = allCatalogModels();
+    const normalizar = value => String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const q = normalizar(myModelsModalSearch.trim());
+    return allModels.filter(m => {
+      const isMyModel = Boolean(m.userModel || (Array.isArray(m.modelCategories) && m.modelCategories.includes('user-models')));
+      if (!isMyModel) return false;
+      const mBoard = m.boardCode || 'C1';
+      if (myModelsModalBoardFilter !== 'ALL' && mBoard !== myModelsModalBoardFilter) return false;
+      if (!q) return true;
+      const hay = normalizar(`${m.fefcoCode || ''} ${m.num} ${m.name} ${nombreModelo(m)} ${mBoard}`);
+      return hay.includes(q);
+    });
+  }
+
+  function renderMyModelsModalGrid() {
+    const gridEl = document.getElementById('my-models-modal-grid');
+    if (!gridEl) return;
+    gridEl.innerHTML = '';
+    myModelsModalObserver?.disconnect();
+    const previewJobs = new WeakMap();
+
+    const enqueue = card => {
+      const item = previewJobs.get(card);
+      catalogPreviewQueue = catalogPreviewQueue.then(async () => {
+        if (!card.isConnected) return;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const flat = card.querySelector('.card-2d-canvas-wrap canvas');
+        const folded = card.querySelector('.card-3d-thumb-wrap canvas');
+        if (!flat || !folded) return;
+        const cached = catalogPreviewCache.get(Number(item.num));
+        if (cached) {
+          for (const [target, source] of [[flat, cached.flat], [folded, cached.folded]]) {
+            target.width = source.width;
+            target.height = source.height;
+            target.getContext('2d').drawImage(source, 0, 0);
+          }
+          return;
+        }
+        const model = item.userModel || item.bundledModel
+          ? item.geometry
+          : DielineEngine.buildDielineModelFromPacdora(item.knifeData, item);
+        if (!model || !card.isConnected) return;
+        drawMiniDielinePreview(flat, model);
+        if (item.thumbnail3dDataUrl) {
+          await drawSaved3DThumbnail(folded, item.thumbnail3dDataUrl, model);
+        } else {
+          drawCatalog3DPreview(folded, model);
+        }
+        const copy = source => {
+          const c = document.createElement('canvas');
+          c.width = source.width;
+          c.height = source.height;
+          c.getContext('2d').drawImage(source, 0, 0);
+          return c;
+        };
+        catalogPreviewCache.set(Number(item.num), { flat: copy(flat), folded: copy(folded) });
+        if (catalogPreviewCache.size > 80) catalogPreviewCache.delete(catalogPreviewCache.keys().next().value);
+      }).catch(error => console.error('No se pudo generar la miniatura en modal:', item?.num, error));
+    };
+
+    if (window.IntersectionObserver) {
+      myModelsModalObserver = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            myModelsModalObserver.unobserve(entry.target);
+            enqueue(entry.target);
+          }
+        }
+      }, { root: gridEl, rootMargin: '140px' });
+    }
+
+    const items = getMyModelsForModal();
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'my-models-modal-empty';
+      empty.textContent = myModelsModalSearch.trim()
+        ? 'No se encontraron modelos guardados que coincidan con tu búsqueda.'
+        : 'Todavía no hay troqueles guardados en «Mis modelos» para este filtro.';
+      gridEl.appendChild(empty);
+      return;
+    }
+
+    const dialog = document.getElementById('my-models-modal');
+    for (const item of items) {
+      const card = document.createElement('div');
+      card.setAttribute('role', 'listitem');
+      card.tabIndex = 0;
+      card.className = 'model-preview-card' + (state.activeFefcoEntry && Number(state.activeFefcoEntry.num) === Number(item.num) ? ' active' : '');
+      const cleanDesc = nombreModelo(item);
+
+      card.innerHTML = `
+        <div class="card-split-previews">
+          <div class="card-2d-canvas-wrap">
+            <canvas width="360" height="240" aria-label="Plano 2D del modelo"></canvas>
+          </div>
+          <div class="card-3d-thumb-wrap">
+            <canvas width="360" height="240" aria-label="Vista 3D del modelo"></canvas>
+          </div>
+        </div>
+        <div class="card-model-title"></div>
+        <div class="card-model-sub"></div>
+      `;
+      card.querySelector('.card-model-title').textContent = cleanDesc;
+      const code = item.boardCode || 'C1', mm = UserLibrary.boardThicknessMm[code];
+      const dimensions = item.bundledModel
+        ? `Plano ${item.flatWidth}×${item.flatHeight} mm`
+        : `${item.length}×${item.width}×${item.height} mm`;
+      card.querySelector('.card-model-sub').textContent = `${dimensions} · ${code}${mm ? ' · ' + String(mm).replace('.', ',') + ' mm' : ''}`;
+      card.title = `${cleanDesc} · ${code}`;
+      card.appendChild(createFavoriteButton(item));
+
+      const openModel = () => {
+        loadFefcoModel(item, true);
+        if (dialog?.open && typeof dialog.close === 'function') dialog.close();
+      };
+      card.addEventListener('click', openModel);
+      card.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openModel();
+        }
+      });
+
+      gridEl.appendChild(card);
+      previewJobs.set(card, item);
+      if (myModelsModalObserver) myModelsModalObserver.observe(card);
+      else enqueue(card);
+    }
+  }
+
+  async function openMyModelsModal() {
+    try { await userLibraryReady; } catch {}
+    const dialog = document.getElementById('my-models-modal');
+    if (!dialog) return;
+    myModelsModalBoardFilter = 'ALL';
+    myModelsModalSearch = '';
+    const searchInput = document.getElementById('my-models-modal-search');
+    if (searchInput) searchInput.value = '';
+    document.querySelectorAll('#my-models-modal-boards .board-pill').forEach(pill => {
+      pill.classList.toggle('active', pill.getAttribute('data-modal-board') === 'ALL');
+    });
+    if (!dialog.open && typeof dialog.showModal === 'function') dialog.showModal();
+    renderMyModelsModalGrid();
+  }
+
+  function initStartupAndThemeUI() {
+    // Restaurar tema guardado (claro u oscuro)
+    let savedTheme = 'light';
+    try {
+      const stored = window.localStorage?.getItem(THEME_STORAGE_KEY);
+      if (stored === 'dark') savedTheme = 'dark';
+    } catch {}
+    applyAppTheme(savedTheme, false);
+
+    document.getElementById('btn-theme-dark')?.addEventListener('click', () => {
+      applyAppTheme(isDarkTheme() ? 'light' : 'dark', true);
+    });
+
+    document.getElementById('btn-theme-cimpack')?.addEventListener('click', () => {
+      showThemeToast('Theme Cimpack estará disponible próximamente.');
+    });
+
+    // Botones de pantalla inicial
+    document.getElementById('btn-start-new-b1')?.addEventListener('click', () => {
+      startNewB1Box();
+    });
+    document.getElementById('btn-start-new-dieline')?.addEventListener('click', () => {
+      openMyModelsModal();
+    });
+
+    // Modal accesible de medidas para Nueva Caja B1
+    const b1Dialog = document.getElementById('new-b1-dialog');
+    const b1Form = document.getElementById('new-b1-form');
+    document.getElementById('new-b1-close')?.addEventListener('click', () => b1Dialog?.close?.());
+    document.getElementById('new-b1-cancel')?.addEventListener('click', () => b1Dialog?.close?.());
+    b1Form?.addEventListener('submit', e => {
+      e.preventDefault();
+      applyNewB1DimensionsFromModal(true);
+    });
+    ['new-b1-length', 'new-b1-width', 'new-b1-height'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', () => {
+        applyNewB1DimensionsFromModal(false);
+      });
+    });
+
+    // Modal central amplia de Biblioteca · Mis modelos
+    const myModelsDialog = document.getElementById('my-models-modal');
+    document.getElementById('my-models-modal-close')?.addEventListener('click', () => myModelsDialog?.close?.());
+    myModelsDialog?.addEventListener('click', e => {
+      if (e.target === myModelsDialog) myModelsDialog.close?.();
+    });
+    document.getElementById('my-models-modal-search')?.addEventListener('input', e => {
+      myModelsModalSearch = e.target.value || '';
+      renderMyModelsModalGrid();
+    });
+    document.querySelectorAll('#my-models-modal-boards .board-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        myModelsModalBoardFilter = pill.getAttribute('data-modal-board') || 'ALL';
+        document.querySelectorAll('#my-models-modal-boards .board-pill').forEach(p => {
+          p.classList.toggle('active', p === pill);
+        });
+        renderMyModelsModalGrid();
+      });
+    });
   }
 
   async function openDielineFile() {
@@ -5322,6 +5671,7 @@
       userLibraryModels=UserLibrary.normalize([...(window.BUNDLED_USER_MODELS || []), ...result.models]);
       if(result.warnings?.length)alert('No se pudieron cargar '+result.warnings.length+' modelos guardados de la biblioteca.');
       if(state.activeTab==='dielines')renderDrawerCatalogList();
+      if(document.getElementById('my-models-modal')?.open)renderMyModelsModalGrid();
     }catch(error){alert('No se pudo cargar tu biblioteca: '+(error.message||error));}
   }
   function initUserLibraryUI(){

@@ -124,6 +124,23 @@
       </div>
 
       <button id="btn-send-plotter" class="btn-primary-blue btn-plotter-red" type="button">enviar al plotter</button>
+      <button id="btn-theme-dark" class="icon-btn header-theme-btn" type="button" aria-pressed="false" title="Activar modo oscuro" aria-label="Cambiar entre modo claro y modo oscuro">
+        <svg class="theme-icon-moon" viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+        <svg class="theme-icon-sun" viewBox="0 0 24 24" width="17" height="17" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+      </button>
+      <button id="btn-theme-cimpack" class="btn-outline header-cimpack-btn" type="button" aria-pressed="false" title="Theme Cimpack">theme Cimpack</button>
 
       <!-- Inputs y botones ocultos para compatibilidad con eventos nativos y tests -->
       <input type="file" id="svg-file-input" accept=".svg,.dxf" class="hidden-input" />
@@ -315,7 +332,7 @@
           </div>
         </div>
 
-        <p id="param-sync-status" class="solver-status" role="status">Cargando modelo…</p>
+        <p id="param-sync-status" class="solver-status" role="status">Sin troquel cargado</p>
 
         <!-- Material selector -->
         <div class="drawer-group">
@@ -863,6 +880,39 @@
       <!-- Lienzo HTML5 interactivo (Pan, Zoom, Cotas, Selección) -->
       <canvas id="canvas-2d"></canvas>
 
+      <!-- Pantalla inicial sobre canvas vacío -->
+      <div id="empty-canvas-start" class="empty-canvas-start" role="region" aria-label="Acciones iniciales">
+        <div class="empty-canvas-card">
+          <h2 class="empty-canvas-title">¿Cómo quieres empezar?</h2>
+          <p class="empty-canvas-subtitle">Crea una caja B1 con tus medidas o elige un troquel guardado de tu biblioteca.</p>
+          <div class="empty-canvas-actions">
+            <button id="btn-start-new-b1" type="button" class="start-action-btn start-action-b1">
+              <span class="start-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                  <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                  <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                </svg>
+              </span>
+              <span class="start-action-label">NUEVA CAJA B1</span>
+              <span class="start-action-hint">Introduce largo, ancho y alto en mm</span>
+            </button>
+            <button id="btn-start-new-dieline" type="button" class="start-action-btn start-action-library">
+              <span class="start-action-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                  <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                  <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+                  <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                </svg>
+              </span>
+              <span class="start-action-label">Nuevo Troquel</span>
+              <span class="start-action-hint">Abrir galería de Biblioteca · Mis modelos</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- =========================================================================
@@ -991,5 +1041,66 @@
     <p id="library-model-status" role="status"></p>
     <div class="cad-import-actions"><button id="library-model-cancel" class="btn-outline">Cancelar</button><button id="library-model-save" class="btn-primary-blue">Añadir a biblioteca</button></div>
   </dialog>
+
+  <!-- Modal accesible: Nueva Caja B1 (Largo, Ancho y Alto) -->
+  <dialog id="new-b1-dialog" class="new-b1-dialog" aria-labelledby="new-b1-title" aria-describedby="new-b1-desc">
+    <form id="new-b1-form" novalidate>
+      <div class="part-options-head">
+        <strong id="new-b1-title">Nueva Caja B1</strong>
+        <button id="new-b1-close" type="button" class="icon-btn" aria-label="Cerrar ventana de medidas de caja B1">×</button>
+      </div>
+      <p id="new-b1-desc" class="new-b1-desc">Introduce las medidas de la caja B1 en milímetros. El plano se actualiza al instante.</p>
+      <div class="new-b1-fields">
+        <div class="new-b1-field">
+          <label for="new-b1-length">Largo (mm)</label>
+          <input id="new-b1-length" name="length" type="text" inputmode="decimal" autocomplete="off" required aria-required="true" placeholder="Ej: 300" />
+        </div>
+        <div class="new-b1-field">
+          <label for="new-b1-width">Ancho (mm)</label>
+          <input id="new-b1-width" name="width" type="text" inputmode="decimal" autocomplete="off" required aria-required="true" placeholder="Ej: 200" />
+        </div>
+        <div class="new-b1-field">
+          <label for="new-b1-height">Alto (mm)</label>
+          <input id="new-b1-height" name="height" type="text" inputmode="decimal" autocomplete="off" required aria-required="true" placeholder="Ej: 150" />
+        </div>
+      </div>
+      <p id="new-b1-status" class="new-b1-status" role="status" aria-live="polite"></p>
+      <div class="cad-import-actions">
+        <button id="new-b1-cancel" type="button" class="btn-outline">Cancelar</button>
+        <button id="new-b1-apply" type="submit" class="btn-primary-blue">Aplicar medidas</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Modal central amplia: Biblioteca - Mis modelos (Nuevo Troquel) -->
+  <dialog id="my-models-modal" class="my-models-modal" aria-labelledby="my-models-modal-title">
+    <div class="my-models-modal-header">
+      <div>
+        <h3 id="my-models-modal-title" class="my-models-modal-title">Biblioteca · Mis modelos</h3>
+        <p class="my-models-modal-subtitle">Selecciona un troquel guardado para cargarlo en el lienzo.</p>
+      </div>
+      <button id="my-models-modal-close" type="button" class="icon-btn" aria-label="Cerrar galería de modelos">×</button>
+    </div>
+    <div class="my-models-modal-toolbar">
+      <div class="dielines-search-box my-models-modal-search-wrap">
+        <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" stroke-width="2" fill="none" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="my-models-modal-search" placeholder="Buscar en Mis modelos por nombre o cartón…" aria-label="Buscar en Mis modelos" />
+      </div>
+      <div id="my-models-modal-boards" class="library-board-pills" role="radiogroup" aria-label="Filtrar Mis modelos por cartón">
+        <button type="button" class="board-pill active" data-modal-board="ALL">Todos</button>
+        <button type="button" class="board-pill" data-modal-board="C1">C1</button>
+        <button type="button" class="board-pill" data-modal-board="C3">C3</button>
+        <button type="button" class="board-pill" data-modal-board="C5">C5</button>
+        <button type="button" class="board-pill" data-modal-board="C8">C8</button>
+        <button type="button" class="board-pill" data-modal-board="cartoncillo">Cartoncillo</button>
+      </div>
+    </div>
+    <div id="my-models-modal-grid" class="my-models-modal-grid" role="list"></div>
+  </dialog>
+
+  <div id="app-theme-toast" class="app-theme-toast hidden" role="status" aria-live="polite"></div>
 </body>
 </html>
