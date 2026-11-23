@@ -3601,6 +3601,142 @@
     startOverlay.classList.toggle('hidden', Boolean(state.dieline));
   }
 
+  function resetAppToInitialState() {
+    modelRevision++;
+    resizeRevision++;
+    clearTimeout(livePacdoraTimer);
+
+    // Limpiar estado del troquel y selección
+    state.dieline = null;
+    state.baseDieline = null;
+    state.parametricDieline = null;
+    state.svgText = '';
+    state.fileName = '';
+    state.activeFefcoEntry = null;
+    state.canAddToLibrary = false;
+    state.selectedFaceId = null;
+    state.selectedFaceIds = [];
+    state.hoveredFaceId = null;
+    state.pickingDimensionArea = null;
+    state.pickingBase = false;
+    state.pickingSupport = false;
+    state.toolMode = 'select';
+    state.openParamsValues = {};
+    state.symmetryLinks = {};
+    state.activePart = 'standard';
+    state.partParams = {};
+    state.appliedParts = [];
+    state.draftPart = null;
+    state.selectingChamferFlaps = false;
+    state.partTargetFaceId = null;
+    state.hingeAngles = {};
+    if (state.selectedHinges && typeof state.selectedHinges.clear === 'function') state.selectedHinges.clear();
+    state.foldOrderSteps = 0;
+    state.activeFoldOrderStep = null;
+    state.customFoldOrder = {};
+    state.customFoldOrderCleared = false;
+    state.masterFold = 0.75;
+    state.isPlayingFold = false;
+    state.boardCode = 'C1';
+    state.caliper = 1.5;
+    state.paramL = 315;
+    state.paramW = 202;
+    state.paramH = 62;
+    state.dimensionDisplayMode = 'main';
+    state.showAreaLabels = true;
+    state.dimensionLabelScale = 1;
+    state.areaLabelScale = 1;
+    if (state.view2D) {
+      state.view2D.zoom = 1;
+      state.view2D.panX = 0;
+      state.view2D.panY = 0;
+      state.view2D.isDragging = false;
+    }
+
+    // Limpiar editor de vectores e historial
+    vectorEditing = false;
+    vectorSelection = null;
+    vectorDraft = null;
+    vectorHistory = [];
+    vectorRedo = [];
+    const toolModal = document.getElementById('vector-tool-modal');
+    if (toolModal) toolModal.hidden = true;
+    const vecSel = document.getElementById('vector-selection');
+    if (vecSel) vecSel.textContent = 'Sin selección';
+
+    // Limpiar imagen / arte exterior
+    if (typeof clearArtwork === 'function') clearArtwork();
+
+    // Vaciar escena 3D
+    if (rootBoxGroup) {
+      while (rootBoxGroup.children.length > 0) {
+        const child = rootBoxGroup.children[0];
+        rootBoxGroup.remove(child);
+        const materials = new Set();
+        child.traverse?.(obj => {
+          if (obj.geometry) obj.geometry.dispose?.();
+          if (obj.material) for (const mat of Array.isArray(obj.material) ? obj.material : [obj.material]) if (mat) materials.add(mat);
+        });
+        for (const mat of materials) mat.dispose?.();
+      }
+    }
+    if (bboxHelperGroup) {
+      while (bboxHelperGroup.children.length > 0) bboxHelperGroup.remove(bboxHelperGroup.children[0]);
+    }
+    dielineRootGroup = null;
+    pivotMap.clear();
+    faceMeshMap.clear();
+    if (camera && controls) {
+      camera.position.set(360, 290, 420);
+      controls.target.set(0, 45, 0);
+      controls.update();
+    }
+
+    // Restablecer controles de la interfaz al estado inicial
+    ['part-options-dialog', 'new-b1-dialog', 'my-models-modal', 'art-options-dialog', 'add-library-dialog', 'publish-client-dialog', 'cad-import-dialog'].forEach(id => {
+      const dlg = document.getElementById(id);
+      if (dlg?.open && typeof dlg.close === 'function') dlg.close();
+    });
+    document.getElementById('header-open-file-info')?.classList?.add?.('hidden');
+    const hName = document.getElementById('header-file-name');
+    const hPath = document.getElementById('header-file-path');
+    if (hName) hName.textContent = '';
+    if (hPath) hPath.textContent = '';
+    document.getElementById('btn-add-library')?.classList?.add?.('hidden');
+
+    const syncStatus = document.getElementById('param-sync-status');
+    if (syncStatus) syncStatus.textContent = 'Sin troquel cargado';
+    const inpL = document.getElementById('input-length');
+    const inpW = document.getElementById('input-width');
+    const inpH = document.getElementById('input-height');
+    if (inpL) inpL.value = '315';
+    if (inpW) inpW.value = '202';
+    if (inpH) inpH.value = '62';
+
+    const foldSlider = document.getElementById('master-fold-slider');
+    if (foldSlider) foldSlider.value = '75';
+    const dimSwitch = document.getElementById('dimension-mode-switch');
+    dimSwitch?.querySelectorAll?.('.seg-btn-3')?.forEach(b => b.classList.toggle('active', b.dataset?.mode === 'main'));
+    document.getElementById('btn-toggle-area-names')?.classList?.add?.('active');
+    const dimSize = document.getElementById('slider-dimension-size');
+    const areaSize = document.getElementById('slider-area-name-size');
+    if (dimSize) dimSize.value = '1';
+    if (areaSize) areaSize.value = '1';
+
+    ['l', 'w', 'h'].forEach(k => document.getElementById('btn-pick-dim-' + k)?.classList?.remove?.('active-target'));
+    document.getElementById('tool-pick-base')?.classList?.remove?.('active');
+    document.getElementById('tool-pick-support')?.classList?.remove?.('active');
+    document.querySelectorAll('.part-card').forEach(card => card.classList.toggle('active', card.dataset?.partKey === 'standard'));
+    document.querySelectorAll('.rail-tab-btn').forEach(btn => btn.classList.toggle('active', btn.getAttribute('data-drawer-tab') === 'basic'));
+    document.querySelectorAll('.drawer-tab-view').forEach(view => view.classList.toggle('hidden', view.id !== 'drawer-tab-basic'));
+    state.activeTab = 'basic';
+
+    if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(null);
+    if (typeof renderFoldOrderUI === 'function') renderFoldOrderUI();
+    updateEmptyCanvasStartUI();
+    render2FDieline();
+  }
+
   function findDefaultB1ModelEntry() {
     const allUser = Array.isArray(userLibraryModels) && userLibraryModels.length
       ? userLibraryModels
@@ -3852,12 +3988,15 @@
       showThemeToast('Theme Cimpack estará disponible próximamente.');
     });
 
-    // Botones de pantalla inicial
+    // Botones de inicio rápido (debajo de Girar troquel 90°) y Reset de la app
     document.getElementById('btn-start-new-b1')?.addEventListener('click', () => {
       startNewB1Box();
     });
     document.getElementById('btn-start-new-dieline')?.addEventListener('click', () => {
       openMyModelsModal();
+    });
+    document.getElementById('btn-app-reset')?.addEventListener('click', () => {
+      resetAppToInitialState();
     });
 
     // Modal accesible de medidas para Nueva Caja B1

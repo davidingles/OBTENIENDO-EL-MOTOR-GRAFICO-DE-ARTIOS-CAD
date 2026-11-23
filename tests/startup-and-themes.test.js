@@ -119,6 +119,7 @@ function setupApp() {
         isDarkTheme,
         applyAppTheme,
         updateEmptyCanvasStartUI,
+        resetAppToInitialState,
         startNewB1Box,
         applyNewB1DimensionsFromModal,
         getMyModelsForModal,
@@ -224,4 +225,18 @@ test('el modo oscuro cambia data-theme, persiste en localStorage y actualiza el 
   assert.equal(docElAttrs.has('data-theme'), false);
   assert.equal(storage.get('troqueles-vicente-theme-v1'), 'light');
   assert.equal(api.scene.background.value, 0xf1f3f6);
+});
+
+test('el botón redondo verde Reset está abajo a la izquierda del canvas y reinicia la app al estado inicial', async () => {
+  assert.match(html, /id="btn-app-reset"[^>]*class="btn-canvas-reset"[^>]*>Reset</);
+  const { api, el } = setupApp();
+  await api.startNewB1Box();
+  assert.ok(api.state.dieline, 'Debe haber un troquel cargado antes de pulsar Reset');
+
+  api.resetAppToInitialState();
+  assert.equal(api.state.dieline, null, 'Tras Reset el canvas debe volver a estar vacío');
+  assert.equal(api.state.baseDieline, null);
+  assert.equal(api.state.fileName, '');
+  assert.equal(el('param-sync-status').textContent, 'Sin troquel cargado');
+  assert.equal(el('new-b1-dialog').open, false, 'Las modales abiertas deben cerrarse al pulsar Reset');
 });

@@ -3049,3 +3049,52 @@ html[data-theme="dark"] .btn-quick-new-dieline:hover {
   border-color: #38bdf8;
   color: #7dd3fc;
 }
+
+/* ============================================================================
+   BOTÓN REDONDO VERDE 'RESET' (ABAJO A LA IZQUIERDA DEL CANVAS)
+   ============================================================================ */
+.btn-canvas-reset {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  z-index: 6;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid #15803d;
+  background: #16a34a;
+  color: #ffffff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(22, 163, 74, 0.34);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+  user-select: none;
+}
+.btn-canvas-reset:hover {
+  background: #15803d;
+  border-color: #166534;
+  transform: scale(1.05);
+  box-shadow: 0 8px 22px rgba(21, 128, 61, 0.42);
+}
+.btn-canvas-reset:active {
+  transform: scale(0.96);
+}
+.btn-canvas-reset:focus-visible {
+  outline: 3px solid #22c55e;
+  outline-offset: 2px;
+}
+html[data-theme="dark"] .btn-canvas-reset {
+  background: #16a34a;
+  border-color: #22c55e;
+  box-shadow: 0 6px 20px rgba(22, 163, 74, 0.45);
+}
+html[data-theme="dark"] .btn-canvas-reset:hover {
+  background: #15803d;
+  border-color: #4ade80;
+}
