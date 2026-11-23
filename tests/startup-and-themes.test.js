@@ -108,7 +108,8 @@ function setupApp() {
       scene = { background: { value: 0xf1f3f6, set(v) { this.value = v; } } };
       rebuild3DMesh = () => {};
       setMasterFold = () => {};
-      fitCameraToModel = () => {};
+      let fitCameraCalls = 0;
+      fitCameraToModel = () => { fitCameraCalls++; };
       buildHingeSlidersUI = () => {};
       render2FDieline = () => {};
       userLibraryModels = UserLibrary.normalize(window.BUNDLED_USER_MODELS || []);
@@ -116,6 +117,7 @@ function setupApp() {
       globalThis.api = {
         state,
         scene,
+        getFitCameraCalls: () => fitCameraCalls,
         isDarkTheme,
         applyAppTheme,
         updateEmptyCanvasStartUI,
@@ -183,9 +185,11 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
   el('new-b1-length').value = '400';
   el('new-b1-width').value = '250';
   el('new-b1-height').value = '180';
+  const fitBefore = api.getFitCameraCalls();
   const ok = api.applyNewB1DimensionsFromModal(true);
 
   assert.equal(ok, true);
+  assert.ok(api.getFitCameraCalls() > fitBefore, 'Al cambiar medidas de la caja B1 debe reencuadrarse la cámara 3D para que no rebase el canvas');
   assert.equal(el('new-b1-dialog').open, false, 'La modal debe cerrarse tras aplicar medidas');
   assert.equal(api.state.paramL, 400);
   assert.equal(api.state.paramW, 250);

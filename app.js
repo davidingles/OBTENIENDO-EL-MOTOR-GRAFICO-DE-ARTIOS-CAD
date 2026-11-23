@@ -917,6 +917,7 @@
     if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(state.dieline);
     rebuild3DMesh();
     setMasterFold(state.masterFold);
+    fitCameraToModel(true, true);
   }
 
   // ============================================================================
@@ -2875,10 +2876,19 @@
     const halfVerticalFov = THREE.MathUtils.degToRad(camera.fov) * 0.5;
     const halfHorizontalFov = Math.atan(Math.tan(halfVerticalFov) * camera.aspect);
     const radius = Math.max(size.length() * 0.5, 60);
-    const dist = radius / Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)) * 1.12;
-    const direction = preserveDirection
-      ? camera.position.clone().sub(controls.target).normalize()
+    const dist = radius / Math.sin(Math.min(halfVerticalFov, halfHorizontalFov)) * 1.18;
+    const rawDir = preserveDirection ? camera.position.clone().sub(controls.target) : null;
+    const direction = (rawDir && rawDir.lengthSq() > 1e-6)
+      ? rawDir.normalize()
       : new THREE.Vector3(0.78, 0.62, 0.85).normalize();
+
+    if (Number.isFinite(controls.maxDistance) && dist * 3 > controls.maxDistance) {
+      controls.maxDistance = dist * 3;
+    }
+    if (Number.isFinite(camera.far) && dist * 4 > camera.far) {
+      camera.far = dist * 4;
+      camera.updateProjectionMatrix?.();
+    }
 
     controls.target.copy(center);
     if (instant) {
