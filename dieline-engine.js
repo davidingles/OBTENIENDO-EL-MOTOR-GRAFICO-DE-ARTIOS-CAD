@@ -3864,6 +3864,296 @@
     return model;
   }
 
+  /**
+   * Detecta una tira de 4 paneles de cuerpo con 4 solapas inferiores horizontales
+   * (cajas B1 americanas o estuches plegables de 4 caras) para aplicar Fondo automático (#10501002).
+   */
+  function getAutoBottomStripData(baseModel) {
+    if (!baseModel || !Array.isArray(baseModel.faces) || !Array.isArray(baseModel.hinges)) {
+      return { valid: false, error: 'Modelo no válido para fondo automático.' };
+    }
+    const b1 = detectB1AmericanBox(baseModel);
+    if (b1 && b1.isB1 && Array.isArray(b1.columns) && b1.columns.length === 4) {
+      return {
+        valid: true,
+        body: b1.columns.map(c => c.bodyFace),
+        bottomFlaps: b1.columns.map(c => ({ face: c.botFlap, body: c.bodyFace, hinge: c.botHinge, yFold: c.yBotHinge }))
+      };
+    }
+    // Soporte general para estuches de 4 paredes en tira horizontal (como #10501002)
+    const faceById = new Map(baseModel.faces.map(f => [f.id, f]));
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+    const isVert = h => h.p1 && h.p2 && Math.abs(h.p1.x - h.p2.x) < 1.5 && Math.abs(h.p1.y - h.p2.y) > 5;
+    const isHoriz = h => h.p1 && h.p2 && Math.abs(h.p1.y - h.p2.y) < 1.5 && Math.abs(h.p1.x - h.p2.x) > 5;
+    const nonGlue = baseModel.faces.filter(f => f.role !== 'GLUE_FLAP');
+    for (const seed of nonGlue) {
+      const strip = new Map([[seed.id, seed]]);
+      const q = [seed];
+      for (let i = 0; i < q.length; i++) {
+        const cur = q[i];
+        for (const h of baseModel.hinges) {
+          if (!isVert(h)) continue;
+          const [a, b] = ends(h);
+          if (a !== cur.id && b !== cur.id) continue;
+          const other = faceById.get(a === cur.id ? b : a);
+          if (!other || other.role === 'GLUE_FLAP' || strip.has(other.id)) continue;
+          const tol = Math.max(4, cur.bounds.height * 0.05);
+          if (Math.abs(other.bounds.minY - cur.bounds.minY) <= tol && Math.abs(other.bounds.maxY - cur.bounds.maxY) <= tol) {
+            strip.set(other.id, other);
+            q.push(other);
+          }
+        }
+      }
+      if (strip.size !== 4) continue;
+      const body = [...strip.values()].sort((a, b) => a.bounds.minX - b.bounds.minX);
+      const bodyIds = new Set(body.map(f => f.id));
+      const bottomFlaps = [];
+      let ok = true;
+      for (const wall of body) {
+        const bHinge = baseModel.hinges.find(h => {
+          if (!isHoriz(h)) return false;
+          const [a, b] = ends(h);
+          if (a !== wall.id && b !== wall.id) return false;
+          const other = faceById.get(a === wall.id ? b : a);
+          return other && !bodyIds.has(other.id) && other.centroid.y > wall.bounds.maxY - 1;
+        });
+        if (!bHinge) { ok = false; break; }
+        const [a, b] = ends(bHinge);
+        const flap = faceById.get(a === wall.id ? b : a);
+        const yFold = (bHinge.p1.y + bHinge.p2.y) * 0.5;
+        bottomFlaps.push({ face: flap, body: wall, hinge: bHinge, yFold });
+      }
+      if (ok && bottomFlaps.length === 4) {
+        return { valid: true, body, bottomFlaps };
+      }
+    }
+    return { valid: false, error: 'El fondo automático requiere una caja de 4 caras con solapas inferiores.' };
+  }
+
+  /**
+   * Aplica la pieza «Fondo automático» (base tipo #10501002: 2 solapas anchas con pliegue oblicuo 45°
+   * y pestaña de pegado + 2 solapas estrechas trapezoidales de encaje).
+   */
+  function applyAutoBottomVariation(baseModel, params = {}) {
+    const data = getAutoBottomStripData(baseModel);
+    if (!data || !data.valid) {
+      return { ...baseModel, partError: data?.error || 'El fondo automático requiere una caja de 4 caras con solapas inferiores.' };
+    }
+
+    const clearance = Math.max(0.5, Math.min(6, Number.isFinite(Number(params.clearance)) ? Number(params.clearance) : 1.1));
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces.map(f => ({
+        ...f,
+        polygon: f.polygon.map(p => ({ ...p })),
+        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+      })),
+      cutSegments: baseModel.cutSegments.map(s => ({ ...s })),
+      foldSegments: baseModel.foldSegments.map(s => ({ ...s })),
+      hinges: baseModel.hinges.map(h => ({ ...h })),
+      activePartVariation: 'auto_bottom',
+      partOptions: { clearance }
+    };
+
+    const bodyWidths = data.body.map(b => b.bounds.width);
+    const minW = Math.min(...bodyWidths);
+    const maxW = Math.max(...bodyWidths);
+    const isSquare = Math.abs(maxW - minW) < 1.5;
+    const narrowW = minW;
+    const halfNarrow = Math.max(8, narrowW * 0.5);
+    const lockExtra = Math.max(8, Math.min(22, narrowW * 0.3));
+    const fullLockH = halfNarrow + lockExtra;
+    const notchIn = Math.max(3, Math.min(6, halfNarrow * 0.18));
+
+    const yFoldRef = Math.min(...data.bottomFlaps.map(bf => bf.yFold));
+    const oldBottomIds = new Set(data.bottomFlaps.map(bf => bf.face.id));
+    // Eliminar también sub-pestañas previas colgadas de las solapas inferiores (si ya tenía fondo automático)
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+    const bodyIds = new Set(data.body.map(b => b.id));
+    const extraChildIds = new Set();
+    for (const h of model.hinges) {
+      const [a, b] = ends(h);
+      if (oldBottomIds.has(a) && !bodyIds.has(b) && !oldBottomIds.has(b)) extraChildIds.add(b);
+      if (oldBottomIds.has(b) && !bodyIds.has(a) && !oldBottomIds.has(a)) extraChildIds.add(a);
+    }
+    if (extraChildIds.size) {
+      model.faces = model.faces.filter(f => !extraChildIds.has(f.id));
+      model.hinges = model.hinges.filter(h => {
+        const [a, b] = ends(h);
+        return !extraChildIds.has(a) && !extraChildIds.has(b);
+      });
+    }
+
+    // Quitar segmentos de corte y hendido por debajo de la línea de pliegue inferior
+    const minXStrip = Math.min(...data.body.map(b => b.bounds.minX)) - 2;
+    const maxXStrip = Math.max(...data.body.map(b => b.bounds.maxX)) + 2;
+    const isBelowFold = s =>
+      Math.max(s.y1, s.y2) > yFoldRef + 0.5 &&
+      Math.min(s.x1, s.x2) >= minXStrip &&
+      Math.max(s.x1, s.x2) <= maxXStrip;
+    model.cutSegments = model.cutSegments.filter(s => !isBelowFold(s));
+    model.foldSegments = model.foldSegments.filter(s => !isBelowFold(s));
+
+    let nextFaceId = Math.max(0, ...model.faces.map(f => Number(f.id) || 0)) + 1;
+    const newCutSegs = [];
+    const newFoldSegs = [];
+    const pushPolyCuts = (poly, skipEdgePredicate) => {
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-4) continue;
+        if (skipEdgePredicate && skipEdgePredicate(a, b)) continue;
+        newCutSegs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, type: 'CUT' });
+      }
+    };
+
+    data.bottomFlaps.forEach((bf, idx) => {
+      const face = model.faces.find(f => f.id === bf.face.id);
+      if (!face) return;
+      const wall = bf.body;
+      const y0 = bf.yFold;
+      const xL = wall.bounds.minX + clearance;
+      const xR = wall.bounds.maxX - clearance;
+      const wSpan = Math.max(12, xR - xL);
+      const isWide = isSquare ? (idx % 2 === 0) : (wall.bounds.width >= maxW - 1.5);
+
+      if (isWide) {
+        // Solapa principal de fondo automático (tipo HB / FB en #10501002)
+        const diagDx = Math.min(halfNarrow - notchIn, wSpan * 0.35);
+        const xDiagTop = xR - notchIn;
+        const yDiagTop = y0 + notchIn;
+        const xDiagBot = xDiagTop - diagDx;
+        const yDiagBot = yDiagTop + diagDx;
+        const xMid = Math.min(xDiagBot - 2, xL + wSpan * 0.5);
+
+        const mainPoly = [
+          { x: xL, y: y0 },
+          { x: xR, y: y0 },
+          { x: xDiagTop, y: yDiagTop },
+          { x: xDiagBot, y: yDiagBot },
+          { x: xMid, y: yDiagBot },
+          { x: xMid, y: y0 + fullLockH },
+          { x: xL + Math.min(4, wSpan * 0.05), y: y0 + fullLockH },
+          { x: xL, y: y0 + fullLockH - Math.min(4, fullLockH * 0.1) }
+        ];
+        face.polygon = mainPoly;
+        face.holes = [];
+        face.role = 'FLAP';
+        face.label = `Fondo Auto. ${idx + 1}`;
+        face.name = face.label;
+
+        // Pestaña de pegado triangular/trapezoidal unida por el hendido oblicuo a 45° (tipo HBR / FBR)
+        const tabId = nextFaceId++;
+        const tabRightX = xR - 0.8;
+        const tabPoly = [
+          { x: xDiagTop, y: yDiagTop },
+          { x: tabRightX, y: yDiagTop + Math.min(4, notchIn) },
+          { x: tabRightX, y: y0 + fullLockH },
+          { x: xDiagBot, y: y0 + fullLockH },
+          { x: xDiagBot, y: yDiagBot }
+        ];
+        model.faces.push({
+          id: tabId,
+          name: `Pestaña Fondo Auto. ${idx + 1}`,
+          label: `Pestaña Fondo Auto. ${idx + 1}`,
+          role: 'FLAP',
+          polygon: tabPoly,
+          holes: []
+        });
+
+        // Bisagra oblicua a 45°
+        const obLen = Math.hypot(xDiagBot - xDiagTop, yDiagBot - yDiagTop);
+        model.hinges.push({
+          id: `hinge_${face.id}_${tabId}`,
+          parentFaceId: face.id,
+          childFaceId: tabId,
+          parentId: face.id,
+          childId: tabId,
+          faceA: face.id,
+          faceB: tabId,
+          p1: { x: xDiagTop, y: yDiagTop },
+          p2: { x: xDiagBot, y: yDiagBot },
+          midpoint: { x: (xDiagTop + xDiagBot) * 0.5, y: (yDiagTop + yDiagBot) * 0.5 },
+          length: obLen,
+          lengthMm: obLen,
+          defaultAngle: -1.8,
+          preservedPlanarSlope: (xDiagBot - xDiagTop) / (yDiagBot - yDiagTop)
+        });
+        newFoldSegs.push({ x1: xDiagTop, y1: yDiagTop, x2: xDiagBot, y2: yDiagBot, type: 'FOLD' });
+
+        // Cortes del contorno (excluyendo el hendido superior en y0 y el hendido oblicuo a 45°)
+        const isObEdge = (a, b) =>
+          (Math.hypot(a.x - xDiagTop, a.y - yDiagTop) < 0.2 && Math.hypot(b.x - xDiagBot, b.y - yDiagBot) < 0.2) ||
+          (Math.hypot(b.x - xDiagTop, b.y - yDiagTop) < 0.2 && Math.hypot(a.x - xDiagBot, a.y - yDiagBot) < 0.2);
+        const isTopFold = (a, b) => Math.abs(a.y - y0) < 0.2 && Math.abs(b.y - y0) < 0.2;
+        pushPolyCuts(mainPoly, (a, b) => isTopFold(a, b) || isObEdge(a, b));
+        pushPolyCuts(tabPoly, (a, b) => isObEdge(a, b));
+      } else {
+        // Solapa estrecha trapezoidal de encaje (tipo FRB / FLB en #10501002)
+        const trapH = halfNarrow;
+        const leftInset = Math.min(wSpan * 0.2, trapH * 0.4);
+        const rightInset = Math.min(wSpan * 0.5, trapH);
+        const narrowPoly = [
+          { x: xL, y: y0 },
+          { x: xR, y: y0 },
+          { x: Math.max(xL + leftInset + 4, xR - rightInset), y: y0 + trapH },
+          { x: xL + leftInset, y: y0 + trapH }
+        ];
+        face.polygon = narrowPoly;
+        face.holes = [];
+        face.role = 'FLAP';
+        face.label = `Solapa Fondo Auto. ${idx + 1}`;
+        face.name = face.label;
+        pushPolyCuts(narrowPoly, (a, b) => Math.abs(a.y - y0) < 0.2 && Math.abs(b.y - y0) < 0.2);
+      }
+
+      // Actualizar línea de bisagra horizontal con el ancho de la nueva solapa
+      const h = model.hinges.find(x => x.id === bf.hinge.id);
+      if (h) {
+        h.p1 = { x: xL, y: y0 };
+        h.p2 = { x: xR, y: y0 };
+        h.midpoint = { x: (xL + xR) * 0.5, y: y0 };
+        h.length = wSpan;
+        h.lengthMm = wSpan;
+      }
+    });
+
+    model.cutSegments.push(...newCutSegs);
+    model.foldSegments.push(...newFoldSegs);
+
+    const area = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) / 2;
+    for (const face of model.faces) {
+      const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      face.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+      face.bbox = { ...face.bounds };
+      face.points = face.polygon;
+      face.centroid = {
+        x: face.polygon.reduce((s, p) => s + p.x, 0) / face.polygon.length,
+        y: face.polygon.reduce((s, p) => s + p.y, 0) / face.polygon.length
+      };
+      face.areaMm2 = Math.abs(area(face.polygon)) - (face.holes || []).reduce((s, h) => s + Math.abs(area(h)), 0);
+      face.area = face.areaMm2;
+    }
+
+    const minX = Math.min(...model.faces.map(f => f.bounds.minX));
+    const maxX = Math.max(...model.faces.map(f => f.bounds.maxX));
+    const minY = Math.min(...model.faces.map(f => f.bounds.minY));
+    const maxY = Math.max(...model.faces.map(f => f.bounds.maxY));
+    model.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+    model.blankWidthMm = maxX - minX;
+    model.blankHeightMm = maxY - minY;
+    model.cutSegmentsMm = model.cutSegments;
+    model.foldSegmentsMm = model.foldSegments;
+    const segmentLength = s => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    model.totalCutLengthMm = model.cutSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalFoldLengthMm = model.foldSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalAreaMm2 = model.faces.reduce((s, f) => s + f.areaMm2, 0);
+    return model;
+  }
+
   function findNearestVectorHit(segments, ox, oy, dx, dy) {
     let bestT = Infinity;
     for (const s of segments || []) {
@@ -3904,6 +4194,11 @@
 
     if (key === 'double_flaps') {
       field('clearance', 0, 10, 2);
+      return {params, limits};
+    }
+
+    if (key === 'auto_bottom') {
+      field('clearance', 0.5, 6, 1.1);
       return {params, limits};
     }
 
@@ -3989,6 +4284,10 @@
     if (partKey === 'double_flaps') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
       return applyDoubleFlapsVariation(baseModel, params, options?.targetFaceId);
+    }
+    if (partKey === 'auto_bottom') {
+      const {params} = getPartVariationSettings(baseModel, partKey, options);
+      return applyAutoBottomVariation(baseModel, params);
     }
     if (partKey === 'chamfer') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
@@ -5045,6 +5344,8 @@
     enforceFlapLengthLimit,
     getSideLocksData,
     getB1DoubleFlapsData,
+    getAutoBottomStripData,
+    applyAutoBottomVariation,
     detectB1AmericanBox,
     applyB1Retranqueo,
     applyPartVariationToModel,

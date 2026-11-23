@@ -39,6 +39,11 @@
       </div>
     </div>
 
+    <div id="header-active-model" class="header-active-model hidden" aria-live="polite">
+      <span id="header-active-model-name" class="header-active-model-name"></span>
+      <span id="header-active-model-modified" class="header-active-model-modified hidden">modificado</span>
+    </div>
+
     <div class="header-right">
       <button id="btn-switch-studio-view" class="btn-outline" title="Alternar visor 2D / 3D completo o dividido">
         <span>Ampliar vista 3D</span>
@@ -530,6 +535,31 @@
             <div class="part-card-footer">
               <span class="part-card-title">Chaflanar</span>
               <span class="info-tip-dot" title="Chaflana las esquinas de las líneas de corte en una o varias áreas (usa Shift + clic para seleccionar varias)">ⓘ</span>
+            </div>
+          </div>
+
+          <!-- Fondo automático (base tipo #10501002) -->
+          <div class="part-card" data-part-key="auto_bottom">
+            <div class="part-svg-preview">
+              <svg viewBox="0 0 160 55" width="100%" height="100%" fill="none" stroke="currentColor">
+                <line x1="12" y1="12" x2="148" y2="12" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.5" />
+                <!-- Solapa ancha 1 + pestaña oblicua 45° -->
+                <path d="M14 12V44H40V32H54L60 12" stroke="#009ee3" stroke-width="1.6" />
+                <path d="M60 14V44H46V32" stroke="#009ee3" stroke-width="1.5" />
+                <line x1="58" y1="14" x2="46" y2="32" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <!-- Solapa estrecha 1 -->
+                <path d="M64 12L70 32H79L85 12" stroke="#009ee3" stroke-width="1.6" />
+                <!-- Solapa ancha 2 + pestaña oblicua 45° -->
+                <path d="M89 12V44H115V32H125L131 12" stroke="#009ee3" stroke-width="1.6" />
+                <path d="M131 14V44H117V32" stroke="#009ee3" stroke-width="1.5" />
+                <line x1="129" y1="14" x2="117" y2="32" stroke="#e5007d" stroke-dasharray="3 2" stroke-width="1.4" />
+                <!-- Solapa estrecha 2 -->
+                <path d="M135 12L140 32H146L148 12" stroke="#009ee3" stroke-width="1.6" />
+              </svg>
+            </div>
+            <div class="part-card-footer">
+              <span class="part-card-title">Fondo automático</span>
+              <span class="info-tip-dot" title="Aplica la base de fondo automático (tipo #10501002) con solapas encajables y pliegues oblicuos a 45°">ⓘ</span>
             </div>
           </div>
         </div>

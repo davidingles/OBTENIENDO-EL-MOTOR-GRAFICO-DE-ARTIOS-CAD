@@ -180,6 +180,10 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
   assert.equal(Number(api.state.dieline.b1RetranqueoMm || 0), 0, 'No debe tener retranqueo aplicado al inicio');
   const baseFace = api.state.dieline.faces.find(f => f.id === api.state.dieline.dimensionBaseFaceId);
   assert.equal(baseFace?.label, 'Cara Cuerpo 3', 'La base por defecto de Nueva Caja B1 debe ser Cara Cuerpo 3');
+  const supportFace = api.state.dieline.faces.find(f => f.id === api.state.dieline.rootFaceId);
+  assert.equal(supportFace?.label, 'Solapa Inf. 3 (Int.)', 'El apoyo por defecto de cajas B1 debe ser Solapa Inf. 3 (Int.)');
+  assert.equal(el('header-active-model-name').textContent.length > 0, true, 'El nombre del modelo debe mostrarse en la cabecera');
+  assert.equal(el('header-active-model-modified').classList.contains('hidden'), true, 'Antes de modificar no debe mostrar modificado');
   assert.equal(el('new-b1-dialog').open, true, 'Debe abrirse la modal accesible de medidas');
 
   el('new-b1-length').value = '400';
@@ -190,6 +194,7 @@ test('NUEVA CAJA B1 carga la caja B1, abre la modal accesible y aplica largo, an
 
   assert.equal(ok, true);
   assert.ok(api.getFitCameraCalls() > fitBefore, 'Al cambiar medidas de la caja B1 debe reencuadrarse la cámara 3D para que no rebase el canvas');
+  assert.equal(el('header-active-model-modified').classList.contains('hidden'), false, 'Al modificar medidas debe aparecer el indicador modificado en la cabecera');
   assert.equal(el('new-b1-dialog').open, false, 'La modal debe cerrarse tras aplicar medidas');
   assert.equal(api.state.paramL, 400);
   assert.equal(api.state.paramW, 250);
@@ -255,4 +260,19 @@ test('el botón redondo verde Reset está abajo a la izquierda del canvas y rein
   assert.equal(api.state.fileName, '');
   assert.equal(el('param-sync-status').textContent, 'Sin troquel cargado');
   assert.equal(el('new-b1-dialog').open, false, 'Las modales abiertas deben cerrarse al pulsar Reset');
+});
+
+test('Fondo automático existe en PIEZAS y genera pliegues oblicuos a 45° y pestañas de fondo sobre una caja B1', () => {
+  assert.match(html, /data-part-key="auto_bottom"[\s\S]*?Fondo automático/);
+  global.window = global;
+  require('../assets/user-models.js');
+  const um = global.BUNDLED_USER_MODELS.find(m => /sin-retranqueos/i.test(m.name));
+  const resized = engine.resizeDielineParametric(um.geometry, 300, 200, 250);
+  const withAutoBottom = engine.applyPartVariationToModel(resized, 'auto_bottom', {});
+  assert.ok(!withAutoBottom.partError, withAutoBottom.partError);
+  assert.equal(withAutoBottom.activePartVariation, 'auto_bottom');
+  const tabs = withAutoBottom.faces.filter(f => /^Pestaña Fondo Auto\./.test(f.label));
+  assert.equal(tabs.length, 2, 'Debe generar las 2 pestañas oblicuas de pegado del fondo automático');
+  const obliqueHinges = withAutoBottom.hinges.filter(h => Number.isFinite(h.preservedPlanarSlope) && Math.abs(Math.abs(h.preservedPlanarSlope) - 1) < 0.05);
+  assert.equal(obliqueHinges.length, 2, 'Debe crear las 2 bisagras oblicuas a 45°');
 });

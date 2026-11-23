@@ -244,6 +244,7 @@
     vectorHistory.push(captureUndoState());
     if (vectorHistory.length > 50) vectorHistory.shift();
     vectorRedo = [];
+    if (typeof markModelModified === 'function') markModelModified();
     if (typeof vectorRefreshControls === 'function') vectorRefreshControls();
   }
 
@@ -674,7 +675,7 @@
       const savedActiveIdx = state.activeArtworkIndex;
       const model = DielineEngine.rerootDielineModel(state.baseDieline, faceId, { keepDimensionBase: true });
       resetPickModes();
-      applyNewDielineModel(model, state.fileName, true, state.canAddToLibrary);
+      applyNewDielineModel(model, state.fileName, true, state.canAddToLibrary, true);
       syncParametricInputsUI(model);
       if (savedArtworks && savedArtworks.length) await restoreArtworkLayers(savedArtworks, savedActiveIdx);
     } catch (error) {
@@ -689,14 +690,31 @@
     }
   }
 
-  function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false) {
+  function applyNewDielineModel(model, displayTitle, animateIntro = false, allowLibraryAdd = false, preserveSupport = false) {
     const normalized = VectorCAD.normalize(model);
     model = DielineEngine.reconcileDimensionMeasurements(normalized.isPacdoraModel ? DielineEngine.enforceFlapLengthLimit(normalized) : normalized);
+    // En todas las cajas tipo B1 americanas, la cara de apoyo por defecto es 'Solapa Inf. 3 (Int.)' (columns[2].botFlap)
+    if (!preserveSupport && typeof DielineEngine?.detectB1AmericanBox === 'function' && typeof DielineEngine?.rerootDielineModel === 'function') {
+      const b1Info = DielineEngine.detectB1AmericanBox(model);
+      const defaultSupportFace = b1Info?.isB1 ? b1Info.columns?.[2]?.botFlap : null;
+      if (defaultSupportFace && model.rootFaceId !== defaultSupportFace.id) {
+        model = DielineEngine.rerootDielineModel(model, defaultSupportFace.id, { keepDimensionBase: true });
+      }
+    }
     vectorSelection = null; vectorDraft=null; vectorRedo=[];
     vectorHistory = [];
     clearTimeout(livePacdoraTimer);
     resizeRevision++;
     state.fileName = displayTitle;
+    if (typeof setHeaderActiveModel === 'function') {
+      const entry = state.activeFefcoEntry;
+      const cleanName = entry
+        ? ((entry.userModel || entry.bundledModel)
+            ? nombreModelo(entry)
+            : `${nombreModelo(entry)}${entry.num ? ' #' + entry.num : ''}`)
+        : String(displayTitle || '').replace(/\.[^.]+$/, '');
+      setHeaderActiveModel(cleanName, false);
+    }
     state.canAddToLibrary = false;
     document.getElementById('btn-add-library')?.classList.add('hidden');
     clearArtwork();
@@ -752,6 +770,9 @@
       modelRevision++;
       state.svgText = svgString;
       state.activeFefcoEntry = null;
+    state.activeModelDisplayName = '';
+    state.isModelModified = false;
+    updateHeaderActiveModelUI();
       const quickSel = document.getElementById('fefco-quick-select');
       if (quickSel) quickSel.value = '__SVG__';
 
@@ -3224,7 +3245,8 @@
 
         state.draftPart = op;
         applyCurrentPartVariation(false);
-        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'windows', 'chamfer'].includes(partKey)) {
+        if (typeof markModelModified === 'function') markModelModified();
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'auto_bottom', 'windows', 'chamfer'].includes(partKey)) {
           openPartOptions(partKey);
         }
       });
@@ -3581,6 +3603,50 @@
     }, 2800);
   }
 
+  function readThemeCssVar(varName, fallback) {
+    try {
+      if (typeof window !== 'undefined' && typeof window.getComputedStyle === 'function' && document?.documentElement) {
+        const val = window.getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        if (val) return val;
+      }
+    } catch {}
+    return fallback;
+  }
+
+  function updateHeaderActiveModelUI() {
+    const wrap = document.getElementById('header-active-model');
+    const nameEl = document.getElementById('header-active-model-name');
+    const modEl = document.getElementById('header-active-model-modified');
+    if (!wrap || !nameEl) return;
+    const name = String(state.activeModelDisplayName || '').trim();
+    if (!name || !state.dieline) {
+      wrap.classList?.add?.('hidden');
+      nameEl.textContent = '';
+      modEl?.classList?.add?.('hidden');
+      return;
+    }
+    nameEl.textContent = name;
+    wrap.classList?.remove?.('hidden');
+    if (modEl?.classList) {
+      if (typeof modEl.classList.toggle === 'function') modEl.classList.toggle('hidden', !state.isModelModified);
+      else if (!state.isModelModified) modEl.classList.add?.('hidden');
+      else modEl.classList.remove?.('hidden');
+    }
+  }
+
+  function setHeaderActiveModel(name, modified = false) {
+    state.activeModelDisplayName = String(name || '').trim();
+    state.isModelModified = Boolean(modified);
+    updateHeaderActiveModelUI();
+  }
+
+  function markModelModified() {
+    if (!state.dieline || !state.activeModelDisplayName) return;
+    if (state.isModelModified) return;
+    state.isModelModified = true;
+    updateHeaderActiveModelUI();
+  }
+
   function update3DGridTheme(dark = isDarkTheme()) {
     if (!scene || typeof THREE === 'undefined' || !THREE.GridHelper) return;
     if (gridHelper) {
@@ -3589,15 +3655,18 @@
       if (Array.isArray(gridHelper.material)) gridHelper.material.forEach(m => m?.dispose?.());
       else gridHelper.material?.dispose?.();
     }
-    const centerColor = dark ? 0x1b2434 : 0xe2e6ec;
-    const gridColor = dark ? 0x141c2a : 0xe8ecf1;
+    const centerCss = readThemeCssVar('--grid-3d-center', dark ? '#1e2a3d' : '#c4ceda');
+    const lineCss = readThemeCssVar('--grid-3d-line', dark ? '#151f2e' : '#d6dde6');
+    const opacityVal = Number(readThemeCssVar('--grid-3d-opacity', dark ? '0.65' : '0.78'));
+    const centerColor = new THREE.Color(centerCss);
+    const gridColor = new THREE.Color(lineCss);
     gridHelper = new THREE.GridHelper(1000, 50, centerColor, gridColor);
     gridHelper.position.y = -0.2;
     const mats = Array.isArray(gridHelper.material) ? gridHelper.material : [gridHelper.material];
     for (const mat of mats) {
       if (!mat) continue;
       mat.transparent = true;
-      mat.opacity = dark ? 0.65 : 0.6;
+      mat.opacity = Number.isFinite(opacityVal) ? opacityVal : (dark ? 0.65 : 0.78);
     }
     gridHelper.visible = state.showGrid !== false;
     scene.add(gridHelper);
@@ -3620,7 +3689,8 @@
       try { window.localStorage?.setItem(THEME_STORAGE_KEY, normalized); } catch {}
     }
     if (scene && scene.background && typeof scene.background.set === 'function') {
-      scene.background.set(normalized === 'dark' ? 0x0d131d : 0xf1f3f6);
+      const bgCss = readThemeCssVar('--scene-3d-bg', normalized === 'dark' ? '#0d131d' : '#f1f3f6');
+      scene.background.set(bgCss === '#0d131d' ? 0x0d131d : (bgCss === '#f1f3f6' ? 0xf1f3f6 : bgCss));
     }
     update3DGridTheme(normalized === 'dark');
     render2FDieline();
@@ -3644,6 +3714,9 @@
     state.svgText = '';
     state.fileName = '';
     state.activeFefcoEntry = null;
+    state.activeModelDisplayName = '';
+    state.isModelModified = false;
+    updateHeaderActiveModelUI();
     state.canAddToLibrary = false;
     state.selectedFaceId = null;
     state.selectedFaceIds = [];
@@ -4362,6 +4435,7 @@
       tab_lock: 'Pestaña de cierre',
       side_locks: 'Machos y hembras',
       double_flaps: 'Solapas dobles',
+      auto_bottom: 'Fondo automático',
       windows: 'Ventanas',
       chamfer: 'Chaflanar'
     };
@@ -4417,7 +4491,9 @@
           ? [['count','Número de encastres'],['length','Largo del macho / hembra (mm)'],['distance','Distancia entre centros (mm)'],['radius','Radio de las esquinas (mm)'],['depth','Saliente del macho (mm)']]
           : key === 'double_flaps'
             ? [['clearance','Holgura (-mm)']]
-            : key === 'windows'
+            : key === 'auto_bottom'
+              ? [['clearance','Holgura entre solapas (mm)']]
+              : key === 'windows'
               ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)'],['offsetX','Posición X (mm)'],['offsetY','Posición Y (mm)']]
               : key === 'chamfer'
                 ? [['angle','Ángulo del chaflán (°)'],['size','Tamaño del chaflán (mm)']]
@@ -5902,6 +5978,7 @@
         userLibraryModels.unshift(item);
         catalogPreviewCache.delete(Number(item.num));
         state.activeFefcoEntry=item;state.fileName=item.name;
+        setHeaderActiveModel(item.name, false);
         state.boardCode=item.boardCode;
         state.selectedBoardFilter=item.boardCode;
         state.caliper=UserLibrary.boardThicknessMm[item.boardCode]||1.5;

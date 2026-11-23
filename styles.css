@@ -3098,3 +3098,81 @@ html[data-theme="dark"] .btn-canvas-reset:hover {
   background: #15803d;
   border-color: #4ade80;
 }
+
+/* ============================================================================
+   ATRIBUTOS CSS SEPARADOS POR TEMA (CLARO / OSCURO) PARA REJILLA 3D Y FONDO
+   ============================================================================ */
+html:not([data-theme="dark"]) {
+  --scene-3d-bg: #f1f3f6;
+  --grid-3d-center: #c4ceda;
+  --grid-3d-line: #d6dde6;
+  --grid-3d-opacity: 0.78;
+  --canvas-2d-bg: #f1f3f6;
+  --canvas-2d-grid: rgba(80, 98, 120, 0.08);
+}
+
+html[data-theme="dark"] {
+  --scene-3d-bg: #0d131d;
+  --grid-3d-center: #1e2a3d;
+  --grid-3d-line: #151f2e;
+  --grid-3d-opacity: 0.65;
+  --canvas-2d-bg: #0d131d;
+  --canvas-2d-grid: rgba(148, 163, 184, 0.09);
+}
+
+/* ============================================================================
+   NOMBRE DEL TROQUEL ACTIVO EN EL CENTRO DE LA CABECERA + BADGE 'MODIFICADO'
+   ============================================================================ */
+.header-active-model {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(38vw, 420px);
+  padding: 4px 12px;
+  border-radius: 8px;
+  pointer-events: none;
+  overflow: hidden;
+}
+.header-active-model.hidden {
+  display: none !important;
+}
+.header-active-model-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-active-model-modified {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fcd34d;
+}
+.header-active-model-modified.hidden {
+  display: none !important;
+}
+html[data-theme="dark"] .header-active-model-name {
+  color: #f8fafc;
+}
+html[data-theme="dark"] .header-active-model-modified {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.45);
+}
+@media (max-width: 1180px) {
+  .header-active-model {
+    position: static;
+    transform: none;
+    max-width: 240px;
+  }
+}
