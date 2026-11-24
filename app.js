@@ -4315,8 +4315,11 @@
 
   function rebuildModelWithParts(baseModel, includeDraft = true) {
     if (!baseModel || !DielineEngine.applyPartVariationToModel) return baseModel;
-    const ops = [...(state.appliedParts || [])];
+    let ops = [...(state.appliedParts || [])];
     if (includeDraft && state.draftPart && state.draftPart.partKey && state.draftPart.partKey !== 'standard') {
+      if (state.draftPart.partKey === 'copy_lid' || state.draftPart.partKey === 'auto_bottom') {
+        ops = ops.filter(p => p.partKey !== 'copy_lid' && p.partKey !== 'auto_bottom');
+      }
       ops.push(state.draftPart);
     }
     if (ops.length === 0) return baseModel;
@@ -4380,6 +4383,9 @@
         ? 'tapa encontrada (cara opuesta)'
         : 'espejo directo (misma cara)';
       return `Configuración de la tapa copiada en la base con ${modeText}, manteniendo retranqueos y detalles entre solapas.`;
+    }
+    if (partKey === 'auto_bottom') {
+      return 'Base de fondo automático aplicada (hendidos a 45°, corte vertical en el centro de cara y apoyo a mitad de ancho).';
     }
     if (partKey === 'double_flaps' && model.partDoubleFlapsSide) {
       const sideLabel = model.partDoubleFlapsSide === 'top' ? '4 solapas superiores' : '4 solapas inferiores';

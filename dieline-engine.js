@@ -2455,7 +2455,7 @@
     const blankW = Math.max(1, maxX - minX);
     const blankH = Math.max(1, maxY - minY);
 
-    return reconcileDimensionMeasurements(enforceFlapLengthLimit({
+    const resizedOut = reconcileDimensionMeasurements(enforceFlapLengthLimit({
       ...baseModel,
       blankWidthMm: blankW,
       blankHeightMm: blankH,
@@ -2486,6 +2486,10 @@
       faces: newFaces,
       hinges: newHinges
     }));
+    if (!bandEdit && resizedOut && resizedOut.activePartVariation === 'auto_bottom') {
+      return reconcileDimensionMeasurements(applyAutoBottomVariation(resizedOut, resizedOut.partOptions || {}));
+    }
+    return resizedOut;
   }
 
   // These four end flaps must fit across half the width of the main H panel.
@@ -3865,26 +3869,19 @@
   }
 
   /**
-   * Detecta una tira de 4 paneles de cuerpo con 4 solapas inferiores horizontales
-   * (cajas B1 americanas o estuches plegables de 4 caras) para aplicar Fondo automático (#10501002).
+   * Detecta una tira de 4 paredes de cuerpo (con 0, 1, 2, 3 o 4 solapas inferiores previas)
+   * en cajas B1 americanas o estuches plegables (como #10501002, #10001004 o tras «Copiar tapa»)
+   * para acoplar la base «Fondo automático».
    */
   function getAutoBottomStripData(baseModel) {
     if (!baseModel || !Array.isArray(baseModel.faces) || !Array.isArray(baseModel.hinges)) {
       return { valid: false, error: 'Modelo no válido para fondo automático.' };
     }
-    const b1 = detectB1AmericanBox(baseModel);
-    if (b1 && b1.isB1 && Array.isArray(b1.columns) && b1.columns.length === 4) {
-      return {
-        valid: true,
-        body: b1.columns.map(c => c.bodyFace),
-        bottomFlaps: b1.columns.map(c => ({ face: c.botFlap, body: c.bodyFace, hinge: c.botHinge, yFold: c.yBotHinge }))
-      };
-    }
-    // Soporte general para estuches de 4 paredes en tira horizontal (como #10501002)
     const faceById = new Map(baseModel.faces.map(f => [f.id, f]));
     const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
     const isVert = h => h.p1 && h.p2 && Math.abs(h.p1.x - h.p2.x) < 1.5 && Math.abs(h.p1.y - h.p2.y) > 5;
-    const isHoriz = h => h.p1 && h.p2 && Math.abs(h.p1.y - h.p2.y) < 1.5 && Math.abs(h.p1.x - h.p2.x) > 5;
+
+    let body = null;
     const nonGlue = baseModel.faces.filter(f => f.role !== 'GLUE_FLAP');
     for (const seed of nonGlue) {
       const strip = new Map([[seed.id, seed]]);
@@ -3897,104 +3894,365 @@
           if (a !== cur.id && b !== cur.id) continue;
           const other = faceById.get(a === cur.id ? b : a);
           if (!other || other.role === 'GLUE_FLAP' || strip.has(other.id)) continue;
-          const tol = Math.max(4, cur.bounds.height * 0.05);
+          const tol = Math.max(18, Math.max(cur.bounds.height, other.bounds.height) * 0.22);
           if (Math.abs(other.bounds.minY - cur.bounds.minY) <= tol && Math.abs(other.bounds.maxY - cur.bounds.maxY) <= tol) {
             strip.set(other.id, other);
             q.push(other);
           }
         }
       }
-      if (strip.size !== 4) continue;
-      const body = [...strip.values()].sort((a, b) => a.bounds.minX - b.bounds.minX);
-      const bodyIds = new Set(body.map(f => f.id));
-      const bottomFlaps = [];
-      let ok = true;
-      for (const wall of body) {
-        const bHinge = baseModel.hinges.find(h => {
-          if (!isHoriz(h)) return false;
-          const [a, b] = ends(h);
-          if (a !== wall.id && b !== wall.id) return false;
-          const other = faceById.get(a === wall.id ? b : a);
-          return other && !bodyIds.has(other.id) && other.centroid.y > wall.bounds.maxY - 1;
-        });
-        if (!bHinge) { ok = false; break; }
-        const [a, b] = ends(bHinge);
-        const flap = faceById.get(a === wall.id ? b : a);
-        const yFold = (bHinge.p1.y + bHinge.p2.y) * 0.5;
-        bottomFlaps.push({ face: flap, body: wall, hinge: bHinge, yFold });
-      }
-      if (ok && bottomFlaps.length === 4) {
-        return { valid: true, body, bottomFlaps };
+      if (strip.size >= 4) {
+        let arr = [...strip.values()].sort((a, b) => a.bounds.minX - b.bounds.minX);
+        while (arr.length > 4) {
+          if (arr[0].bounds.width < Math.min(35, arr[1].bounds.width * 0.45)) arr.shift();
+          else if (arr[arr.length - 1].bounds.width < Math.min(35, arr[arr.length - 2].bounds.width * 0.45)) arr.pop();
+          else break;
+        }
+        if (arr.length === 4) {
+          body = arr;
+          break;
+        }
       }
     }
-    return { valid: false, error: 'El fondo automático requiere una caja de 4 caras con solapas inferiores.' };
+
+    if (!body) {
+      return { valid: false, error: 'El fondo automático requiere una caja o estuche de 4 caras de cuerpo.' };
+    }
+
+    const bodyIds = new Set(body.map(f => f.id));
+    const rawMidY = body.reduce((s, b) => s + (b.bounds.minY + b.bounds.maxY) * 0.5, 0) / 4;
+    const topBridgeHingesByCol = body.map(() => []);
+    const bottomBridgeHingesByCol = body.map(() => []);
+    const oldBottomFaceIds = new Set();
+    const glueFlaps = [];
+
+    const visited = new Set();
+    for (const startFace of baseModel.faces) {
+      if (bodyIds.has(startFace.id) || visited.has(startFace.id)) continue;
+      const compFaces = [];
+      const compIds = new Set();
+      const q = [startFace];
+      visited.add(startFace.id);
+      compIds.add(startFace.id);
+      while (q.length) {
+        const cur = q.shift();
+        compFaces.push(cur);
+        for (const h of baseModel.hinges) {
+          const [a, b] = ends(h);
+          if (a !== cur.id && b !== cur.id) continue;
+          const otherId = a === cur.id ? b : a;
+          if (bodyIds.has(otherId) || visited.has(otherId)) continue;
+          const other = faceById.get(otherId);
+          if (!other) continue;
+          visited.add(otherId);
+          compIds.add(otherId);
+          q.push(other);
+        }
+      }
+
+      const bridgeHinges = [];
+      for (const h of baseModel.hinges) {
+        const [a, b] = ends(h);
+        if ((compIds.has(a) && bodyIds.has(b)) || (compIds.has(b) && bodyIds.has(a))) {
+          bridgeHinges.push(h);
+        }
+      }
+
+      if (bridgeHinges.length > 0) {
+        const bh = bridgeHinges[0];
+        const [a, b] = ends(bh);
+        const wallId = bodyIds.has(a) ? a : b;
+        const colIdx = body.findIndex(w => w.id === wallId);
+        const dx = Math.abs(bh.p2.x - bh.p1.x), dy = Math.abs(bh.p2.y - bh.p1.y);
+        if (dy > dx) {
+          if (compFaces.length === 1 && colIdx >= 0 && compFaces[0].bounds.height > body[colIdx].bounds.height * 0.45) {
+            glueFlaps.push({ face: compFaces[0], wallCol: colIdx, hinge: bh });
+          }
+        } else {
+          const yMidHinge = (bh.p1.y + bh.p2.y) * 0.5;
+          if (yMidHinge < rawMidY) {
+            if (colIdx >= 0) topBridgeHingesByCol[colIdx].push(...bridgeHinges);
+          } else {
+            for (const id of compIds) oldBottomFaceIds.add(id);
+            if (colIdx >= 0) bottomBridgeHingesByCol[colIdx].push(...bridgeHinges);
+          }
+        }
+      } else if (compFaces[0].centroid.y > rawMidY) {
+        for (const id of compIds) oldBottomFaceIds.add(id);
+      }
+    }
+
+    const bottomFlaps = body.map((wall, i) => {
+      const bh = bottomBridgeHingesByCol[i][0] || null;
+      const [a, b] = bh ? ends(bh) : [null, null];
+      const flap = bh ? faceById.get(a === wall.id ? b : a) : null;
+      return {
+        face: flap || null,
+        body: wall,
+        hinge: bh,
+        yFold: bh ? (bh.p1.y + bh.p2.y) * 0.5 : wall.bounds.maxY
+      };
+    });
+
+    return {
+      valid: true,
+      body,
+      bottomFlaps,
+      topBridgeHingesByCol,
+      bottomBridgeHingesByCol,
+      oldBottomFaceIds,
+      glueFlaps,
+      rawMidY
+    };
   }
 
-  /**
-   * Aplica la pieza «Fondo automático» (base tipo #10501002: 2 solapas anchas con pliegue oblicuo 45°
-   * y pestaña de pegado + 2 solapas estrechas trapezoidales de encaje).
-   */
-  function applyAutoBottomVariation(baseModel, params = {}) {
-    const data = getAutoBottomStripData(baseModel);
-    if (!data || !data.valid) {
-      return { ...baseModel, partError: data?.error || 'El fondo automático requiere una caja de 4 caras con solapas inferiores.' };
+  function applyAutoBottomHorizontal(baseModel, data, params = {}) {
+    const clearance = Math.max(0.5, Math.min(6, Number.isFinite(Number(params.clearance)) ? Number(params.clearance) : 1.12));
+    const { body, topBridgeHingesByCol, bottomBridgeHingesByCol, oldBottomFaceIds, glueFlaps, rawMidY } = data;
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+
+    const signedRingArea = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) * 0.5;
+
+    const dedupeRing = pts => {
+      const out = [];
+      for (const p of pts) {
+        if (!out.length || Math.hypot(p.x - out[out.length - 1].x, p.y - out[out.length - 1].y) > 1e-4) {
+          out.push(p);
+        }
+      }
+      while (out.length > 2 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) <= 1e-4) {
+        out.pop();
+      }
+      return out;
+    };
+
+    const measureWallEdgeY = (wall, isTopSide) => {
+      const poly = wall.polygon;
+      let bestY = null, bestSpan = -1;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const ym = (a.y + b.y) * 0.5;
+        if (isTopSide ? (ym >= rawMidY) : (ym <= rawMidY)) continue;
+        const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+        if (dy <= 1.2 && dx > bestSpan) {
+          bestSpan = dx;
+          bestY = ym;
+        }
+      }
+      return bestY !== null ? bestY : (isTopSide ? wall.bounds.minY : wall.bounds.maxY);
+    };
+
+    const yTopCol = body.map((wall, i) => {
+      const bhs = topBridgeHingesByCol[i];
+      if (bhs.length > 0) return bhs.reduce((s, h) => s + (h.p1.y + h.p2.y) * 0.5, 0) / bhs.length;
+      return measureWallEdgeY(wall, true);
+    });
+    const yBotColOld = body.map((wall, i) => {
+      const bhs = bottomBridgeHingesByCol[i];
+      if (bhs.length > 0) return bhs.reduce((s, h) => s + (h.p1.y + h.p2.y) * 0.5, 0) / bhs.length;
+      return measureWallEdgeY(wall, false);
+    });
+
+    const xWallL = body.map(w => {
+      const xs = [];
+      for (let i = 0; i < w.polygon.length; i++) {
+        const a = w.polygon[i], b = w.polygon[(i + 1) % w.polygon.length];
+        if ((a.y <= rawMidY && b.y >= rawMidY) || (b.y <= rawMidY && a.y >= rawMidY)) {
+          const t = Math.abs(b.y - a.y) < 1e-6 ? 0.5 : (rawMidY - a.y) / (b.y - a.y);
+          xs.push(a.x + (b.x - a.x) * t);
+        }
+      }
+      return xs.length ? Math.min(...xs) : w.bounds.minX;
+    });
+    const xWallR = body.map(w => {
+      const xs = [];
+      for (let i = 0; i < w.polygon.length; i++) {
+        const a = w.polygon[i], b = w.polygon[(i + 1) % w.polygon.length];
+        if ((a.y <= rawMidY && b.y >= rawMidY) || (b.y <= rawMidY && a.y >= rawMidY)) {
+          const t = Math.abs(b.y - a.y) < 1e-6 ? 0.5 : (rawMidY - a.y) / (b.y - a.y);
+          xs.push(a.x + (b.x - a.x) * t);
+        }
+      }
+      return xs.length ? Math.max(...xs) : w.bounds.maxX;
+    });
+
+    const wCols = [0, 1, 2, 3].map(i => xWallR[i] - xWallL[i]);
+    const span02 = Math.max(wCols[0], wCols[2]);
+    const span13 = Math.max(wCols[1], wCols[3]);
+    const isSquare = Math.abs(span02 - span13) < 1.5;
+    const widePairIs02 = isSquare ? true : (span02 > span13);
+
+    // El ancho de referencia en X es siempre la cara estrecha/ancha menor de la base (sin descontar recortes de cola)
+    const narrowW = Math.min(span02, span13);
+    const halfNarrow = Math.max(8, narrowW * 0.5);
+
+    const yTopBase = Math.max(...yTopCol);
+    const arrowH = (baseModel.sizeArrowData || []).find(a =>
+      a && a.lineName === 'H' && a.p1 && a.p2 && Math.abs(a.p1.x - a.p2.x) < 1.5
+    );
+    const hSpan = arrowH
+      ? Math.abs(arrowH.p2.y - arrowH.p1.y)
+      : Math.min(...yBotColOld.map((yb, i) => yb - yTopCol[i]));
+    const y0 = yTopBase + hSpan;
+    const yShelf = y0 + halfNarrow;
+
+    const boxHeightApprox = Math.max(20, hSpan);
+    const bandMargin = Math.min(24, boxHeightApprox * 0.25);
+    const yBandTop = Math.max(...yTopCol) + bandMargin;
+    const yBandBot = Math.min(y0, ...yBotColOld) - bandMargin;
+
+    const splitWallPolygon = poly => {
+      const origArea = signedRingArea(poly);
+      const work = origArea >= 0 ? poly.map(p => ({ ...p })) : poly.slice().reverse().map(p => ({ ...p }));
+      const isTop = p => p.y <= yBandTop;
+      const isBot = p => p.y >= yBandBot;
+      let startIdx = 0;
+      for (let i = 0; i < work.length; i++) {
+        const prev = work[(i - 1 + work.length) % work.length];
+        if (isTop(work[i]) && !isTop(prev)) { startIdx = i; break; }
+      }
+      const rot = [...work.slice(startIdx), ...work.slice(0, startIdx)];
+      let topEnd = 0;
+      while (topEnd < rot.length && isTop(rot[topEnd])) topEnd++;
+      let firstBot = topEnd;
+      while (firstBot < rot.length && !isBot(rot[firstBot])) firstBot++;
+      let lastBot = rot.length - 1;
+      while (lastBot >= firstBot && !isBot(rot[lastBot])) lastBot--;
+      return {
+        origArea,
+        topChain: rot.slice(0, topEnd),
+        rightMid: rot.slice(topEnd, firstBot),
+        leftMid: lastBot >= firstBot ? rot.slice(lastBot + 1) : []
+      };
+    };
+
+    let oldRootColIdx = -1;
+    if (oldBottomFaceIds.has(baseModel.rootFaceId)) {
+      for (let c = 0; c < 4; c++) {
+        for (const bh of bottomBridgeHingesByCol[c]) {
+          const [a, b] = ends(bh);
+          if (a === baseModel.rootFaceId || b === baseModel.rootFaceId) { oldRootColIdx = c; break; }
+        }
+      }
+      if (oldRootColIdx < 0) oldRootColIdx = 2;
     }
 
-    const clearance = Math.max(0.5, Math.min(6, Number.isFinite(Number(params.clearance)) ? Number(params.clearance) : 1.1));
     const model = {
       ...baseModel,
-      faces: baseModel.faces.map(f => ({
-        ...f,
-        polygon: f.polygon.map(p => ({ ...p })),
-        holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
-      })),
-      cutSegments: baseModel.cutSegments.map(s => ({ ...s })),
-      foldSegments: baseModel.foldSegments.map(s => ({ ...s })),
-      hinges: baseModel.hinges.map(h => ({ ...h })),
+      faces: baseModel.faces
+        .filter(f => !oldBottomFaceIds.has(f.id))
+        .map(f => ({
+          ...f,
+          polygon: f.polygon.map(p => ({ ...p })),
+          holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+        })),
+      cutSegments: [],
+      foldSegments: [],
+      hinges: baseModel.hinges
+        .filter(h => {
+          const [a, b] = ends(h);
+          return !oldBottomFaceIds.has(a) && !oldBottomFaceIds.has(b);
+        })
+        .map(h => ({
+          ...h,
+          p1: { ...h.p1 },
+          p2: { ...h.p2 },
+          midpoint: h.midpoint ? { ...h.midpoint } : undefined,
+          animSteps: h.animSteps ? h.animSteps.map(s => ({ ...s })) : undefined
+        })),
       activePartVariation: 'auto_bottom',
       partOptions: { clearance }
     };
 
-    const bodyWidths = data.body.map(b => b.bounds.width);
-    const minW = Math.min(...bodyWidths);
-    const maxW = Math.max(...bodyWidths);
-    const isSquare = Math.abs(maxW - minW) < 1.5;
-    const narrowW = minW;
-    const halfNarrow = Math.max(8, narrowW * 0.5);
-    const lockExtra = Math.max(8, Math.min(22, narrowW * 0.3));
-    const fullLockH = halfNarrow + lockExtra;
-    const notchIn = Math.max(3, Math.min(6, halfNarrow * 0.18));
+    // 1. Normalizar el borde inferior de las 4 paredes a la línea de hendido horizontal y0
+    for (let i = 0; i < 4; i++) {
+      const wall = model.faces.find(f => f.id === body[i].id);
+      const sp = splitWallPolygon(wall.polygon);
+      const cleanBot = [{ x: xWallR[i], y: y0 }, { x: xWallL[i], y: y0 }];
+      let rebuilt = dedupeRing([...sp.topChain, ...sp.rightMid, ...cleanBot, ...sp.leftMid]);
+      if (sp.origArea < 0) rebuilt = rebuilt.slice().reverse();
+      wall.polygon = rebuilt;
+    }
 
-    const yFoldRef = Math.min(...data.bottomFlaps.map(bf => bf.yFold));
-    const oldBottomIds = new Set(data.bottomFlaps.map(bf => bf.face.id));
-    // Eliminar también sub-pestañas previas colgadas de las solapas inferiores (si ya tenía fondo automático)
-    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
-    const bodyIds = new Set(data.body.map(b => b.id));
-    const extraChildIds = new Set();
+    // 2. Normalizar el borde inferior de la pestaña de pegado (recto horizontal en yGlueBot)
+    const yGlueBot = y0 - 0.5;
+    const glueCutSegs = [];
+    for (const gf of glueFlaps) {
+      const gFace = model.faces.find(f => f.id === gf.face.id);
+      if (!gFace) continue;
+      const gp = splitWallPolygon(gFace.polygon);
+      const gMinX = gFace.bounds.minX, gMaxX = gFace.bounds.maxX;
+      const cleanGlueBot = [{ x: gMaxX, y: yGlueBot }, { x: gMinX, y: yGlueBot }];
+      let rebuilt = dedupeRing([...gp.topChain, ...gp.rightMid, ...cleanGlueBot, ...gp.leftMid]);
+      if (gp.origArea < 0) rebuilt = rebuilt.slice().reverse();
+      gFace.polygon = rebuilt;
+      glueCutSegs.push({ x1: gMinX, y1: yGlueBot, x2: gMaxX, y2: yGlueBot, type: 'CUT' });
+      const isLeftGlue = gFace.centroid.x < body[gf.wallCol].centroid.x;
+      const xAttach = isLeftGlue ? xWallL[gf.wallCol] : xWallR[gf.wallCol];
+      if (Math.abs(y0 - yGlueBot) > 1e-4) {
+        glueCutSegs.push({ x1: xAttach, y1: yGlueBot, x2: xAttach, y2: y0, type: 'CUT' });
+      }
+    }
+
+    // 3. Ajustar extremo inferior de las bisagras verticales del cuerpo y pegado
     for (const h of model.hinges) {
       const [a, b] = ends(h);
-      if (oldBottomIds.has(a) && !bodyIds.has(b) && !oldBottomIds.has(b)) extraChildIds.add(b);
-      if (oldBottomIds.has(b) && !bodyIds.has(a) && !oldBottomIds.has(a)) extraChildIds.add(a);
-    }
-    if (extraChildIds.size) {
-      model.faces = model.faces.filter(f => !extraChildIds.has(f.id));
-      model.hinges = model.hinges.filter(h => {
-        const [a, b] = ends(h);
-        return !extraChildIds.has(a) && !extraChildIds.has(b);
-      });
+      const dx = Math.abs(h.p2.x - h.p1.x), dy = Math.abs(h.p2.y - h.p1.y);
+      if (dx >= 1.5 || dy <= 5) continue;
+      const cA = body.findIndex(w => w.id === a);
+      const cB = body.findIndex(w => w.id === b);
+      let targetY = null;
+      if (cA >= 0 && cB >= 0) targetY = y0;
+      else if (cA >= 0 || cB >= 0) {
+        const otherId = cA >= 0 ? b : a;
+        if (glueFlaps.some(g => g.face.id === otherId)) targetY = yGlueBot;
+      }
+      if (targetY !== null) {
+        if (h.p1.y > h.p2.y) h.p1.y = targetY;
+        else h.p2.y = targetY;
+        h.midpoint = { x: (h.p1.x + h.p2.x) * 0.5, y: (h.p1.y + h.p2.y) * 0.5 };
+        h.length = Math.hypot(h.p2.x - h.p1.x, h.p2.y - h.p1.y);
+        h.lengthMm = h.length;
+      }
     }
 
-    // Quitar segmentos de corte y hendido por debajo de la línea de pliegue inferior
-    const minXStrip = Math.min(...data.body.map(b => b.bounds.minX)) - 2;
-    const maxXStrip = Math.max(...data.body.map(b => b.bounds.maxX)) + 2;
-    const isBelowFold = s =>
-      Math.max(s.y1, s.y2) > yFoldRef + 0.5 &&
-      Math.min(s.x1, s.x2) >= minXStrip &&
-      Math.max(s.x1, s.x2) <= maxXStrip;
-    model.cutSegments = model.cutSegments.filter(s => !isBelowFold(s));
-    model.foldSegments = model.foldSegments.filter(s => !isBelowFold(s));
+    // 4. Conservar segmentos 2D superiores e intermedios del cuerpo, ajustando verticales hasta y0 / yGlueBot
+    const filterAndTrimBodySegs = srcSegs => {
+      const out = [];
+      for (const s of srcSegs || []) {
+        const yMin = Math.min(s.y1, s.y2), yMax = Math.max(s.y1, s.y2);
+        if (yMin >= yBandBot - 0.2) continue;
+        if (yMax >= yBandBot - 0.2) {
+          const ns = { ...s };
+          const xm = (s.x1 + s.x2) * 0.5;
+          let targetY = y0;
+          for (const gf of glueFlaps) {
+            const isLeft = gf.face.centroid.x < body[gf.wallCol].centroid.x;
+            const xAttach = isLeft ? xWallL[gf.wallCol] : xWallR[gf.wallCol];
+            const xOuter = isLeft ? gf.face.bounds.minX : gf.face.bounds.maxX;
+            if (Math.abs(xm - xAttach) < 0.8 || Math.abs(xm - xOuter) < 1.2) {
+              targetY = yGlueBot;
+              break;
+            }
+          }
+          if (ns.y1 > ns.y2) ns.y1 = targetY;
+          else ns.y2 = targetY;
+          if (Math.hypot(ns.x2 - ns.x1, ns.y2 - ns.y1) > 1e-4) out.push(ns);
+          continue;
+        }
+        out.push({ ...s });
+      }
+      return out;
+    };
+    model.cutSegments = filterAndTrimBodySegs(baseModel.cutSegments);
+    model.foldSegments = filterAndTrimBodySegs(baseModel.foldSegments);
+    model.cutSegments.push(...glueCutSegs);
 
-    let nextFaceId = Math.max(0, ...model.faces.map(f => Number(f.id) || 0)) + 1;
+    // 5. Generar las 4 solapas inferiores + 2 pestañas oblicuas a 45° exactos (patrón industrial #10501002)
+    let nextFaceId = Math.max(0, ...baseModel.faces.map(f => Number(f.id) || 0)) + 1;
     const newCutSegs = [];
     const newFoldSegs = [];
     const pushPolyCuts = (poly, skipEdgePredicate) => {
@@ -4006,124 +4264,234 @@
       }
     };
 
-    data.bottomFlaps.forEach((bf, idx) => {
-      const face = model.faces.find(f => f.id === bf.face.id);
-      if (!face) return;
-      const wall = bf.body;
-      const y0 = bf.yFold;
-      const xL = wall.bounds.minX + clearance;
-      const xR = wall.bounds.maxX - clearance;
-      const wSpan = Math.max(12, xR - xL);
-      const isWide = isSquare ? (idx % 2 === 0) : (wall.bounds.width >= maxW - 1.5);
+    const primaryBottomFlapByCol = [null, null, null, null];
+    for (let idx = 0; idx < 4; idx++) {
+      const wall = body[idx];
+      const dL = xWallL[idx], dR = xWallR[idx];
+      const wWall = dR - dL;
+      // Centro exacto en X de la cara de cuerpo (Fotos 3 y 4)
+      const xCenter = (dL + dR) * 0.5;
+      const hasRightNeighbor = idx < 3 || glueFlaps.some(g => g.face.centroid.x > wall.centroid.x);
+      const xL = dL + clearance;
+      const xR = hasRightNeighbor ? (dR - clearance) : dR;
+      const wSpan = Math.max(10, xR - xL);
+      const isWide = widePairIs02 ? (idx % 2 === 0) : (idx % 2 === 1);
+
+      const flapId = nextFaceId++;
+      primaryBottomFlapByCol[idx] = flapId;
+
+      if (dL < xL - 1e-4) newCutSegs.push({ x1: dL, y1: y0, x2: xL, y2: y0, type: 'CUT' });
+      if (dR > xR + 1e-4) newCutSegs.push({ x1: xR, y1: y0, x2: dR, y2: y0, type: 'CUT' });
+      newFoldSegs.push({ x1: xL, y1: y0, x2: xR, y2: y0, type: 'FOLD' });
 
       if (isWide) {
-        // Solapa principal de fondo automático (tipo HB / FB en #10501002)
-        const diagDx = Math.min(halfNarrow - notchIn, wSpan * 0.35);
-        const xDiagTop = xR - notchIn;
-        const yDiagTop = y0 + notchIn;
-        const xDiagBot = xDiagTop - diagDx;
-        const yDiagBot = yDiagTop + diagDx;
-        const xMid = Math.min(xDiagBot - 2, xL + wSpan * 0.5);
+        // Solapa principal de fondo automático (HB / FB en #10501002)
+        const lockExtra = Math.min(
+          Math.max(8, Math.min(22, +(narrowW * 0.297).toFixed(3))),
+          Math.max(6, wWall * 0.30)
+        );
+        const yBottom = yShelf + lockExtra;
+        const notchIn = Math.max(2.5, Math.min(5.1, halfNarrow * 0.1683));
+        const pNotch = { x: xR - notchIn, y: y0 + notchIn };
+        const minStepForCenter = ((xCenter + 2.0) - (xR - halfNarrow)) * 0.5;
+        const stepSA = Math.max(0.53, Math.min(halfNarrow * 0.35, minStepForCenter));
+        const xObTop = pNotch.x + stepSA;
+        const yObTop = pNotch.y + stepSA;
+        const yObBot = yShelf; // Distancia desde y0 hasta la línea de corte horizontal = exactamente halfNarrow (W / 2)
+        const dyOb = Math.max(2, yObBot - yObTop);
+        const xObBot = xObTop - dyOb; // Pendiente exactamente 45° (|dx| === |dy|)
 
-        const mainPoly = [
+        // Tramo de corte vertical exactamente en x = xCenter (Fotos 3 y 4) + acuerdo circular hacia corte a 45°
+        const rFillet = Math.min(4, lockExtra * 0.2222);
+        const vertStep = Math.max(1.2, Math.min(3.5, lockExtra * 0.2222 - rFillet * Math.tan(Math.PI / 8)));
+        const arcPts = [];
+        const arcSteps = 8;
+        const arcCx = xCenter - rFillet;
+        const arcCy = yShelf + vertStep;
+        for (let k = 0; k <= arcSteps; k++) {
+          const theta = (Math.PI * 0.25 * k) / arcSteps;
+          arcPts.push({
+            x: arcCx + rFillet * Math.cos(theta),
+            y: arcCy + rFillet * Math.sin(theta)
+          });
+        }
+        const arcEnd = arcPts[arcPts.length - 1];
+        const remDy = Math.max(0, yBottom - arcEnd.y);
+        const xLobeBotRight = arcEnd.x - remDy;
+        const leftTaper = Math.min(4.6, (yBottom - y0) * 0.095);
+        const xBotLeft = Math.min(xLobeBotRight - 3, xL + leftTaper);
+
+        const mainPoly = dedupeRing([
           { x: xL, y: y0 },
           { x: xR, y: y0 },
-          { x: xDiagTop, y: yDiagTop },
-          { x: xDiagBot, y: yDiagBot },
-          { x: xMid, y: yDiagBot },
-          { x: xMid, y: y0 + fullLockH },
-          { x: xL + Math.min(4, wSpan * 0.05), y: y0 + fullLockH },
-          { x: xL, y: y0 + fullLockH - Math.min(4, fullLockH * 0.1) }
-        ];
-        face.polygon = mainPoly;
-        face.holes = [];
-        face.role = 'FLAP';
-        face.label = `Fondo Auto. ${idx + 1}`;
-        face.name = face.label;
+          pNotch,
+          { x: xObTop, y: yObTop },
+          { x: xObBot, y: yObBot },
+          { x: xCenter, y: yShelf },
+          ...arcPts,
+          { x: xLobeBotRight, y: yBottom },
+          { x: xBotLeft, y: yBottom }
+        ]);
 
-        // Pestaña de pegado triangular/trapezoidal unida por el hendido oblicuo a 45° (tipo HBR / FBR)
+        const mainCode = widePairIs02 ? (idx === 0 ? 'HB' : 'FB') : undefined;
+        const mainLabel = mainCode
+          ? (idx === 0 ? 'Solapa Inf. Base (HB)' : 'Solapa Inf. Frontal (FB)')
+          : `Fondo Auto. ${idx + 1}`;
+        model.faces.push({
+          id: flapId,
+          pacdoraName: mainCode,
+          shortName: mainCode || `FA${idx + 1}`,
+          name: mainLabel,
+          label: mainLabel,
+          role: 'FLAP',
+          polygon: mainPoly,
+          holes: [],
+          defaultAngle: 90.2
+        });
+
+        // Pestaña de pegado unida por el hendido oblicuo a 45° exactos (HBR / FBR en #10501002)
         const tabId = nextFaceId++;
-        const tabRightX = xR - 0.8;
-        const tabPoly = [
-          { x: xDiagTop, y: yDiagTop },
-          { x: tabRightX, y: yDiagTop + Math.min(4, notchIn) },
-          { x: tabRightX, y: y0 + fullLockH },
-          { x: xDiagBot, y: y0 + fullLockH },
-          { x: xDiagBot, y: yDiagBot }
-        ];
+        const xTabRight = Math.max(xObTop + 2, dR - Math.max(1.6, clearance + 0.88));
+        const yTabShoulder = yObTop + (xTabRight - xObTop);
+        const maxTabDrop = Math.max(4, xTabRight - xObBot);
+        const yTabBot = Math.min(yBottom, yObBot + maxTabDrop);
+        const xTabBotLeft = xObBot + (yTabBot - yObBot);
+        const rTab = Math.max(0, Math.min(4, (yTabBot - yTabShoulder) * 0.25, Math.max(0, xTabRight - xTabBotLeft)));
+        const tabArc = [];
+        if (rTab > 0.2) {
+          const tCx = xTabRight - rTab, tCy = yTabBot - rTab;
+          for (let k = 0; k <= 8; k++) {
+            const theta = (Math.PI * 0.5 * k) / 8;
+            tabArc.push({ x: tCx + rTab * Math.cos(theta), y: tCy + rTab * Math.sin(theta) });
+          }
+        } else {
+          tabArc.push({ x: xTabRight, y: yTabBot });
+        }
+        const tabPoly = dedupeRing([
+          { x: xObTop, y: yObTop },
+          { x: xTabRight, y: yTabShoulder },
+          ...tabArc,
+          { x: xTabBotLeft, y: yTabBot },
+          { x: xObBot, y: yObBot }
+        ]);
+        const tabCode = widePairIs02 ? (idx === 0 ? 'HBR' : 'FBR') : undefined;
+        const tabLabel = `Pestaña Fondo Auto. ${idx + 1}`;
         model.faces.push({
           id: tabId,
-          name: `Pestaña Fondo Auto. ${idx + 1}`,
-          label: `Pestaña Fondo Auto. ${idx + 1}`,
+          pacdoraName: tabCode,
+          shortName: tabCode || `PFA${idx + 1}`,
+          name: tabCode ? `Panel ${tabCode}` : tabLabel,
+          label: tabLabel,
           role: 'FLAP',
           polygon: tabPoly,
-          holes: []
+          holes: [],
+          defaultAngle: -1.8
         });
 
-        // Bisagra oblicua a 45°
-        const obLen = Math.hypot(xDiagBot - xDiagTop, yDiagBot - yDiagTop);
+        const obLen = Math.hypot(xObBot - xObTop, yObBot - yObTop);
         model.hinges.push({
-          id: `hinge_${face.id}_${tabId}`,
-          parentFaceId: face.id,
+          id: `hinge_${flapId}_${tabId}`,
+          parentFaceId: flapId,
           childFaceId: tabId,
-          parentId: face.id,
+          parentId: flapId,
           childId: tabId,
-          faceA: face.id,
+          faceA: flapId,
           faceB: tabId,
-          p1: { x: xDiagTop, y: yDiagTop },
-          p2: { x: xDiagBot, y: yDiagBot },
-          midpoint: { x: (xDiagTop + xDiagBot) * 0.5, y: (yDiagTop + yDiagBot) * 0.5 },
+          p1: { x: xObTop, y: yObTop },
+          p2: { x: xObBot, y: yObBot },
+          midpoint: { x: (xObTop + xObBot) * 0.5, y: (yObTop + yObBot) * 0.5 },
           length: obLen,
           lengthMm: obLen,
+          orientation: 'HORIZONTAL',
           defaultAngle: -1.8,
-          preservedPlanarSlope: (xDiagBot - xDiagTop) / (yDiagBot - yDiagTop)
+          planarSlope: -1,
+          preservedPlanarSlope: -1,
+          animSteps: [
+            { start: 0.3, end: 0.4, deltaDeg: -179.8 },
+            { start: 0.6, end: 0.7, deltaDeg: 178 }
+          ]
         });
-        newFoldSegs.push({ x1: xDiagTop, y1: yDiagTop, x2: xDiagBot, y2: yDiagBot, type: 'FOLD' });
+        newFoldSegs.push({ x1: xObTop, y1: yObTop, x2: xObBot, y2: yObBot, type: 'FOLD' });
 
-        // Cortes del contorno (excluyendo el hendido superior en y0 y el hendido oblicuo a 45°)
         const isObEdge = (a, b) =>
-          (Math.hypot(a.x - xDiagTop, a.y - yDiagTop) < 0.2 && Math.hypot(b.x - xDiagBot, b.y - yDiagBot) < 0.2) ||
-          (Math.hypot(b.x - xDiagTop, b.y - yDiagTop) < 0.2 && Math.hypot(a.x - xDiagBot, a.y - yDiagBot) < 0.2);
-        const isTopFold = (a, b) => Math.abs(a.y - y0) < 0.2 && Math.abs(b.y - y0) < 0.2;
+          (Math.hypot(a.x - xObTop, a.y - yObTop) < 0.05 && Math.hypot(b.x - xObBot, b.y - yObBot) < 0.05) ||
+          (Math.hypot(b.x - xObTop, b.y - yObTop) < 0.05 && Math.hypot(a.x - xObBot, a.y - yObBot) < 0.05);
+        const isTopFold = (a, b) => Math.abs(a.y - y0) < 0.05 && Math.abs(b.y - y0) < 0.05;
         pushPolyCuts(mainPoly, (a, b) => isTopFold(a, b) || isObEdge(a, b));
         pushPolyCuts(tabPoly, (a, b) => isObEdge(a, b));
       } else {
-        // Solapa estrecha trapezoidal de encaje (tipo FRB / FLB en #10501002)
-        const trapH = halfNarrow;
-        const leftInset = Math.min(wSpan * 0.2, trapH * 0.4);
-        const rightInset = Math.min(wSpan * 0.5, trapH);
+        // Solapa estrecha trapezoidal de encaje (FRB / FLB en #10501002, altura = exactamente halfNarrow = W / 2)
+        const rightInset = Math.min(wSpan * 0.52, Math.max(4, halfNarrow - clearance));
+        const leftInset = Math.min(wSpan * 0.32, halfNarrow * 0.365);
+        const xBotR = Math.max(xL + leftInset + 4, xR - rightInset);
+        const xBotL = Math.min(xBotR - 4, xL + leftInset);
         const narrowPoly = [
           { x: xL, y: y0 },
           { x: xR, y: y0 },
-          { x: Math.max(xL + leftInset + 4, xR - rightInset), y: y0 + trapH },
-          { x: xL + leftInset, y: y0 + trapH }
+          { x: xBotR, y: yShelf },
+          { x: xBotL, y: yShelf }
         ];
-        face.polygon = narrowPoly;
-        face.holes = [];
-        face.role = 'FLAP';
-        face.label = `Solapa Fondo Auto. ${idx + 1}`;
-        face.name = face.label;
-        pushPolyCuts(narrowPoly, (a, b) => Math.abs(a.y - y0) < 0.2 && Math.abs(b.y - y0) < 0.2);
+        const sideCode = widePairIs02 ? (idx === 1 ? 'FRB' : 'FLB') : undefined;
+        const sideLabel = sideCode
+          ? (idx === 1 ? 'Solapa Esquina Inf. Der. (FRB)' : 'Solapa Esquina Inf. Izq. (FLB)')
+          : `Solapa Fondo Auto. ${idx + 1}`;
+        model.faces.push({
+          id: flapId,
+          pacdoraName: sideCode,
+          shortName: sideCode || `SFA${idx + 1}`,
+          name: sideLabel,
+          label: sideLabel,
+          role: 'FLAP',
+          polygon: narrowPoly,
+          holes: [],
+          defaultAngle: 90.2
+        });
+        pushPolyCuts(narrowPoly, (a, b) => Math.abs(a.y - y0) < 0.05 && Math.abs(b.y - y0) < 0.05);
       }
 
-      // Actualizar línea de bisagra horizontal con el ancho de la nueva solapa
-      const h = model.hinges.find(x => x.id === bf.hinge.id);
-      if (h) {
-        h.p1 = { x: xL, y: y0 };
-        h.p2 = { x: xR, y: y0 };
-        h.midpoint = { x: (xL + xR) * 0.5, y: y0 };
-        h.length = wSpan;
-        h.lengthMm = wSpan;
-      }
-    });
+      // Bisagra horizontal (orientada derecha -> izquierda para plegar hacia -Z en 3D)
+      model.hinges.push({
+        id: `hinge_${wall.id}_${flapId}`,
+        parentFaceId: wall.id,
+        childFaceId: flapId,
+        parentId: wall.id,
+        childId: flapId,
+        faceA: wall.id,
+        faceB: flapId,
+        p1: { x: xR, y: y0 },
+        p2: { x: xL, y: y0 },
+        midpoint: { x: (xL + xR) * 0.5, y: y0 },
+        length: wSpan,
+        lengthMm: wSpan,
+        orientation: 'HORIZONTAL',
+        defaultAngle: 90.2,
+        animSteps: isWide
+          ? [
+              { start: 0.3, end: 0.4, deltaDeg: 179.8 },
+              { start: 0.6, end: 0.7, deltaDeg: -89.6 }
+            ]
+          : [
+              { start: 0.4, end: 0.5, deltaDeg: 179.8 },
+              { start: 0.6, end: 0.7, deltaDeg: -89.6 }
+            ]
+      });
+    }
 
     model.cutSegments.push(...newCutSegs);
     model.foldSegments.push(...newFoldSegs);
 
-    const area = ring => ring.reduce((sum, p, i) => {
-      const q = ring[(i + 1) % ring.length];
-      return sum + p.x * q.y - q.x * p.y;
-    }, 0) / 2;
+    // 6. Limpiar cotas auxiliares antiguas del fondo reemplazado conservando L, W, H, G y las de cuerpo/tapa
+    if (Array.isArray(baseModel.sizeArrowData)) {
+      model.sizeArrowData = baseModel.sizeArrowData
+        .filter(a => {
+          if (!a || !a.p1 || !a.p2) return false;
+          if (['L', 'W', 'H', 'G'].includes(a.lineName)) return true;
+          return Math.max(a.p1.y, a.p2.y) < yBandBot - 2;
+        })
+        .map(a => ({ ...a, p1: { ...a.p1 }, p2: { ...a.p2 }, tpointer: a.tpointer ? { ...a.tpointer } : a.tpointer }));
+    }
+
+    // 7. Recalcular métricas de caras y modelo
     for (const face of model.faces) {
       const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
       const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -4134,7 +4502,8 @@
         x: face.polygon.reduce((s, p) => s + p.x, 0) / face.polygon.length,
         y: face.polygon.reduce((s, p) => s + p.y, 0) / face.polygon.length
       };
-      face.areaMm2 = Math.abs(area(face.polygon)) - (face.holes || []).reduce((s, h) => s + Math.abs(area(h)), 0);
+      face.areaMm2 = Math.abs(signedRingArea(face.polygon)) -
+        (face.holes || []).reduce((s, h) => s + Math.abs(signedRingArea(h)), 0);
       face.area = face.areaMm2;
     }
 
@@ -4151,7 +4520,63 @@
     model.totalCutLengthMm = model.cutSegments.reduce((s, e) => s + segmentLength(e), 0);
     model.totalFoldLengthMm = model.foldSegments.reduce((s, e) => s + segmentLength(e), 0);
     model.totalAreaMm2 = model.faces.reduce((s, f) => s + f.areaMm2, 0);
-    return model;
+
+    // 8. Reorientar el árbol 3D de bisagras hacia un panel raíz válido
+    let nextRootId = model.rootFaceId;
+    if (!model.faces.some(f => f.id === nextRootId)) {
+      if (oldRootColIdx >= 0 && primaryBottomFlapByCol[oldRootColIdx] !== null) {
+        nextRootId = primaryBottomFlapByCol[oldRootColIdx];
+      } else if (model.dimensionBaseFaceId && model.faces.some(f => f.id === model.dimensionBaseFaceId)) {
+        nextRootId = model.dimensionBaseFaceId;
+      } else {
+        nextRootId = body[Math.max(0, oldRootColIdx)].id;
+      }
+    }
+    try {
+      const rerooted = rerootDielineModel(model, nextRootId, { keepDimensionBase: true });
+      rerooted.activePartVariation = 'auto_bottom';
+      rerooted.partOptions = { clearance };
+      return rerooted;
+    } catch (_) {
+      model.rootFaceId = nextRootId;
+      return model;
+    }
+  }
+
+  /**
+   * Aplica la pieza «Fondo automático» (base tipo #10501002: 2 solapas anchas con pliegue oblicuo 45°,
+   * corte vertical central y apoyo a mitad de ancho + 2 solapas estrechas trapezoidales de encaje).
+   */
+  function applyAutoBottomVariation(baseModel, params = {}) {
+    const directData = getAutoBottomStripData(baseModel);
+    if (directData && directData.valid) {
+      return applyAutoBottomHorizontal(baseModel, directData, params);
+    }
+    // Soporte también cuando el troquel se ha girado 90°
+    if (baseModel && baseModel.bounds) {
+      const r1 = rotateDieline90(baseModel);
+      const r3 = rotateDieline90(rotateDieline90(r1));
+      const d1 = getAutoBottomStripData(r1);
+      const d3 = getAutoBottomStripData(r3);
+      const scoreTop = m => (m.faces || []).reduce((acc, f) => {
+        const tag = `${f.pacdoraName || ''} ${f.role || ''} ${f.name || ''}`;
+        const isLidNamed = /(?:^|[^A-Za-z0-9])(HT\d*|FT\d*|FRT|FLT|TOP|SUP)(?:$|[^A-Za-z0-9])/i.test(tag) || f.role === 'FLAP_CLOSURE';
+        return acc + (isLidNamed && f.centroid.y < (m.bounds.minY + m.bounds.maxY) * 0.5 ? 10 : 0);
+      }, 0);
+      if (d1.valid || d3.valid) {
+        const useR1 = d1.valid && (!d3.valid || scoreTop(r1) >= scoreTop(r3));
+        if (useR1) {
+          const out = applyAutoBottomHorizontal(r1, d1, params);
+          return rotateDieline90(rotateDieline90(rotateDieline90(out)));
+        }
+        const out = applyAutoBottomHorizontal(r3, d3, params);
+        return rotateDieline90(out);
+      }
+    }
+    return {
+      ...baseModel,
+      partError: directData?.error || 'El fondo automático requiere una caja de 4 caras de cuerpo.'
+    };
   }
 
   /**
@@ -5040,7 +5465,8 @@
     }
 
     if (key === 'auto_bottom') {
-      field('clearance', 0.5, 6, 1.1);
+      limits.clearance = { min: 0.5, max: 6 };
+      params.clearance = +clamp(options.clearance, 0.5, 6, 1.12).toFixed(2);
       return {params, limits};
     }
 

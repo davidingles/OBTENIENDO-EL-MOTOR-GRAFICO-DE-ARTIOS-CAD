@@ -38,9 +38,18 @@ function createMockElement(id) {
     getAttribute(k) { return attrs.has(k) ? attrs.get(k) : null; },
     removeAttribute(k) { attrs.delete(k); },
     showModal() { this.open = true; },
+    show() { this.open = true; },
     close() { this.open = false; },
     focus() {},
     select() {},
+    replaceChildren() {},
+    append() {},
+    appendChild() {},
+    click() { this.trigger('click'); },
+    closest: () => null,
+    querySelector: () => null,
+    innerHTML: '',
+    options: [],
     querySelectorAll: () => [],
     addEventListener(type, fn) {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -66,6 +75,11 @@ function setupApp() {
   require('../assets/user-models.js');
 
   const sceneBg = { value: 0xf1f3f6, set(v) { this.value = v; } };
+  const partCards = ['standard', 'copy_lid', 'auto_bottom'].map(key => {
+    const c = createMockElement(`card-${key}`);
+    c.setAttribute('data-part-key', key);
+    return c;
+  });
 
   const ctx = {
     DielineEngine: engine,
@@ -95,8 +109,9 @@ function setupApp() {
       },
       body: { classList: createMockElement('body').classList },
       getElementById: el,
+      createElement: tag => createMockElement(tag),
       querySelector: () => null,
-      querySelectorAll: () => [],
+      querySelectorAll: sel => sel === '.part-card' ? partCards : [],
       activeElement: null
     },
     alert: e => { throw Error(e); }
@@ -128,12 +143,13 @@ function setupApp() {
         getMyModelsForModal,
         openMyModelsModal,
         initStartupAndThemeUI,
+        initUIControls,
         setModalFilters(board, q) { myModelsModalBoardFilter = board; myModelsModalSearch = q; }
       };
     })();`);
 
   vm.runInContext(source, ctx);
-  return { api: ctx.api, el, storage, docElAttrs };
+  return { api: ctx.api, el, storage, docElAttrs, partCards };
 }
 
 test('index.html incluye botones de inicio, modales accesibles y botones de tema a la derecha de enviar al plotter', () => {
@@ -276,6 +292,37 @@ test('Fondo automático existe en PIEZAS y genera pliegues oblicuos a 45° y pes
   assert.equal(tabs.length, 2, 'Debe generar las 2 pestañas oblicuas de pegado del fondo automático');
   const obliqueHinges = withAutoBottom.hinges.filter(h => Number.isFinite(h.preservedPlanarSlope) && Math.abs(Math.abs(h.preservedPlanarSlope) - 1) < 0.05);
   assert.equal(obliqueHinges.length, 2, 'Debe crear las 2 bisagras oblicuas a 45°');
+});
+
+test('Conmutar en la interfaz de Copiar tapa a Fondo automático reemplaza limpiamente la base', async () => {
+  global.window = global;
+  require('../assets/pacdora-catalog/folding-box-dielines-p1.js');
+  const { api, partCards } = setupApp();
+  api.initUIControls();
+  const entry = global.PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(x => String(x.num) === '10501002');
+  const geom = engine.buildDielineModelFromPacdora(entry.knifeData, entry);
+  await api.loadFefcoModel({ bundledModel: true, name: 'Caja #10501002', boardCode: 'C1', geometry: geom }, true);
+
+  const copyCard = partCards.find(c => c.getAttribute('data-part-key') === 'copy_lid');
+  const autoCard = partCards.find(c => c.getAttribute('data-part-key') === 'auto_bottom');
+  assert.ok(copyCard && autoCard, 'Deben existir las tarjetas Copiar tapa y Fondo automático');
+
+  // 1. Clic en Copiar tapa
+  copyCard.click();
+  assert.equal(api.state.dieline.activePartVariation, 'copy_lid');
+  assert.ok(!api.state.dieline.partError, api.state.dieline.partError);
+  assert.ok(api.state.dieline.faces.some(f => f.pacdoraName === 'HB2'));
+
+  // 2. Sin ni siquiera cerrar el diálogo, clic directo en Fondo automático
+  autoCard.click();
+  assert.equal(api.state.dieline.activePartVariation, 'auto_bottom');
+  assert.ok(!api.state.dieline.partError, api.state.dieline.partError);
+  assert.ok(!api.state.dieline.faces.some(f => f.pacdoraName === 'HB2'), 'Debe eliminar la tapa copiada previa');
+  assert.equal(
+    api.state.dieline.faces.filter(f => /^Pestaña Fondo Auto\./.test(f.label)).length,
+    2,
+    'Debe acoplar las 2 pestañas oblicuas a 45° del fondo automático'
+  );
 });
 
 test('al abrir un troquel por primera vez desde el canvas vacío su nombre aparece en la cabecera al primer clic', async () => {

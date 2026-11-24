@@ -455,3 +455,123 @@ test('Copiar tapa en caja B1 con retranqueo y modificaciones en solapas superior
   assert.ok(!copiedRot.partError, copiedRot.partError);
   assert.equal(copiedRot.faces.filter(f => f.role === 'FLAP_CLOSURE').length, 2);
 });
+
+test('Fondo automático acopla la base en estuches similares (#10001004, #10501002 tras Copiar tapa, B1 y caja cuadrada) cumpliendo siempre 45°, corte central y mitad de cara menor', () => {
+  const verifyAutoBottomInvariants = (model, labelContext) => {
+    assert.ok(!model.partError, `${labelContext}: ${model.partError}`);
+    assert.equal(model.activePartVariation, 'auto_bottom');
+
+    const data = DielineEngine.getAutoBottomStripData(model);
+    assert.equal(data.valid, true, `${labelContext}: debe detectar las 4 paredes`);
+    const wCols = data.body.map(b => b.bounds.width);
+    const narrowW = Math.min(Math.max(wCols[0], wCols[2]), Math.max(wCols[1], wCols[3]));
+    const expectedHalfW = narrowW * 0.5;
+
+    // 1. Hendidos inclinados SIEMPRE a 45° exactos (|dx| === |dy|) tanto en bisagras como en foldSegments
+    const obHinges = model.hinges.filter(h => Math.abs(h.defaultAngle ?? 90) < 10);
+    assert.equal(obHinges.length, 2, `${labelContext}: debe tener 2 bisagras inclinadas de fondo automático`);
+    for (const h of obHinges) {
+      const dx = Math.abs(h.p2.x - h.p1.x);
+      const dy = Math.abs(h.p2.y - h.p1.y);
+      assert.ok(dx > 2 && Math.abs(dx - dy) < 1e-4, `${labelContext}: hendido oblicuo debe ser 45° (dx=${dx}, dy=${dy})`);
+    }
+
+    const y0 = Math.max(...data.body.map(b => b.bounds.maxY));
+    const tabs = model.faces.filter(f => /^Pestaña Fondo Auto\./.test(f.label));
+    assert.equal(tabs.length, 2, `${labelContext}: 2 pestañas de pegado de fondo automático`);
+
+    // Identificar las 2 solapas principales (conectadas a las pestañas oblicuas) y las 2 estrechas
+    const mainFlapIds = new Set(obHinges.map(h => {
+      const tabIds = new Set(tabs.map(t => t.id));
+      return tabIds.has(h.parentFaceId) ? h.childFaceId : h.parentFaceId;
+    }));
+    assert.equal(mainFlapIds.size, 2);
+
+    for (const flapId of mainFlapIds) {
+      const flap = model.faces.find(f => f.id === flapId);
+      const wall = data.body.find(b =>
+        model.hinges.some(h =>
+          (h.parentFaceId === b.id && h.childFaceId === flapId) ||
+          (h.childFaceId === b.id && h.parentFaceId === flapId)
+        )
+      );
+      assert.ok(flap && wall, `${labelContext}: solapa principal conectada a su pared`);
+      const xCenterWall = (wall.bounds.minX + wall.bounds.maxX) * 0.5;
+
+      // 2. Distancia del hendido horizontal (y0) a la línea de corte horizontal más cercana = mitad de cara menor (narrowW / 2)
+      const horizCutEdges = [];
+      for (let i = 0; i < flap.polygon.length; i++) {
+        const a = flap.polygon[i], b = flap.polygon[(i + 1) % flap.polygon.length];
+        if (Math.abs(a.y - b.y) < 1e-3 && Math.abs(a.y - y0) > 1 && Math.abs(b.x - a.x) > 1.5) {
+          horizCutEdges.push({ y: (a.y + b.y) * 0.5, a, b });
+        }
+      }
+      assert.ok(horizCutEdges.length >= 1, `${labelContext}: debe tener escalón horizontal de corte`);
+      const nearestHorizY = Math.min(...horizCutEdges.map(e => e.y));
+      assert.ok(
+        Math.abs((nearestHorizY - y0) - expectedHalfW) < 0.05,
+        `${labelContext}: distancia hendido->corte más cercano (${(nearestHorizY - y0).toFixed(3)}) debe ser W/2 (${expectedHalfW.toFixed(3)})`
+      );
+
+      // 3. Línea de corte vertical (Fotos 3 y 4) SIEMPRE en el centro exacto de la cara (xCenterWall)
+      const hasCenterVertCut = model.cutSegments.some(s =>
+        Math.abs(s.x1 - s.x2) < 1e-3 &&
+        Math.abs(s.x1 - xCenterWall) < 0.05 &&
+        Math.abs(Math.min(s.y1, s.y2) - nearestHorizY) < 0.05 &&
+        Math.abs(s.y2 - s.y1) > 1.0
+      );
+      assert.ok(hasCenterVertCut, `${labelContext}: la línea de corte vertical debe estar exactamente en el centro de la cara (x=${xCenterWall.toFixed(2)})`);
+    }
+
+    // Las 2 solapas laterales trapezoidales también tienen su línea de corte horizontal a exactamente W / 2
+    for (const wall of data.body) {
+      const bh = model.hinges.find(h =>
+        Math.abs(h.p1.y - h.p2.y) < 1 &&
+        ((h.parentFaceId === wall.id && !data.body.some(b => b.id === h.childFaceId)) ||
+         (h.childFaceId === wall.id && !data.body.some(b => b.id === h.parentFaceId))) &&
+        Math.max(h.p1.y, h.p2.y) >= y0 - 0.5
+      );
+      assert.ok(bh, `${labelContext}: cada una de las 4 paredes debe tener bisagra inferior`);
+      const fId = bh.parentFaceId === wall.id ? bh.childFaceId : bh.parentFaceId;
+      if (!mainFlapIds.has(fId)) {
+        const sideFlap = model.faces.find(f => f.id === fId);
+        assert.ok(
+          Math.abs(sideFlap.bounds.height - expectedHalfW) < 0.05,
+          `${labelContext}: solapa estrecha debe medir W/2 (${expectedHalfW.toFixed(3)}), obtenido ${sideFlap.bounds.height.toFixed(3)}`
+        );
+      }
+    }
+  };
+
+  // A) #10501002 -> Copiar tapa (espejo directo y tapa encontrada) -> Fondo automático
+  const entry105 = PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(x => String(x.num) === '10501002');
+  const m105 = DielineEngine.buildDielineModelFromPacdora(entry105.knifeData, entry105);
+  const afterCopyDirect = DielineEngine.applyPartVariationToModel(m105, 'copy_lid', { reverseLid: 0 });
+  const backToAuto1 = DielineEngine.applyPartVariationToModel(afterCopyDirect, 'auto_bottom', {});
+  verifyAutoBottomInvariants(backToAuto1, '#10501002 tras Copiar tapa (directo)');
+
+  const afterCopyRev = DielineEngine.applyPartVariationToModel(m105, 'copy_lid', { reverseLid: 1 });
+  const backToAuto2 = DielineEngine.applyPartVariationToModel(afterCopyRev, 'auto_bottom', {});
+  verifyAutoBottomInvariants(backToAuto2, '#10501002 tras Copiar tapa (encontrada)');
+
+  // B) Estuche similar de dos tapas (#10001004 Medicine box, que solo tiene 3 solapas abajo y H abierto)
+  const entry100 = PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(x => x.num === 10001004);
+  const m100 = DielineEngine.buildDielineModelFromPacdora(entry100.knifeData, entry100);
+  const auto100 = DielineEngine.applyPartVariationToModel(m100, 'auto_bottom', {});
+  verifyAutoBottomInvariants(auto100, 'Estuche #10001004');
+
+  // C) Caja B1 rectangular y caja de base cuadrada (110 x 110 x 140), incluso tras redimensionar paramétricamente
+  const b1 = loadAmericanBoxModel();
+  const autoB1 = DielineEngine.applyPartVariationToModel(b1, 'auto_bottom', {});
+  verifyAutoBottomInvariants(autoB1, 'Caja B1 americana');
+
+  const resizedAuto = DielineEngine.resizeDielineParametric(autoB1, 180, 90, 140);
+  verifyAutoBottomInvariants(resizedAuto, 'Caja B1 redimensionada 180x90x140');
+
+  const squareAuto = DielineEngine.applyPartVariationToModel(
+    DielineEngine.resizeDielineParametric(b1, 110, 110, 140),
+    'auto_bottom',
+    {}
+  );
+  verifyAutoBottomInvariants(squareAuto, 'Caja cuadrada 110x110x140');
+});
