@@ -28,7 +28,7 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 - La interfaz usa únicamente milímetros y las exportaciones no incluyen sangrado.
 - Las piezas simétricas comparten un único campo en Detalles; se comprueban su contorno y sus huecos. Las piezas distintas conservan sus medidas independientes.
 - Material ofrece tres acabados: blanco/blanco, blanco/marrón y marrón/marrón. El espesor manual no se muestra. El catálogo incluido es C1 (1,5 mm), confirmado por el usuario. Los modelos propios pueden clasificarse como C1 (1,5 mm), C3 (3 mm), C5 (4,5 mm) o C8 (7 mm). Estos códigos determinan el espesor representado en 3D; no recalculan los retranqueos ni las tolerancias del plano.
-- Después de abrir SVG o DXF, «Añadir a biblioteca» permite indicar nombre y cartón. «Mis modelos» conserva la geometría actual, incluidos cortes, hendidos, huecos y panel base. Se guarda localmente en la carpeta de datos de la aplicación (`library`), sin depender del archivo original ni guardar la imagen de arte. En el navegador se utiliza su almacenamiento local. Los modelos propios admiten búsqueda y preferidos.
+- Después de abrir SVG o DXF, «Añadir a biblioteca» permite indicar nombre y cartón. «Mis modelos» conserva la geometría actual, incluidos cortes, hendidos, huecos y panel base. Cada guardado crea una instantánea independiente: editar después no modifica el modelo guardado y un nombre repetido requiere guardar con otro nombre. Si ejecutas la aplicación desde el proyecto (por ejemplo, `dist`), se guarda en `assets/user-models/*.json`; esos archivos se incluyen en Git. El servidor local utiliza la misma carpeta. El ejecutable distribuido incorpora los modelos existentes al compilar y, fuera del proyecto, guarda las nuevas copias en la carpeta de datos de la aplicación (`library`). No depende del archivo original ni guarda la imagen de arte. Los modelos propios admiten búsqueda y preferidos.
 - El corazón de cada tarjeta añade o quita el modelo de «Preferidos». La selección se conserva localmente al cerrar la aplicación y se puede combinar con el buscador.
 - Asa, uñero y pestaña de cierre tienen una ventana de medidas con deslizadores en tiempo real. El asa permite ancho, largo y radio; el uñero, uno o dos recortes, radio y distancia entre centros. Los huecos y las muescas modifican la malla 3D. La pestaña añade una cara articulada y sustituye el corte de unión por un hendido.
 - Las dimensiones interiores y exteriores se estiman usando los ajustes del material y su espesor. Son aproximaciones.
@@ -36,3 +36,11 @@ Ejecuta `iniciar_motor_3d.bat` o ejecuta `node server.js` y abre http://localhos
 - Se pueden exportar SVG, DXF, PDF, GLB y PNG. El formato AI nativo no está implementado; PDF y SVG se pueden abrir en Illustrator.
 
 El antiguo extractor de catálogo remoto está desactivado.
+
+### Chaflanes y biblioteca versionada
+
+En Chaflanar, pulsa **SELECCIONA SOLAPAS** y marca o desmarca solapas en el plano 2D o en el visor 3D. El cuerpo y la pestaña de pegado quedan excluidos. Ajusta tamaño y ángulo; «Listo», cerrar la ventana o cambiar de sección conserva los cambios, incluido el último movimiento del deslizador.
+
+Los archivos de `assets/user-models` son las instantáneas maestras; no se sobrescriben al editar un troquel abierto. Incluye los nuevos JSON al hacer commit y push. `node scripts/prepare-user-library.js --import-local` incorpora los modelos locales de este equipo sin sustituir identificadores existentes. La compilación regenera `assets/user-models.js` para incluirlos en el ejecutable. Para que los nuevos guardados entren directamente en el repositorio, usa el ejecutable dentro de su carpeta `dist` o el servidor local del proyecto.
+
+Verificación: `npm test`, `cargo test --manifest-path src-tauri/Cargo.toml` y `node scripts/verify-chamfer-library.js` (Chrome instalado, o `CHROME_PATH`). La prueba de navegador guarda sus muestras únicamente en `dist/verificacion-chaflan`.

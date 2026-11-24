@@ -63,79 +63,78 @@ fn validate_library_model(model: &Value) -> Result<u64, String> {
     Ok(id)
 }
 
+// A build launched from the project saves snapshots next to the source so Git sees them.
+fn repository_library_from(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    for root in start.ancestors() {
+        if root.join("src-tauri/Cargo.toml").is_file() {
+            if let Ok(bytes) = std::fs::read(root.join("package.json")) {
+                if let Ok(package) = serde_json::from_slice::<Value>(&bytes) {
+                    if package["name"].as_str() == Some("troqueles-vicente") {
+                        return Some(root.join("assets/user-models"));
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+fn repository_library() -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok().and_then(|p| repository_library_from(&p))
+        .or_else(|| std::env::current_dir().ok().and_then(|p| repository_library_from(&p)))
+}
+
 #[tauri::command]
 async fn load_library_models(app: tauri::AppHandle) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("library");
-        if !directory.exists() {
-            return Ok(json!({"models": [], "warnings": []}));
-        }
+        let local = app.path().app_data_dir().map_err(|e| e.to_string())?.join("library");
+        let repository = repository_library();
+        let mut directories = Vec::new();
+        if let Some(ref dir) = repository { directories.push(dir.clone()); }
+        directories.push(local.clone());
         let mut models = Vec::new();
         let mut warnings = Vec::new();
-        for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue;
-            }
-            let result = (|| -> Result<Value, String> {
-                if entry.metadata().map_err(|e| e.to_string())?.len() > 8_000_000 {
-                    return Err("Archivo demasiado grande".into());
+        let mut seen = std::collections::HashSet::new();
+        for directory in directories {
+            if !directory.exists() { continue; }
+            for entry in std::fs::read_dir(&directory).map_err(|e| e.to_string())? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("json") { continue; }
+                let result = (|| -> Result<Value, String> {
+                    if entry.metadata().map_err(|e| e.to_string())?.len() > 8_000_000 { return Err("Archivo demasiado grande".into()); }
+                    let model: Value = serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+                    validate_library_model(&model)?;
+                    Ok(model)
+                })();
+                match result {
+                    Ok(model) => {
+                        let id = model["num"].as_u64().unwrap();
+                        if seen.insert(id) {
+                            if directory == local {
+                                if let Some(ref repo) = repository {
+                                    if let Err(error) = store_library_model(repo, &model) { warnings.push(format!("{}: {}", id, error)); }
+                                }
+                            }
+                            models.push(model);
+                        }
+                    },
+                    Err(error) => warnings.push(format!("{}: {}", entry.file_name().to_string_lossy(), error)),
                 }
-                let model: Value =
-                    serde_json::from_slice(&std::fs::read(&path).map_err(|e| e.to_string())?)
-                        .map_err(|e| e.to_string())?;
-                validate_library_model(&model)?;
-                Ok(model)
-            })();
-            match result {
-                Ok(model) => models.push(model),
-                Err(_) => warnings.push(entry.file_name().to_string_lossy().into_owned()),
             }
         }
         models.sort_by_key(|m| std::cmp::Reverse(m["num"].as_u64().unwrap_or(0)));
         Ok(json!({"models": models, "warnings": warnings}))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 async fn add_library_model(app: tauri::AppHandle, model: Value) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let directory = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("library");
+        let directory = match repository_library() {
+            Some(directory) => directory,
+            None => app.path().app_data_dir().map_err(|e| e.to_string())?.join("library"),
+        };
         store_library_model(&directory, &model)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-async fn update_library_model(app: tauri::AppHandle, model: Value) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let id = validate_library_model(&model)?;
-        let bytes = serde_json::to_vec(&model).map_err(|e| e.to_string())?;
-        if bytes.len() > 8_000_000 { return Err("El modelo supera el límite de 8 MB".into()); }
-        let directory = app.path().app_data_dir().map_err(|e| e.to_string())?.join("library");
-        let destination = directory.join(format!("{}.json", id));
-        if !destination.is_file() { return Err("No existe el modelo en la biblioteca".into()); }
-        // Keep a recoverable copy until the replacement has been written successfully.
-        let backup = directory.join(format!("{}.backup", id));
-        std::fs::copy(&destination, &backup).map_err(|e| e.to_string())?;
-        if let Err(e) = std::fs::write(&destination, &bytes) {
-            let _ = std::fs::copy(&backup, &destination);
-            return Err(e.to_string());
-        }
-        let _ = std::fs::remove_file(backup);
-        Ok(())
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -162,13 +161,21 @@ fn store_library_model(directory: &std::path::Path, model: &Value) -> Result<(),
         let _ = std::fs::remove_file(&temporary);
         return Err(error.to_string());
     }
-    std::fs::rename(&temporary, &destination).map_err(|e| e.to_string())?;
+    let linked = std::fs::hard_link(&temporary, &destination).map_err(|e| e.to_string());
+    let _ = std::fs::remove_file(&temporary);
+    linked?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_repository_from_distributed_executable() {
+        let project = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        assert_eq!(repository_library_from(&project.join("dist/app.exe")), Some(project.join("assets/user-models")));
+    }
 
     #[test]
     fn library_roundtrip_and_no_overwrite() {
@@ -334,8 +341,7 @@ fn main() {
             save_project,
             load_projects,
             load_library_models,
-            add_library_model,
-            update_library_model
+            add_library_model
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Troqueles Vicente");

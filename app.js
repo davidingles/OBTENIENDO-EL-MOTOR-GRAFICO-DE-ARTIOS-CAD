@@ -3246,7 +3246,7 @@
         state.draftPart = op;
         applyCurrentPartVariation(false);
         if (typeof markModelModified === 'function') markModelModified();
-        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'auto_bottom', 'windows', 'chamfer'].includes(partKey)) {
+        if (['handle', 'thumb_notch', 'tab_lock', 'side_locks', 'double_flaps', 'auto_bottom', 'copy_lid', 'windows', 'chamfer'].includes(partKey)) {
           openPartOptions(partKey);
         }
       });
@@ -4362,6 +4362,9 @@
         const existingIdx = state.appliedParts.findIndex(p => p.partKey === 'double_flaps' && p.side === draft.side);
         if (existingIdx >= 0) state.appliedParts[existingIdx] = { ...draft, params: { ...(draft.params || {}) } };
         else state.appliedParts.push({ ...draft, params: { ...(draft.params || {}) } });
+      } else if (draft.partKey === 'copy_lid' || draft.partKey === 'auto_bottom') {
+        state.appliedParts = state.appliedParts.filter(p => p.partKey !== 'copy_lid' && p.partKey !== 'auto_bottom');
+        state.appliedParts.push({ ...draft, params: { ...(draft.params || {}) } });
       } else {
         state.appliedParts.push({ ...draft, params: { ...(draft.params || {}) } });
       }
@@ -4372,6 +4375,12 @@
   function formatPartStatusMessage(model, partKey) {
     if (!model) return 'Cambios en tiempo real en el plano y el 3D.';
     if (model.partError) return model.partError;
+    if (partKey === 'copy_lid') {
+      const modeText = Number(model.partOptions?.reverseLid) === 1
+        ? 'tapa encontrada (cara opuesta)'
+        : 'espejo directo (misma cara)';
+      return `Configuración de la tapa copiada en la base con ${modeText}, manteniendo retranqueos y detalles entre solapas.`;
+    }
     if (partKey === 'double_flaps' && model.partDoubleFlapsSide) {
       const sideLabel = model.partDoubleFlapsSide === 'top' ? '4 solapas superiores' : '4 solapas inferiores';
       const clearance = model.partOptions?.clearance ?? 2;
@@ -4436,6 +4445,7 @@
       side_locks: 'Machos y hembras',
       double_flaps: 'Solapas dobles',
       auto_bottom: 'Fondo automático',
+      copy_lid: 'Copiar tapa',
       windows: 'Ventanas',
       chamfer: 'Chaflanar'
     };
@@ -4493,7 +4503,9 @@
             ? [['clearance','Holgura (-mm)']]
             : key === 'auto_bottom'
               ? [['clearance','Holgura entre solapas (mm)']]
-              : key === 'windows'
+              : key === 'copy_lid'
+                ? [['reverseLid','Orientación en la base']]
+                : key === 'windows'
               ? [['count','Número de ventanas'],['length','Ancho de ventana (mm)'],['width','Alto de ventana (mm)'],['radius','Radio de esquinas (mm)'],['distance','Distancia entre centros (mm)'],['offsetX','Posición X (mm)'],['offsetY','Posición Y (mm)']]
               : key === 'chamfer'
                 ? [['angle','Ángulo del chaflán (°)'],['size','Tamaño del chaflán (mm)']]
@@ -4502,11 +4514,13 @@
       const row = document.createElement('label'); row.className = 'part-option-field';
       const title = document.createElement('span'); title.textContent = label;
       let number, slider;
-      if (name === 'count' || name === 'rotate90') {
+      if (name === 'count' || name === 'rotate90' || name === 'reverseLid') {
         number = document.createElement('select');
         const selectOptions = name === 'rotate90'
           ? [[0, '0° (Horizontal)'], [1, '90° (Girar 90°)']]
-          : key === 'side_locks'
+          : name === 'reverseLid'
+            ? [[0, 'Espejo directo (misma cara)'], [1, 'Tapa encontrada (cara opuesta)']]
+            : key === 'side_locks'
             ? [[1, 'Uno'], [2, 'Dos'], [3, 'Tres']]
             : key === 'windows'
               ? [[1, 'Una'], [2, 'Dos'], [3, 'Tres']]

@@ -152,7 +152,7 @@ test('Asa en Cara Cuerpo 4 se orienta horizontal por defecto y admite girar 90 g
   assert.ok(bV.h > bV.w, `Con girar 90° debe ser vertical, obtenido ${bV.w.toFixed(1)}×${bV.h.toFixed(1)}`);
 });
 
-test('UserLibrary detecta nombres duplicados para sobreescribir y conserva thumbnail3dDataUrl', () => {
+test('UserLibrary detecta nombres duplicados para conservar el original y conserva thumbnail3dDataUrl', () => {
   const baseModel = loadAmericanBoxModel();
   const thumb = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
   const item = UserLibrary.create('b1-americana copia-01', 'C1', baseModel, 'b1.svg', undefined, { thumbnail3dDataUrl: thumb });
@@ -308,4 +308,150 @@ test('index.html incluye las tarjetas Solapas dobles, Ventanas y Chaflanar en Ca
   assert.ok(html.includes('Ventanas'));
   assert.ok(html.includes('data-part-key="chamfer"'));
   assert.ok(html.includes('Chaflanar'));
+});
+
+
+test('chaflanar solo modifica solapas explicitas, nunca cuerpos ni una solapa de reserva',()=>{
+  const model=loadAmericanBoxModel();
+  const flap=model.faces.find(f=>DielineEngine.isChamferFlap(model,f));
+  const body=model.faces.find(f=>f.role==='BODY');
+  const before=JSON.stringify(model);
+  assert.ok(DielineEngine.applyPartVariationToModel(model,'chamfer',{targetFaceIds:[]}).partError);
+  assert.ok(DielineEngine.applyPartVariationToModel(model,'chamfer',{targetFaceIds:[body.id]}).partError);
+  const result=DielineEngine.applyPartVariationToModel(model,'chamfer',{targetFaceIds:[flap.id,body.id],size:8});
+  assert.ok(!result.partError);
+  for(const face of model.faces) {
+    const after=result.faces.find(f=>f.id===face.id);
+    if(face.id===flap.id)assert.notDeepEqual(after.polygon,face.polygon);
+    else assert.deepEqual(after.polygon,face.polygon);
+  }
+  assert.equal(JSON.stringify(model),before);
+});
+
+test('Copiar tapa en estuche #10501002 replica la tapa abajo en espejo directo y en tapa encontrada conservando retranqueos y detalles', () => {
+  const entry = PACDORA_CATALOG_SHARDS['folding-box-dielines-p1'].find(x => String(x.num) === '10501002');
+  assert.ok(entry, 'Debe existir el modelo #10501002 en el catálogo');
+  const baseModel = DielineEngine.buildDielineModelFromPacdora(entry.knifeData, entry);
+
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(html.includes('data-part-key="copy_lid"'));
+  assert.ok(html.includes('Copiar tapa'));
+
+  // 1. Modo por defecto: Espejo directo (misma cara H)
+  const direct = DielineEngine.applyPartVariationToModel(baseModel, 'copy_lid', { reverseLid: 0 });
+  assert.ok(!direct.partError, direct.partError);
+  assert.equal(direct.activePartVariation, 'copy_lid');
+  assert.equal(direct.partOptions.reverseLid, 0);
+
+  // Ya no deben quedar sub-pestañas de fondo automático (HBR, FBR) ni pliegues oblicuos a 45° (-1.8°)
+  assert.ok(!direct.faces.some(f => /\b(HBR|FBR)\b/.test(f.name || '')), 'No deben quedar paneles HBR/FBR del fondo automático');
+  assert.ok(!direct.hinges.some(h => Math.abs(h.defaultAngle ?? 90) < 10), 'No deben quedar bisagras oblicuas de fondo automático');
+
+  const hFace = direct.faces.find(f => f.pacdoraName === 'H');
+  const fFace = direct.faces.find(f => f.pacdoraName === 'F');
+  const frFace = direct.faces.find(f => f.pacdoraName === 'FR');
+  const ht2 = direct.faces.find(f => f.pacdoraName === 'HT2');
+  const ht1 = direct.faces.find(f => f.pacdoraName === 'HT1');
+  const hb2 = direct.faces.find(f => f.pacdoraName === 'HB2');
+  const hb1 = direct.faces.find(f => f.pacdoraName === 'HB1');
+  const frt = direct.faces.find(f => f.pacdoraName === 'FRT');
+  const frb = direct.faces.find(f => f.pacdoraName === 'FRB');
+  const flt = direct.faces.find(f => f.pacdoraName === 'FLT');
+  const flb = direct.faces.find(f => f.pacdoraName === 'FLB');
+
+  assert.ok(hb2 && hb1 && frb && flb, 'Debe crear HB2, HB1, FRB y FLB en la base');
+  assert.ok(Math.abs(hb2.bounds.width - ht2.bounds.width) < 0.05 && Math.abs(hb2.bounds.height - ht2.bounds.height) < 0.05);
+  assert.ok(Math.abs(hb1.bounds.width - ht1.bounds.width) < 0.05 && Math.abs(hb1.bounds.height - ht1.bounds.height) < 0.05);
+  assert.ok(Math.abs(frb.bounds.width - frt.bounds.width) < 0.05 && Math.abs(frb.bounds.height - frt.bounds.height) < 0.05);
+  assert.ok(Math.abs(flb.bounds.width - flt.bounds.width) < 0.05 && Math.abs(flb.bounds.height - flt.bounds.height) < 0.05);
+
+  // Retranqueo de tapa (1.5 mm entre H y F/FR) idéntico en tapa y en base, manteniendo H = 161.6 mm en F
+  assert.ok(Math.abs(fFace.bounds.height - 161.6) < 0.05, `F debe conservar H=161.6 mm, obtenido ${fFace.bounds.height}`);
+  const topStep = fFace.bounds.minY - hFace.bounds.minY; // 75.6 - 74.1 = 1.5 mm
+  const botStep = hFace.bounds.maxY - fFace.bounds.maxY; // 238.7 - 237.2 = 1.5 mm
+  assert.ok(Math.abs(topStep - 1.5) < 0.05 && Math.abs(botStep - topStep) < 0.05, 'El retranqueo de 1.5 mm debe replicarse en la base');
+  // Detalle de muesca curva entre solapas en FR conservado tanto arriba como abajo
+  assert.equal(frb.polygon.length, frt.polygon.length, 'FRB conserva todos los vértices/detalles de FRT');
+  assert.ok(frFace.polygon.some(p => p.y > 237.25 && p.x > 136.61 && p.x < 139.4), 'FR conserva la muesca curva de alivio inferior junto a HB2');
+
+  // Todas las caras están conectadas en el árbol 3D y pliegan hacia el interior (-Z)
+  const rerootedDirect = DielineEngine.rerootDielineModel(direct, direct.rootFaceId, { keepDimensionBase: true });
+  assert.equal(rerootedDirect.hinges.length, rerootedDirect.faces.length - 1);
+  // Comprobar que cada bisagra de las solapas inferiores gira hacia el interior (-Z) en el visor 3D
+  for (const code of ['HB2', 'HB1', 'FRB', 'FLB']) {
+    const child = rerootedDirect.faces.find(f => f.pacdoraName === code);
+    const h = rerootedDirect.hinges.find(x => x.childFaceId === child.id);
+    assert.ok(child && h, `Bisagra hacia ${code}`);
+    const ux = h.p2.x - h.p1.x, uy = -(h.p2.y - h.p1.y);
+    const vx = child.centroid.x - h.p1.x, vy = -(child.centroid.y - h.p1.y);
+    const zDir = (ux * vy - uy * vx) * -(Math.sign(h.defaultAngle) || 1);
+    assert.ok(zDir < 0, `La solapa ${code} debe plegar hacia el interior (-Z), zDir=${zDir}`);
+  }
+
+  // 2. Modo Tapa encontrada (cara opuesta F)
+  const reverse = DielineEngine.applyPartVariationToModel(baseModel, 'copy_lid', { reverseLid: 1 });
+  assert.ok(!reverse.partError, reverse.partError);
+  assert.equal(reverse.partOptions.reverseLid, 1);
+
+  const hRev = reverse.faces.find(f => f.pacdoraName === 'H');
+  const fRev = reverse.faces.find(f => f.pacdoraName === 'F');
+  const fb2 = reverse.faces.find(f => f.pacdoraName === 'FB2');
+  const fb1 = reverse.faces.find(f => f.pacdoraName === 'FB1');
+  assert.ok(fb2 && fb1, 'En modo tapa encontrada la tapa + lengüeta inferiores salen de F (FB2 y FB1)');
+  assert.ok(Math.abs(fb2.bounds.minX - fRev.bounds.minX) < 0.05 && Math.abs(fb2.bounds.maxX - fRev.bounds.maxX) < 0.05);
+  // Tanto H como F miden exactamente 161.6 mm de alto en estuche de tapa encontrada
+  assert.ok(Math.abs(hRev.bounds.height - 161.6) < 0.05, `H debe medir 161.6 mm, obtenido ${hRev.bounds.height}`);
+  assert.ok(Math.abs(fRev.bounds.height - 161.6) < 0.05, `F debe medir 161.6 mm, obtenido ${fRev.bounds.height}`);
+  const rerootedRev = DielineEngine.rerootDielineModel(reverse, reverse.rootFaceId, { keepDimensionBase: true });
+  assert.equal(rerootedRev.hinges.length, rerootedRev.faces.length - 1);
+});
+
+test('Copiar tapa en caja B1 con retranqueo y modificaciones en solapas superiores replica todo en la base y soporta giro 90°', () => {
+  const b1 = loadAmericanBoxModel();
+  const b1Ret = DielineEngine.applyB1Retranqueo(b1, 3);
+  const topFlaps = b1Ret.faces.filter(f => f.role && f.role.includes('TOP'));
+  assert.equal(topFlaps.length, 4);
+
+  // Añadir chaflán en dos solapas superiores, asa en una y pestaña de cierre en otra
+  let edited = DielineEngine.applyPartVariationToModel(b1Ret, 'chamfer', {
+    targetFaceId: topFlaps[0].id,
+    targetFaceIds: [topFlaps[0].id, topFlaps[1].id],
+    angle: 40,
+    size: 10
+  });
+  edited = DielineEngine.applyPartVariationToModel(edited, 'handle', {
+    targetFaceId: topFlaps[2].id,
+    length: 50,
+    width: 16,
+    radius: 5
+  });
+  edited = DielineEngine.applyPartVariationToModel(edited, 'tab_lock', {
+    targetFaceId: topFlaps[3].id,
+    length: 44,
+    depth: 14
+  });
+  assert.ok(!edited.partError, edited.partError);
+
+  const copied = DielineEngine.applyPartVariationToModel(edited, 'copy_lid', { reverseLid: 0 });
+  assert.ok(!copied.partError, copied.partError);
+  assert.ok(copied.faces.some(f => f.id === copied.rootFaceId), 'El panel de apoyo rootFaceId debe seguir siendo válido');
+
+  // Debe haber 2 asas en total (1 arriba + 1 copiada abajo) y 2 pestañas de cierre (1 arriba + 1 abajo)
+  const facesWithHoles = copied.faces.filter(f => (f.holes || []).length > 0);
+  assert.equal(facesWithHoles.length, 2, 'El agujero del asa superior debe haberse copiado a la solapa inferior');
+  const closureTabs = copied.faces.filter(f => f.role === 'FLAP_CLOSURE');
+  assert.equal(closureTabs.length, 2, 'La pestaña de cierre superior debe haberse copiado en la base');
+
+  // Verificar que los retranqueos de 3 mm en Y de las solapas anchas frente a estrechas se conservan en la base
+  const botFlaps = copied.faces.filter(f => f.role === 'FLAP_INNER_BOTTOM' || f.role === 'FLAP_OUTER_BOTTOM');
+  assert.equal(botFlaps.length, 4);
+  const minBotHingeY = Math.min(...botFlaps.map(f => f.bounds.minY));
+  const maxBotHingeY = Math.max(...botFlaps.map(f => f.bounds.minY));
+  assert.ok(Math.abs((maxBotHingeY - minBotHingeY) - (4.96)) < 0.3, 'El retranqueo diferencial entre solapas estrechas y anchas se mantiene en la base');
+
+  // Funciona también si el troquel está girado 90°
+  const rotated = DielineEngine.rotateDieline90(edited);
+  const copiedRot = DielineEngine.applyPartVariationToModel(rotated, 'copy_lid', { reverseLid: 0 });
+  assert.ok(!copiedRot.partError, copiedRot.partError);
+  assert.equal(copiedRot.faces.filter(f => f.role === 'FLAP_CLOSURE').length, 2);
 });

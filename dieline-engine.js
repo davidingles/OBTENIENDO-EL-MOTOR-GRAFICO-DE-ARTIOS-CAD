@@ -4154,6 +4154,848 @@
     return model;
   }
 
+  /**
+   * Detecta la tira de 4 paredes de cuerpo y particiona subgrafos superiores (tapa), laterales (pegado)
+   * e inferiores (base) para aplicar «Copiar tapa» conservando retranqueos y detalles entre solapas.
+   */
+  function getCopyLidStripData(baseModel) {
+    if (!baseModel || !Array.isArray(baseModel.faces) || !Array.isArray(baseModel.hinges)) {
+      return { valid: false, error: 'Modelo no válido para copiar la tapa.' };
+    }
+    const faceById = new Map(baseModel.faces.map(f => [f.id, f]));
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+    const isVert = h => h.p1 && h.p2 && Math.abs(h.p1.x - h.p2.x) < 1.5 && Math.abs(h.p1.y - h.p2.y) > 5;
+
+    let body = null;
+    const candidates = baseModel.faces.filter(f => f.role !== 'GLUE_FLAP');
+    for (const seed of candidates) {
+      const strip = new Map([[seed.id, seed]]);
+      const q = [seed];
+      for (let i = 0; i < q.length; i++) {
+        const cur = q[i];
+        for (const h of baseModel.hinges) {
+          if (!isVert(h)) continue;
+          const [a, b] = ends(h);
+          if (a !== cur.id && b !== cur.id) continue;
+          const other = faceById.get(a === cur.id ? b : a);
+          if (!other || other.role === 'GLUE_FLAP' || strip.has(other.id)) continue;
+          const tol = Math.max(18, Math.max(cur.bounds.height, other.bounds.height) * 0.22);
+          if (Math.abs(other.bounds.minY - cur.bounds.minY) <= tol && Math.abs(other.bounds.maxY - cur.bounds.maxY) <= tol) {
+            strip.set(other.id, other);
+            q.push(other);
+          }
+        }
+      }
+      if (strip.size >= 4) {
+        let arr = [...strip.values()].sort((a, b) => a.bounds.minX - b.bounds.minX);
+        while (arr.length > 4) {
+          if (arr[0].bounds.width < Math.min(35, arr[1].bounds.width * 0.45)) arr.shift();
+          else if (arr[arr.length - 1].bounds.width < Math.min(35, arr[arr.length - 2].bounds.width * 0.45)) arr.pop();
+          else break;
+        }
+        if (arr.length === 4) {
+          body = arr;
+          break;
+        }
+      }
+    }
+
+    if (!body) {
+      return { valid: false, error: '«Copiar tapa» requiere una caja o estuche de 4 caras de cuerpo.' };
+    }
+
+    const bodyIds = new Set(body.map(b => b.id));
+    const rawMidY = body.reduce((s, b) => s + (b.bounds.minY + b.bounds.maxY) * 0.5, 0) / 4;
+    const topCols = body.map(wall => ({ wall, faces: [], bridgeHinges: [], internalHinges: [] }));
+    const bottomBridgeHingesByCol = body.map(() => []);
+    const oldBottomFaceIds = new Set();
+    const sideFaceIds = new Set();
+    const glueFlaps = [];
+
+    const visited = new Set();
+    for (const startFace of baseModel.faces) {
+      if (bodyIds.has(startFace.id) || visited.has(startFace.id)) continue;
+      const compFaces = [];
+      const compIds = new Set();
+      const q = [startFace];
+      visited.add(startFace.id);
+      compIds.add(startFace.id);
+      while (q.length) {
+        const cur = q.shift();
+        compFaces.push(cur);
+        for (const h of baseModel.hinges) {
+          const [a, b] = ends(h);
+          if (a !== cur.id && b !== cur.id) continue;
+          const otherId = a === cur.id ? b : a;
+          if (bodyIds.has(otherId) || visited.has(otherId)) continue;
+          const other = faceById.get(otherId);
+          if (!other) continue;
+          visited.add(otherId);
+          compIds.add(otherId);
+          q.push(other);
+        }
+      }
+
+      const bridgeHinges = [];
+      const internalHinges = [];
+      for (const h of baseModel.hinges) {
+        const [a, b] = ends(h);
+        const aIn = compIds.has(a), bIn = compIds.has(b);
+        if (aIn && bIn) internalHinges.push(h);
+        else if ((aIn && bodyIds.has(b)) || (bIn && bodyIds.has(a))) bridgeHinges.push(h);
+      }
+
+      if (bridgeHinges.length > 0) {
+        const bh = bridgeHinges[0];
+        const [a, b] = ends(bh);
+        const wallId = bodyIds.has(a) ? a : b;
+        const colIdx = body.findIndex(w => w.id === wallId);
+        const dx = Math.abs(bh.p2.x - bh.p1.x), dy = Math.abs(bh.p2.y - bh.p1.y);
+        if (dy > dx) {
+          for (const id of compIds) sideFaceIds.add(id);
+          if (compFaces.length === 1 && colIdx >= 0 && compFaces[0].bounds.height > body[colIdx].bounds.height * 0.45) {
+            glueFlaps.push({ face: compFaces[0], wallCol: colIdx, hinge: bh });
+          }
+        } else {
+          const yMidHinge = (bh.p1.y + bh.p2.y) * 0.5;
+          if (yMidHinge < rawMidY) {
+            if (colIdx >= 0) {
+              topCols[colIdx].faces.push(...compFaces);
+              topCols[colIdx].bridgeHinges.push(...bridgeHinges);
+              topCols[colIdx].internalHinges.push(...internalHinges);
+            }
+          } else {
+            for (const id of compIds) oldBottomFaceIds.add(id);
+            if (colIdx >= 0) bottomBridgeHingesByCol[colIdx].push(...bridgeHinges);
+          }
+        }
+      } else if (compFaces[0].centroid.y > rawMidY) {
+        for (const id of compIds) oldBottomFaceIds.add(id);
+      }
+    }
+
+    const totalTopFaces = topCols.reduce((s, c) => s + c.faces.length, 0);
+    if (totalTopFaces === 0) {
+      return { valid: false, error: 'El modelo no tiene solapas superiores (tapa) para copiar en la base.' };
+    }
+
+    return {
+      valid: true,
+      body,
+      topCols,
+      bottomBridgeHingesByCol,
+      oldBottomFaceIds,
+      sideFaceIds,
+      glueFlaps,
+      rawMidY
+    };
+  }
+
+  function applyCopyLidHorizontal(baseModel, data, params = {}) {
+    const reverseLid = Number(params.reverseLid) === 1 ? 1 : 0;
+    const { body, topCols, bottomBridgeHingesByCol, oldBottomFaceIds, glueFlaps, rawMidY } = data;
+    const bodyIds = new Set(body.map(b => b.id));
+    const ends = h => [h.parentFaceId ?? h.parentId ?? h.faceA, h.childFaceId ?? h.childId ?? h.faceB];
+
+    const signedRingArea = ring => ring.reduce((sum, p, i) => {
+      const q = ring[(i + 1) % ring.length];
+      return sum + p.x * q.y - q.x * p.y;
+    }, 0) * 0.5;
+
+    const dedupeRing = pts => {
+      const out = [];
+      for (const p of pts) {
+        if (!out.length || Math.hypot(p.x - out[out.length - 1].x, p.y - out[out.length - 1].y) > 1e-4) {
+          out.push(p);
+        }
+      }
+      while (out.length > 2 && Math.hypot(out[0].x - out[out.length - 1].x, out[0].y - out[out.length - 1].y) <= 1e-4) {
+        out.pop();
+      }
+      return out;
+    };
+
+    const cleanVerticalEndBacktracks = chain => {
+      const c = chain.map(p => ({ ...p }));
+      while (c.length > 2 && Math.abs(c[0].x - c[1].x) < 1e-3 && c[0].y < c[1].y) c.shift();
+      while (c.length > 2 && Math.abs(c[c.length - 1].x - c[c.length - 2].x) < 1e-3 && c[c.length - 1].y < c[c.length - 2].y) c.pop();
+      return c;
+    };
+
+    const measureWallEdgeY = (wall, isTopSide) => {
+      const poly = wall.polygon;
+      let bestY = null, bestSpan = -1;
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i], b = poly[(i + 1) % poly.length];
+        const ym = (a.y + b.y) * 0.5;
+        if (isTopSide ? (ym >= rawMidY) : (ym <= rawMidY)) continue;
+        const dx = Math.abs(b.x - a.x), dy = Math.abs(b.y - a.y);
+        if (dy <= 1.2 && dx > bestSpan) {
+          bestSpan = dx;
+          bestY = ym;
+        }
+      }
+      return bestY !== null ? bestY : (isTopSide ? wall.bounds.minY : wall.bounds.maxY);
+    };
+
+    const yTopCol = body.map((wall, i) => {
+      const bhs = topCols[i].bridgeHinges;
+      if (bhs.length > 0) {
+        return bhs.reduce((s, h) => s + (h.p1.y + h.p2.y) * 0.5, 0) / bhs.length;
+      }
+      return measureWallEdgeY(wall, true);
+    });
+
+    const yBotColOld = body.map((wall, i) => {
+      const bhs = bottomBridgeHingesByCol[i];
+      if (bhs.length > 0) {
+        return bhs.reduce((s, h) => s + (h.p1.y + h.p2.y) * 0.5, 0) / bhs.length;
+      }
+      return measureWallEdgeY(wall, false);
+    });
+
+    const xWallL = body.map(w => {
+      const xs = [];
+      for (let i = 0; i < w.polygon.length; i++) {
+        const a = w.polygon[i], b = w.polygon[(i + 1) % w.polygon.length];
+        if ((a.y <= rawMidY && b.y >= rawMidY) || (b.y <= rawMidY && a.y >= rawMidY)) {
+          const t = Math.abs(b.y - a.y) < 1e-6 ? 0.5 : (rawMidY - a.y) / (b.y - a.y);
+          xs.push(a.x + (b.x - a.x) * t);
+        }
+      }
+      return xs.length ? Math.min(...xs) : w.bounds.minX;
+    });
+    const xWallR = body.map((w, idx) => {
+      const xs = [];
+      for (let i = 0; i < w.polygon.length; i++) {
+        const a = w.polygon[i], b = w.polygon[(i + 1) % w.polygon.length];
+        if ((a.y <= rawMidY && b.y >= rawMidY) || (b.y <= rawMidY && a.y >= rawMidY)) {
+          const t = Math.abs(b.y - a.y) < 1e-6 ? 0.5 : (rawMidY - a.y) / (b.y - a.y);
+          xs.push(a.x + (b.x - a.x) * t);
+        }
+      }
+      return xs.length ? Math.max(...xs) : w.bounds.maxX;
+    });
+
+    const topDepth = topCols.map((tc, i) =>
+      tc.faces.length ? Math.max(0, yTopCol[i] - Math.min(...tc.faces.map(f => f.bounds.minY))) : 0
+    );
+    const asym02 = Math.abs(topDepth[0] - topDepth[2]);
+    const asym13 = Math.abs(topDepth[1] - topDepth[3]);
+    const swapPair = asym13 > asym02 + 2 ? [1, 3] : [0, 2];
+
+    const yTopBase = Math.max(...yTopCol);
+    const isSymmetricRetranqueo =
+      Math.abs(yTopCol[0] - yTopCol[2]) < 0.5 &&
+      Math.abs(yTopCol[1] - yTopCol[3]) < 0.5 &&
+      Math.abs((yTopCol[0] + yBotColOld[0]) - (yTopCol[1] + yBotColOld[1])) < 1.0;
+
+    let ySum;
+    let yBotBase;
+    if (isSymmetricRetranqueo) {
+      ySum = ((yTopCol[0] + yBotColOld[0]) + (yTopCol[1] + yBotColOld[1])) * 0.5;
+      yBotBase = ySum - yTopBase;
+    } else {
+      const arrowH = (baseModel.sizeArrowData || []).find(a =>
+        a && a.lineName === 'H' && a.p1 && a.p2 && Math.abs(a.p1.x - a.p2.x) < 1.5
+      );
+      const hSpan = arrowH
+        ? Math.abs(arrowH.p2.y - arrowH.p1.y)
+        : Math.min(...yBotColOld.map((yb, i) => yb - yTopCol[i]));
+      const yBotBaseDirect = yTopBase + hSpan;
+      const overhangDiff = reverseLid ? Math.abs(yTopCol[swapPair[0]] - yTopCol[swapPair[1]]) : 0;
+      yBotBase = yBotBaseDirect - overhangDiff;
+      ySum = yTopBase + yBotBase;
+    }
+
+    const boxHeightApprox = Math.max(20, yBotBase - yTopBase);
+    const bandMargin = Math.min(24, boxHeightApprox * 0.25);
+    const yBandTop = Math.max(...yTopCol) + bandMargin;
+    const yBandBot = Math.min(...yBotColOld) - bandMargin;
+
+    // Plan de transformación por columna destino d in {0, 1, 2, 3}
+    let colPlan;
+    if (!reverseLid) {
+      colPlan = [0, 1, 2, 3].map(d => ({ src: d, flipX: false, identityX: true }));
+    } else if (swapPair[0] === 1) {
+      const hasStep13 = Math.abs(yTopCol[1] - yTopCol[3]) > 0.2;
+      colPlan = hasStep13
+        ? [
+            { src: 2, flipX: false, identityX: false },
+            { src: 3, flipX: true, identityX: false },
+            { src: 2, flipX: true, identityX: false },
+            { src: 1, flipX: true, identityX: false }
+          ]
+        : [
+            { src: 2, flipX: true, identityX: false },
+            { src: 3, flipX: true, identityX: false },
+            { src: 0, flipX: true, identityX: false },
+            { src: 1, flipX: true, identityX: false }
+          ];
+    } else {
+      const hasStep02 = Math.abs(yTopCol[0] - yTopCol[2]) > 0.2;
+      if (hasStep02) {
+        colPlan = [
+          { src: 2, flipX: true, identityX: false },
+          { src: 1, flipX: true, identityX: false },
+          { src: 0, flipX: true, identityX: false },
+          { src: 1, flipX: false, identityX: false }
+        ];
+      } else if (asym02 > 2) {
+        colPlan = [
+          { src: 2, flipX: true, identityX: false },
+          { src: 1, flipX: true, identityX: false },
+          { src: 0, flipX: true, identityX: false },
+          { src: 3, flipX: true, identityX: false }
+        ];
+      } else {
+        colPlan = [
+          { src: 2, flipX: true, identityX: false },
+          { src: 3, flipX: true, identityX: false },
+          { src: 0, flipX: true, identityX: false },
+          { src: 1, flipX: true, identityX: false }
+        ];
+      }
+    }
+
+    const mapPointForCol = (destCol, pt) => {
+      const { src, flipX, identityX } = colPlan[destCol];
+      const ny = ySum - pt.y;
+      if (identityX) return { x: pt.x, y: ny };
+      const sL = xWallL[src], sR = xWallR[src], ws = Math.max(1e-3, sR - sL);
+      const dL = xWallL[destCol], dR = xWallR[destCol], wd = Math.max(1e-3, dR - dL);
+      const u = flipX ? (sR - pt.x) : (pt.x - sL);
+      if (Math.abs(wd - ws) < 1e-3) {
+        return { x: dL + u, y: ny };
+      }
+      // Mapeo por tramos que conserva intactos (en mm exactos) los retranqueos, radios y muescas de esquina
+      const margin = Math.min(12, Math.min(ws, wd) * 0.25);
+      let nx;
+      if (u <= margin) nx = dL + u;
+      else if (ws - u <= margin) nx = dR - (ws - u);
+      else {
+        const t = (u - margin) / Math.max(1e-6, ws - 2 * margin);
+        nx = (dL + margin) + t * (wd - 2 * margin);
+      }
+      return { x: nx, y: ny };
+    };
+
+    const splitWallPolygon = poly => {
+      const origArea = signedRingArea(poly);
+      const work = origArea >= 0 ? poly.map(p => ({ ...p })) : poly.slice().reverse().map(p => ({ ...p }));
+      const isTop = p => p.y <= yBandTop;
+      const isBot = p => p.y >= yBandBot;
+      let startIdx = 0;
+      for (let i = 0; i < work.length; i++) {
+        const prev = work[(i - 1 + work.length) % work.length];
+        if (isTop(work[i]) && !isTop(prev)) { startIdx = i; break; }
+      }
+      const rot = [...work.slice(startIdx), ...work.slice(0, startIdx)];
+      let topEnd = 0;
+      while (topEnd < rot.length && isTop(rot[topEnd])) topEnd++;
+      let firstBot = topEnd;
+      while (firstBot < rot.length && !isBot(rot[firstBot])) firstBot++;
+      let lastBot = rot.length - 1;
+      while (lastBot >= firstBot && !isBot(rot[lastBot])) lastBot--;
+      return {
+        origArea,
+        topChain: rot.slice(0, topEnd),
+        rightMid: rot.slice(topEnd, firstBot),
+        oldBotChain: firstBot <= lastBot ? rot.slice(firstBot, lastBot + 1) : [],
+        leftMid: lastBot >= firstBot ? rot.slice(lastBot + 1) : []
+      };
+    };
+
+    // Mapear si el apoyo 3D actual (rootFaceId) estaba en una solapa inferior que se reemplaza
+    let oldRootColIdx = -1;
+    if (oldBottomFaceIds.has(baseModel.rootFaceId)) {
+      for (let c = 0; c < 4; c++) {
+        for (const bh of bottomBridgeHingesByCol[c]) {
+          const [a, b] = ends(bh);
+          if (a === baseModel.rootFaceId || b === baseModel.rootFaceId) { oldRootColIdx = c; break; }
+        }
+      }
+      if (oldRootColIdx < 0) oldRootColIdx = 2;
+    }
+
+    const model = {
+      ...baseModel,
+      faces: baseModel.faces
+        .filter(f => !oldBottomFaceIds.has(f.id))
+        .map(f => ({
+          ...f,
+          polygon: f.polygon.map(p => ({ ...p })),
+          holes: (f.holes || []).map(h => h.map(p => ({ ...p })))
+        })),
+      cutSegments: [],
+      foldSegments: [],
+      hinges: baseModel.hinges
+        .filter(h => {
+          const [a, b] = ends(h);
+          return !oldBottomFaceIds.has(a) && !oldBottomFaceIds.has(b);
+        })
+        .map(h => ({
+          ...h,
+          p1: { ...h.p1 },
+          p2: { ...h.p2 },
+          midpoint: h.midpoint ? { ...h.midpoint } : undefined,
+          animSteps: h.animSteps ? h.animSteps.map(s => ({ ...s })) : undefined
+        })),
+      activePartVariation: 'copy_lid',
+      partOptions: { reverseLid }
+    };
+
+    // 1. Extraer cadenas superiores de las 4 paredes y reconstruir sus bordes inferiores
+    const srcParts = body.map(wall => splitWallPolygon(wall.polygon));
+    const updatedBodyCorners = [];
+    for (let d = 0; d < 4; d++) {
+      const wall = model.faces.find(f => f.id === body[d].id);
+      const own = splitWallPolygon(wall.polygon);
+      const { src, flipX, identityX } = colPlan[d];
+      const rawSrcTop = identityX ? srcParts[src].topChain : cleanVerticalEndBacktracks(srcParts[src].topChain);
+      const mapped = rawSrcTop.map(p => mapPointForCol(d, p));
+      // Si flipX es true, mapped ya recorre derecha -> izquierda; si es false, recorre izquierda -> derecha y se invierte
+      const newBottomChain = flipX ? mapped : mapped.slice().reverse();
+      // En modo Tapa encontrada, si en un extremo vertical de H había un escalón hacia la pestaña de pegado (p.ej. 75.6 -> 74.1)
+      // que ahora cae sobre una bisagra interior compartida, limpiamos el vértice intermedio colineal sobrante
+      if (!identityX && newBottomChain.length >= 2) {
+        if (Math.abs(newBottomChain[0].x - newBottomChain[1].x) < 1e-3 && newBottomChain[0].y < newBottomChain[1].y) {
+          newBottomChain.shift();
+        }
+        const n = newBottomChain.length;
+        if (n >= 2 && Math.abs(newBottomChain[n - 1].x - newBottomChain[n - 2].x) < 1e-3 && newBottomChain[n - 1].y < newBottomChain[n - 2].y) {
+          newBottomChain.pop();
+        }
+      }
+      let rebuilt = dedupeRing([...own.topChain, ...own.rightMid, ...newBottomChain, ...own.leftMid]);
+      if (own.origArea < 0) rebuilt = rebuilt.slice().reverse();
+      wall.polygon = rebuilt;
+
+      const yBotRight = newBottomChain.length ? newBottomChain[0].y : wall.bounds.maxY;
+      const yBotLeft = newBottomChain.length ? newBottomChain[newBottomChain.length - 1].y : wall.bounds.maxY;
+      updatedBodyCorners[d] = { yBotLeft, yBotRight };
+    }
+
+    // 2. Actualizar también el borde inferior de la pestaña de pegado (GLUE_FLAP) de forma simétrica a su borde superior
+    const glueCornerInfo = new Map();
+    for (const gf of glueFlaps) {
+      const gFace = model.faces.find(f => f.id === gf.face.id);
+      if (!gFace) continue;
+      const gp = splitWallPolygon(gFace.polygon);
+      if (gp.topChain.length >= 2) {
+        const isLeftGlue = gFace.centroid.x < body[gf.wallCol].centroid.x;
+        const targetWallY = isLeftGlue ? updatedBodyCorners[gf.wallCol].yBotLeft : updatedBodyCorners[gf.wallCol].yBotRight;
+        const topAttachPt = isLeftGlue ? gp.topChain[gp.topChain.length - 1] : gp.topChain[0];
+        const dyShift = targetWallY - (ySum - topAttachPt.y);
+        const newGlueBot = gp.topChain.slice().reverse().map(p => ({ x: p.x, y: (ySum - p.y) + dyShift }));
+        let rebuilt = dedupeRing([...gp.topChain, ...gp.rightMid, ...newGlueBot, ...gp.leftMid]);
+        if (gp.origArea < 0) rebuilt = rebuilt.slice().reverse();
+        gFace.polygon = rebuilt;
+        glueCornerInfo.set(gFace.id, { isLeftGlue, dyShift, wallCol: gf.wallCol, targetWallY });
+      }
+    }
+
+    // 3. Actualizar extremos inferiores de las bisagras verticales del cuerpo y pestaña de pegado
+    for (const h of model.hinges) {
+      const [a, b] = ends(h);
+      const dx = Math.abs(h.p2.x - h.p1.x), dy = Math.abs(h.p2.y - h.p1.y);
+      if (dx >= 1.5 || dy <= 5) continue;
+      const cA = body.findIndex(w => w.id === a);
+      const cB = body.findIndex(w => w.id === b);
+      let newBotY = null;
+      if (cA >= 0 && cB >= 0) {
+        const leftCol = Math.min(cA, cB), rightCol = Math.max(cA, cB);
+        if (rightCol === leftCol + 1) {
+          newBotY = Math.min(updatedBodyCorners[leftCol].yBotRight, updatedBodyCorners[rightCol].yBotLeft);
+        }
+      } else if (cA >= 0 || cB >= 0) {
+        const wCol = cA >= 0 ? cA : cB;
+        const otherId = cA >= 0 ? b : a;
+        const gInfo = glueCornerInfo.get(otherId);
+        if (gInfo) newBotY = gInfo.targetWallY;
+      }
+      if (newBotY !== null) {
+        if (h.p1.y > h.p2.y) h.p1.y = newBotY;
+        else h.p2.y = newBotY;
+        h.midpoint = { x: (h.p1.x + h.p2.x) * 0.5, y: (h.p1.y + h.p2.y) * 0.5 };
+        h.length = Math.hypot(h.p2.x - h.p1.x, h.p2.y - h.p1.y);
+        h.lengthMm = h.length;
+      }
+    }
+
+    // 4. Clonar subgrafos de caras y bisagras superiores hacia cada columna inferior destino
+    let nextFaceId = Math.max(0, ...baseModel.faces.map(f => Number(f.id) || 0)) + 1;
+    const renameTopToBottom = (str, destCol) => {
+      if (!str) return str;
+      let out = String(str)
+        .replace(/\bSup\./g, 'Inf.')
+        .replace(/\bSuperior\b/gi, 'Inferior')
+        .replace(/\bFRT\b/g, 'FRB')
+        .replace(/\bFLT\b/g, 'FLB')
+        .replace(/\bHRT\b/g, 'HRB')
+        .replace(/\bHLT\b/g, 'HLB');
+      if (/\b(HT|FT)\d*\b/.test(out)) {
+        const prefix = destCol === 2 ? 'FB' : destCol === 0 ? 'HB' : 'B';
+        out = out.replace(/\b(?:HT|FT)(\d*)\b/g, (_, digits) => `${prefix}${digits}`);
+      }
+      if (/Solapa Inf\.\s*\d+/.test(out)) {
+        out = out.replace(/Solapa Inf\.\s*\d+/, `Solapa Inf. ${destCol + 1}`);
+      }
+      return out;
+    };
+    const mapRoleTopToBottom = role => {
+      if (!role) return 'FLAP';
+      if (role === 'FLAP_INNER_TOP' || role === 'TOP_FLAP_INNER') return 'FLAP_INNER_BOTTOM';
+      if (role === 'FLAP_OUTER_TOP' || role === 'TOP_FLAP_OUTER') return 'FLAP_OUTER_BOTTOM';
+      return role;
+    };
+
+    const primaryNewBottomFlapByCol = [null, null, null, null];
+    for (let d = 0; d < 4; d++) {
+      const { src, flipX } = colPlan[d];
+      const detNegative = !flipX; // flipY siempre invierte Y; si flipX es false det = -1, si flipX es true det = +1
+      const tc = topCols[src];
+      if (!tc.faces.length) continue;
+
+      const idMap = new Map();
+      idMap.set(body[src].id, body[d].id);
+
+      for (const topFace of tc.faces) {
+        const newId = nextFaceId++;
+        idMap.set(topFace.id, newId);
+        const mappedPoly = topFace.polygon.map(p => mapPointForCol(d, p));
+        const poly = detNegative ? mappedPoly.slice().reverse() : mappedPoly;
+        const holes = (topFace.holes || []).map(ring => {
+          const mr = ring.map(p => mapPointForCol(d, p));
+          return detNegative ? mr.slice().reverse() : mr;
+        });
+        const newName = renameTopToBottom(topFace.name, d);
+        const newLabel = renameTopToBottom(topFace.label || topFace.name, d);
+        const newShort = renameTopToBottom(topFace.shortName, d);
+        const xs = poly.map(p => p.x), ys = poly.map(p => p.y);
+        const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
+        const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
+        model.faces.push({
+          ...topFace,
+          id: newId,
+          pacdoraName: topFace.pacdoraName ? renameTopToBottom(topFace.pacdoraName, d) : undefined,
+          name: newName,
+          label: newLabel,
+          shortName: newShort,
+          role: mapRoleTopToBottom(topFace.role),
+          polygon: poly,
+          points: poly,
+          holes,
+          centroid: { x: cx, y: cy },
+          bounds: {
+            minX: Math.min(...xs), maxX: Math.max(...xs),
+            minY: Math.min(...ys), maxY: Math.max(...ys),
+            width: Math.max(...xs) - Math.min(...xs),
+            height: Math.max(...ys) - Math.min(...ys)
+          }
+        });
+      }
+
+      const allTopHinges = [...tc.bridgeHinges, ...tc.internalHinges];
+      for (const th of allTopHinges) {
+        const [rawP, rawC] = ends(th);
+        const srcParentId = bodyIds.has(rawC) ? rawC : rawP;
+        const srcChildId = bodyIds.has(rawC) ? rawP : rawC;
+        const reverseSrcDir = srcParentId !== rawP;
+        const newParentId = idMap.get(srcParentId);
+        const newChildId = idMap.get(srcChildId);
+        if (newParentId === undefined || newChildId === undefined) continue;
+        if (newParentId === body[d].id && primaryNewBottomFlapByCol[d] === null) {
+          primaryNewBottomFlapByCol[d] = newChildId;
+        }
+
+        const mp1 = mapPointForCol(d, th.p1);
+        const mp2 = mapPointForCol(d, th.p2);
+        // Preservar el sentido 3D exacto de plegado hacia -Z: si det < 0 permutamos p1 y p2
+        let p1 = detNegative ? mp2 : mp1;
+        let p2 = detNegative ? mp1 : mp2;
+        let angle = (th.defaultAngle ?? 90) * (reverseSrcDir ? -1 : 1);
+        let animSteps = th.animSteps
+          ? th.animSteps.map(s => ({ ...s, deltaDeg: s.deltaDeg * (reverseSrcDir ? -1 : 1) }))
+          : undefined;
+
+        // Verificación geométrica explícita de plegado hacia el interior (-Z) respecto al hijo
+        const srcChildFace = tc.faces.find(f => f.id === srcChildId);
+        const dstChildFace = model.faces.find(f => f.id === newChildId);
+        if (srcChildFace && dstChildFace) {
+          const sp1 = reverseSrcDir ? th.p2 : th.p1;
+          const sp2 = reverseSrcDir ? th.p1 : th.p2;
+          const srcCross = (sp2.x - sp1.x) * (-(srcChildFace.centroid.y - sp1.y)) - (-(sp2.y - sp1.y)) * (srcChildFace.centroid.x - sp1.x);
+          const dstCross = (p2.x - p1.x) * (-(dstChildFace.centroid.y - p1.y)) - (-(p2.y - p1.y)) * (dstChildFace.centroid.x - p1.x);
+          if (srcCross * dstCross < 0) {
+            const tmp = p1; p1 = p2; p2 = tmp;
+          }
+        }
+
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        let planarSlope = th.planarSlope;
+        if (Number.isFinite(planarSlope)) {
+          planarSlope = detNegative ? -planarSlope : planarSlope;
+        }
+        model.hinges.push({
+          ...th,
+          id: `hinge_${newParentId}_${newChildId}`,
+          parentFaceId: newParentId,
+          childFaceId: newChildId,
+          parentId: newParentId,
+          childId: newChildId,
+          faceA: newParentId,
+          faceB: newChildId,
+          p1,
+          p2,
+          midpoint: { x: (p1.x + p2.x) * 0.5, y: (p1.y + p2.y) * 0.5 },
+          length: len,
+          lengthMm: len,
+          defaultAngle: angle,
+          animSteps,
+          planarSlope
+        });
+      }
+    }
+
+    // 5. Reconstruir segmentos 2D (corte y hendido): conservar mitad superior + cuerpo y reflejar tapa abajo por columna
+    const xJoints = [xWallL[0], xWallL[1], xWallL[2], xWallL[3], xWallR[3]];
+    const isCornerJointSpur = s => {
+      if (Math.abs(s.x1 - s.x2) > 0.12) return false;
+      const yLo = Math.min(s.y1, s.y2), yHi = Math.max(s.y1, s.y2);
+      if (yHi - yLo > 6 || yLo < Math.min(...yTopCol) - 1.2 || yHi > yTopBase + 1.2) return false;
+      return xJoints.some(xj => Math.abs(s.x1 - xj) < 0.2);
+    };
+
+    const assignTopSegmentOwner = s => {
+      const xm = (s.x1 + s.x2) * 0.5;
+      for (const gf of glueFlaps) {
+        const isLeft = gf.face.centroid.x < body[gf.wallCol].centroid.x;
+        if (isLeft && xm < xWallL[0] - 0.05) return { kind: 'glue', gf };
+        if (!isLeft && xm > xWallR[3] + 0.05) return { kind: 'glue', gf };
+      }
+      for (let c = 0; c < 4; c++) {
+        const lo = c === 0 ? -Infinity : xWallL[c];
+        const hi = c === 3 ? Infinity : xWallR[c];
+        if (xm >= lo && xm < hi) return { kind: 'col', col: c };
+      }
+      return { kind: 'col', col: 3 };
+    };
+
+    const rebuildSegmentList = (srcSegs, isFoldList) => {
+      const kept = [];
+      const topByCol = [[], [], [], []];
+      const topByGlue = new Map();
+
+      for (const s of srcSegs || []) {
+        const yMin = Math.min(s.y1, s.y2), yMax = Math.max(s.y1, s.y2);
+        // Descartar todos los segmentos antiguos de la zona inferior
+        if (yMin >= yBandBot - 0.2) continue;
+
+        // Segmento en la zona superior (tapa, detalles entre solapas, muescas, chaflanes, tiras, ventanas...)
+        if (yMax <= yBandTop) {
+          kept.push({ ...s });
+          if (!isFoldList && !reverseLid ? false : (!isFoldList && isCornerJointSpur(s))) {
+            continue;
+          }
+          const owner = assignTopSegmentOwner(s);
+          if (owner.kind === 'glue') {
+            if (!topByGlue.has(owner.gf.face.id)) topByGlue.set(owner.gf.face.id, []);
+            topByGlue.get(owner.gf.face.id).push(s);
+          } else {
+            topByCol[owner.col].push(s);
+          }
+          continue;
+        }
+
+        // Segmento vertical/lateral que cruza hacia abajo hasta la línea inferior del cuerpo
+        if (yMax >= yBandBot - 0.2) {
+          const ns = { ...s };
+          const xm = (s.x1 + s.x2) * 0.5;
+          let targetBotY = ySum - yMin;
+          // Ajustar exactamente a la esquina inferior actualizada de su pared o bisagra vertical
+          if (Math.abs(s.x1 - s.x2) < 1.2) {
+            let matchedJoint = false;
+            for (let j = 1; j <= 3; j++) {
+              if (Math.abs(xm - xWallL[j]) < 0.8) {
+                targetBotY = Math.min(updatedBodyCorners[j - 1].yBotRight, updatedBodyCorners[j].yBotLeft);
+                matchedJoint = true;
+                break;
+              }
+            }
+            if (!matchedJoint) {
+              for (const [gId, gInfo] of glueCornerInfo.entries()) {
+                const gFace = model.faces.find(f => f.id === gId);
+                const xAttach = gInfo.isLeftGlue ? xWallL[gInfo.wallCol] : xWallR[gInfo.wallCol];
+                if (Math.abs(xm - xAttach) < 0.8) {
+                  targetBotY = Math.min(gInfo.targetWallY, gInfo.isLeftGlue ? updatedBodyCorners[gInfo.wallCol].yBotLeft : updatedBodyCorners[gInfo.wallCol].yBotRight);
+                  matchedJoint = true;
+                  break;
+                }
+                if (gFace && Math.abs(xm - (gInfo.isLeftGlue ? gFace.bounds.minX : gFace.bounds.maxX)) < 1.2) {
+                  targetBotY = (ySum - yMin) + gInfo.dyShift;
+                  matchedJoint = true;
+                  break;
+                }
+              }
+            }
+            if (!matchedJoint && Math.abs(xm - xWallL[0]) < 0.8) targetBotY = updatedBodyCorners[0].yBotLeft;
+            else if (!matchedJoint && Math.abs(xm - xWallR[3]) < 0.8) targetBotY = updatedBodyCorners[3].yBotRight;
+          }
+          if (ns.y1 > ns.y2) ns.y1 = targetBotY;
+          else ns.y2 = targetBotY;
+          if (Math.hypot(ns.x2 - ns.x1, ns.y2 - ns.y1) > 1e-4) kept.push(ns);
+          continue;
+        }
+
+        // Segmento intermedio del cuerpo (p.ej. machos y hembras o ventanas en paredes)
+        kept.push({ ...s });
+      }
+
+      // Añadir segmentos inferiores clonados para cada columna destino
+      for (let d = 0; d < 4; d++) {
+        const src = colPlan[d].src;
+        for (const s of topByCol[src]) {
+          const a = mapPointForCol(d, { x: s.x1, y: s.y1 });
+          const b = mapPointForCol(d, { x: s.x2, y: s.y2 });
+          if (Math.hypot(b.x - a.x, b.y - a.y) > 1e-4) {
+            kept.push({ ...s, x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+          }
+        }
+      }
+
+      // Añadir segmentos inferiores de la pestaña de pegado
+      for (const [gId, segs] of topByGlue.entries()) {
+        const gInfo = glueCornerInfo.get(gId);
+        const dyShift = gInfo ? gInfo.dyShift : 0;
+        for (const s of segs) {
+          kept.push({
+            ...s,
+            x1: s.x1, y1: (ySum - s.y1) + dyShift,
+            x2: s.x2, y2: (ySum - s.y2) + dyShift
+          });
+        }
+      }
+
+      // En modo Tapa encontrada, si en alguna unión vertical inferior queda un escalón entre paredes, cerrar el corte
+      if (!isFoldList && reverseLid) {
+        for (let j = 1; j <= 3; j++) {
+          const yA = updatedBodyCorners[j - 1].yBotRight;
+          const yB = updatedBodyCorners[j].yBotLeft;
+          if (Math.abs(yA - yB) > 0.08) {
+            kept.push({ x1: xWallL[j], y1: Math.min(yA, yB), x2: xWallL[j], y2: Math.max(yA, yB), type: 'CUT' });
+          }
+        }
+        for (const [, gInfo] of glueCornerInfo.entries()) {
+          const xAttach = gInfo.isLeftGlue ? xWallL[gInfo.wallCol] : xWallR[gInfo.wallCol];
+          const yW = gInfo.isLeftGlue ? updatedBodyCorners[gInfo.wallCol].yBotLeft : updatedBodyCorners[gInfo.wallCol].yBotRight;
+          if (Math.abs(gInfo.targetWallY - yW) > 0.08) {
+            kept.push({ x1: xAttach, y1: Math.min(gInfo.targetWallY, yW), x2: xAttach, y2: Math.max(gInfo.targetWallY, yW), type: 'CUT' });
+          }
+        }
+      }
+
+      return kept;
+    };
+
+    model.cutSegments = rebuildSegmentList(baseModel.cutSegments, false);
+    model.foldSegments = rebuildSegmentList(baseModel.foldSegments, true);
+
+    // 6. Limpiar cotas auxiliares antiguas del fondo reemplazado conservando L, W, H, G y las de cuerpo/tapa
+    if (Array.isArray(baseModel.sizeArrowData)) {
+      model.sizeArrowData = baseModel.sizeArrowData
+        .filter(a => {
+          if (!a || !a.p1 || !a.p2) return false;
+          if (['L', 'W', 'H', 'G'].includes(a.lineName)) return true;
+          return Math.max(a.p1.y, a.p2.y) < yBandBot - 2;
+        })
+        .map(a => ({ ...a, p1: { ...a.p1 }, p2: { ...a.p2 }, tpointer: a.tpointer ? { ...a.tpointer } : a.tpointer }));
+    }
+
+    // 7. Recalcular métricas de caras y modelo
+    for (const face of model.faces) {
+      const xs = face.polygon.map(p => p.x), ys = face.polygon.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      face.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+      face.bbox = { ...face.bounds };
+      face.points = face.polygon;
+      face.centroid = {
+        x: face.polygon.reduce((s, p) => s + p.x, 0) / face.polygon.length,
+        y: face.polygon.reduce((s, p) => s + p.y, 0) / face.polygon.length
+      };
+      face.areaMm2 = Math.abs(signedRingArea(face.polygon)) -
+        (face.holes || []).reduce((s, h) => s + Math.abs(signedRingArea(h)), 0);
+      face.area = face.areaMm2;
+    }
+
+    const minX = Math.min(...model.faces.map(f => f.bounds.minX));
+    const maxX = Math.max(...model.faces.map(f => f.bounds.maxX));
+    const minY = Math.min(...model.faces.map(f => f.bounds.minY));
+    const maxY = Math.max(...model.faces.map(f => f.bounds.maxY));
+    model.bounds = { minX, maxX, minY, maxY, width: maxX - minX, height: maxY - minY };
+    model.blankWidthMm = maxX - minX;
+    model.blankHeightMm = maxY - minY;
+    model.cutSegmentsMm = model.cutSegments;
+    model.foldSegmentsMm = model.foldSegments;
+    const segmentLength = s => Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    model.totalCutLengthMm = model.cutSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalFoldLengthMm = model.foldSegments.reduce((s, e) => s + segmentLength(e), 0);
+    model.totalAreaMm2 = model.faces.reduce((s, f) => s + f.areaMm2, 0);
+
+    // 8. Reorientar el árbol 3D de bisagras hacia un panel raíz válido
+    let nextRootId = model.rootFaceId;
+    if (!model.faces.some(f => f.id === nextRootId)) {
+      if (oldRootColIdx >= 0 && primaryNewBottomFlapByCol[oldRootColIdx] !== null) {
+        nextRootId = primaryNewBottomFlapByCol[oldRootColIdx];
+      } else if (model.dimensionBaseFaceId && model.faces.some(f => f.id === model.dimensionBaseFaceId)) {
+        nextRootId = model.dimensionBaseFaceId;
+      } else {
+        nextRootId = body[Math.max(0, oldRootColIdx)].id;
+      }
+    }
+    try {
+      const rerooted = rerootDielineModel(model, nextRootId, { keepDimensionBase: true });
+      rerooted.activePartVariation = 'copy_lid';
+      rerooted.partOptions = { reverseLid };
+      return rerooted;
+    } catch (_) {
+      model.rootFaceId = nextRootId;
+      return model;
+    }
+  }
+
+  function applyCopyLidVariation(baseModel, params = {}) {
+    const directData = getCopyLidStripData(baseModel);
+    if (directData && directData.valid) {
+      return applyCopyLidHorizontal(baseModel, directData, params);
+    }
+    // Soporte también cuando el troquel se ha girado 90° (tira vertical de paredes)
+    if (baseModel && baseModel.bounds) {
+      const r1 = rotateDieline90(baseModel);
+      const r3 = rotateDieline90(rotateDieline90(r1));
+      const d1 = getCopyLidStripData(r1);
+      const d3 = getCopyLidStripData(r3);
+      const scoreTop = m => (m.faces || []).reduce((acc, f) => {
+        const tag = `${f.pacdoraName || ''} ${f.role || ''} ${f.name || ''}`;
+        const isLidNamed = /(?:^|[^A-Za-z0-9])(HT\d*|FT\d*|FRT|FLT|TOP|SUP)(?:$|[^A-Za-z0-9])/i.test(tag) || f.role === 'FLAP_CLOSURE';
+        return acc + (isLidNamed && f.centroid.y < (m.bounds.minY + m.bounds.maxY) * 0.5 ? 10 : 0);
+      }, 0);
+      if (d1.valid || d3.valid) {
+        const useR1 = d1.valid && (!d3.valid || scoreTop(r1) >= scoreTop(r3));
+        if (useR1) {
+          const out = applyCopyLidHorizontal(r1, d1, params);
+          return rotateDieline90(rotateDieline90(rotateDieline90(out)));
+        }
+        const out = applyCopyLidHorizontal(r3, d3, params);
+        return rotateDieline90(out);
+      }
+    }
+    return {
+      ...baseModel,
+      partError: directData?.error || '«Copiar tapa» requiere una caja de 4 caras con solapas superiores.'
+    };
+  }
+
   function findNearestVectorHit(segments, ox, oy, dx, dy) {
     let bestT = Infinity;
     for (const s of segments || []) {
@@ -4199,6 +5041,11 @@
 
     if (key === 'auto_bottom') {
       field('clearance', 0.5, 6, 1.1);
+      return {params, limits};
+    }
+
+    if (key === 'copy_lid') {
+      params.reverseLid = Number(options.reverseLid) === 1 ? 1 : 0;
       return {params, limits};
     }
 
@@ -4288,6 +5135,10 @@
     if (partKey === 'auto_bottom') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
       return applyAutoBottomVariation(baseModel, params);
+    }
+    if (partKey === 'copy_lid') {
+      const {params} = getPartVariationSettings(baseModel, partKey, options);
+      return applyCopyLidVariation(baseModel, params);
     }
     if (partKey === 'chamfer') {
       const {params} = getPartVariationSettings(baseModel, partKey, options);
@@ -5346,6 +6197,8 @@
     getB1DoubleFlapsData,
     getAutoBottomStripData,
     applyAutoBottomVariation,
+    getCopyLidStripData,
+    applyCopyLidVariation,
     detectB1AmericanBox,
     applyB1Retranqueo,
     applyPartVariationToModel,

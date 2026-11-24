@@ -34,7 +34,24 @@ const mime = {
   '.jpeg': 'image/jpeg', '.png': 'image/png', '.csv': 'text/csv; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.xml': 'application/xml; charset=utf-8'
 };
+const libraryStore = require('./desktop/library-store');
+async function handleLibrary(req, res) {
+  const reply=(status,data)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(data));};
+  const directory=path.join(ROOT,'assets/user-models');
+  try {
+    if(req.method==='GET')return reply(200,libraryStore.read(directory));
+    if(req.method!=='POST')return reply(405,{error:'Método no permitido'});
+    if(![`localhost:${PORT}`,`127.0.0.1:${PORT}`].includes(req.headers.host) || req.headers.origin!==`http://${req.headers.host}`)return reply(403,{error:'Origen no permitido'});
+    if(!req.headers['content-type']?.startsWith('application/json'))return reply(415,{error:'Se requiere JSON'});
+    const chunks=[];let size=0;
+    for await(const chunk of req){size+=chunk.length;if(size>8000000)return reply(413,{error:'El modelo supera 8 MB'});chunks.push(chunk);}
+    const model=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    libraryStore.add(directory,model);
+    return reply(201,{saved:true});
+  }catch(error){reply(400,{error:error.message});}
+}
 http.createServer((req, res) => {
+  if (req.url === '/api/library-models') return handleLibrary(req,res);
   if (req.url === '/api/publish-client-model' && req.method === 'POST') return handlePublication(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { Allow: 'GET, HEAD' });

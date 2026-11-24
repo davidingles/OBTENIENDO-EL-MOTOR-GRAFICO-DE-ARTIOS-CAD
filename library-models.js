@@ -34,7 +34,7 @@
   function normalize(models){
     const accepted=[],seen=new Set();
     for(const candidate of Array.isArray(models)?models:[]){
-      try{validate(candidate);if(seen.has(candidate.num))continue;seen.add(candidate.num);accepted.push({...candidate,userModel:true,thickness:boardThicknessMm[candidate.boardCode]??null,modelCategories:['user-models']});}catch{}
+      try{validate(candidate);if(seen.has(candidate.num))continue;seen.add(candidate.num);accepted.push({...JSON.parse(JSON.stringify(candidate)),userModel:true,thickness:boardThicknessMm[candidate.boardCode]??null,modelCategories:['user-models']});}catch{}
     }
     return accepted.sort((a,b)=>b.num-a.num);
   }

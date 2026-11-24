@@ -40,3 +40,28 @@ test('la biblioteca rechaza nombres vacíos, códigos y geometría inválidos y 
   const second=library.create('Caja 2','C5',original,'',1800000000002);
   assert.deepEqual(library.normalize([first,first,{bad:true},second]).map(m=>m.num),[second.num,first.num]);
 });
+
+
+test('normalizar y editar una copia nunca modifica la instantanea guardada',()=>{
+  const saved=library.create('Original','C1',geometry());
+  const before=JSON.stringify(saved);
+  const copy=library.normalize([saved])[0];
+  copy.geometry.faces[0].polygon[0].x+=25;
+  assert.equal(JSON.stringify(saved),before);
+});
+
+test('almacen versionado persiste entre lecturas y rechaza sobrescribir el mismo identificador',()=>{
+  const store=require('../desktop/library-store'),os=require('node:os'),path=require('node:path');
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'troqueles-library-'));
+  try{
+    const saved=library.create('Instantanea','C1',geometry());
+    store.add(dir,saved);
+    const before=fs.readFileSync(path.join(dir,saved.num+'.json'),'utf8');
+    saved.geometry.faces[0].polygon[0].x+=25;
+    assert.throws(()=>store.add(dir,saved));
+    assert.equal(fs.readFileSync(path.join(dir,saved.num+'.json'),'utf8'),before);
+    const loaded=store.read(dir);
+    assert.equal(loaded.models.length,1);assert.deepEqual(loaded.warnings,[]);
+    assert.notDeepEqual(loaded.models[0].geometry,saved.geometry);
+  }finally{for(const name of fs.readdirSync(dir))fs.unlinkSync(path.join(dir,name));fs.rmdirSync(dir);}
+});
