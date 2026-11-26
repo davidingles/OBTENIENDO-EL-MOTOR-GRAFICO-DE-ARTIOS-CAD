@@ -188,6 +188,76 @@
     return m;
   }
 
+  function clipSegmentToBox(s, box) {
+    const dx = s.x2 - s.x1;
+    const dy = s.y2 - s.y1;
+    let t0 = 0;
+    let t1 = 1;
+    const checks = [
+      [-dx, s.x1 - box.minX],
+      [dx, box.maxX - s.x1],
+      [-dy, s.y1 - box.minY],
+      [dy, box.maxY - s.y1]
+    ];
+    for (const [p, q] of checks) {
+      if (Math.abs(p) < 1e-12) {
+        if (q < -1e-6) return null;
+      } else {
+        const r = q / p;
+        if (p < 0) {
+          if (r > t1) return null;
+          if (r > t0) t0 = r;
+        } else {
+          if (r < t0) return null;
+          if (r < t1) t1 = r;
+        }
+      }
+    }
+    if (t1 < t0) return null;
+    return [t0, t1];
+  }
+
+  function eraseInBox(model, box) {
+    const items = selectInBox(model, box);
+    return deleteSegments(model, items, box);
+  }
+
+  function erasePartialInBox(model, box) {
+    const m = normalize(model);
+    const clipList = (segs, kind) => {
+      const out = [];
+      for (const s of segs) {
+        const clipped = clipSegmentToBox(s, box);
+        if (!clipped) {
+          out.push(s);
+          continue;
+        }
+        const [t0, t1] = clipped;
+        const dx = s.x2 - s.x1;
+        const dy = s.y2 - s.y1;
+        const fullLen = Math.hypot(dx, dy);
+        if (t0 > 1e-4 && t0 * fullLen >= 1e-3) {
+          out.push(line(
+            { x: s.x1, y: s.y1 },
+            { x: s.x1 + t0 * dx, y: s.y1 + t0 * dy },
+            { type: kind === 'fold' ? 'FOLD' : 'CUT' }
+          ));
+        }
+        if (t1 < 1 - 1e-4 && (1 - t1) * fullLen >= 1e-3) {
+          out.push(line(
+            { x: s.x1 + t1 * dx, y: s.y1 + t1 * dy },
+            { x: s.x2, y: s.y2 },
+            { type: kind === 'fold' ? 'FOLD' : 'CUT' }
+          ));
+        }
+      }
+      return out;
+    };
+    m.cutSegments = clipList(m.cutSegments, 'cut');
+    m.foldSegments = clipList(m.foldSegments, 'fold');
+    return m;
+  }
+
   function stretch(model, box, dx, dy, isCopy = false) {
     const m = normalize(model);
     const inBox = (x, y) => x >= box.minX - 1e-4 && x <= box.maxX + 1e-4 && y >= box.minY - 1e-4 && y <= box.maxY + 1e-4;
@@ -423,5 +493,5 @@
     }
     return engine.enforceFlapLengthLimit(m);
   }
-  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,scale,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments,deleteSegments,stretch};
+  return {normalize,hit,snap,classify,erase,addLine,circle,handle,collide,corner,scale,rebuild,get,findHoleSegments,moveHole,copyHole,deleteHole,segmentIntersectsBox,selectInBox,moveSegments,copySegments,deleteSegments,eraseInBox,erasePartialInBox,stretch};
 });

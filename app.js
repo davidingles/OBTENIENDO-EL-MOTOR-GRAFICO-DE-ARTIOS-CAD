@@ -547,6 +547,21 @@
     }
   }
 
+  function syncFoldOrderToDieline(markModified = false) {
+    const payload = {
+      steps: state.foldOrderSteps || 0,
+      map: { ...(state.customFoldOrder || {}) },
+      targetAngles: { ...(state.customHingeTargetAngles || {}) }
+    };
+    if (state.dieline) state.dieline.foldOrder = payload;
+    if (state.baseDieline) state.baseDieline.foldOrder = JSON.parse(JSON.stringify(payload));
+    if (state.parametricDieline) state.parametricDieline.foldOrder = JSON.parse(JSON.stringify(payload));
+    if (markModified && state.dieline) {
+      state.isModelModified = true;
+      if (typeof updateHeaderActiveModelUI === 'function') updateHeaderActiveModelUI();
+    }
+  }
+
   function getFacesForFoldStep(step) {
     const faceIds = [];
     for (const [fid, st] of Object.entries(state.customFoldOrder || {})) {
@@ -567,6 +582,7 @@
     state.customFoldOrder = nextOrder;
     if (state.activeFoldOrderStep === fromStep) state.activeFoldOrderStep = toStep;
     else if (state.activeFoldOrderStep === toStep) state.activeFoldOrderStep = fromStep;
+    syncFoldOrderToDieline(true);
     renderFoldOrderUI();
     updateSelectionHighlight();
     render2FDieline();
@@ -581,6 +597,7 @@
       state.customFoldOrder[faceId] = state.activeFoldOrderStep;
     }
     state.customFoldOrderCleared = false;
+    syncFoldOrderToDieline(true);
     renderFoldOrderUI();
     updateSelectionHighlight();
     render2FDieline();
@@ -634,6 +651,7 @@
     state.activeFoldOrderStep = null;
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = '';
+    syncFoldOrderToDieline(false);
     renderFoldOrderUI();
     updateSelectionHighlight();
     render2FDieline();
@@ -654,6 +672,7 @@
     }
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
+    syncFoldOrderToDieline(true);
     renderFoldOrderUI();
     updateSelectionHighlight();
     render2FDieline();
@@ -666,6 +685,7 @@
     state.customFoldOrderCleared = false;
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = '';
+    syncFoldOrderToDieline(true);
     renderFoldOrderUI();
     updateSelectionHighlight();
     render2FDieline();
@@ -897,14 +917,16 @@
     document.getElementById('btn-set-base')?.classList.toggle('hidden',model.isPacdoraModel);
 
     state.hingeAngles = {};
-    state.customHingeTargetAngles = {};
+    const savedFold = model?.foldOrder;
+    state.customHingeTargetAngles = savedFold?.targetAngles ? { ...savedFold.targetAngles } : {};
     for (const h of model.hinges) {
       state.hingeAngles[h.id] = 0;
     }
-    state.foldOrderSteps = 0;
+    state.foldOrderSteps = Number(savedFold?.steps) > 0 ? Number(savedFold.steps) : 0;
     state.activeFoldOrderStep = null;
-    state.customFoldOrder = {};
+    state.customFoldOrder = savedFold?.map ? { ...savedFold.map } : {};
     state.customFoldOrderCleared = false;
+    syncFoldOrderToDieline(false);
     if (typeof renderFoldOrderUI === 'function') renderFoldOrderUI();
 
     syncParametricInputsUI(model);
@@ -2507,7 +2529,11 @@
             vectorRefreshControls();
             return;
           }
-          boxSelectCandidate = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, e };
+          boxSelectCandidate = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, e, mode: 'select' };
+          return;
+        }
+        if (vectorTool === 'erase' || vectorTool === 'erase-partial') {
+          boxSelectCandidate = { startX: rawP.x, startY: rawP.y, curX: rawP.x, curY: rawP.y, e, mode: vectorTool };
           return;
         }
         vectorCanvasClick(e);
@@ -2641,9 +2667,29 @@
           maxY: Math.max(boxSelect.startY, boxSelect.curY)
         };
         const items = boxSelect.selectedItems || [];
+        const mode = boxSelect.mode || 'select';
         boxSelect = null;
-        const cand = boxSelectCandidate;
         boxSelectCandidate = null;
+        if (mode === 'erase') {
+          if (items.length > 0 && state.dieline) {
+            const next = VectorCAD.eraseInBox(state.dieline, box);
+            vectorSelection = null;
+            commitVectorEdit(next);
+            vectorMessage(`${items.length} línea(s) borrada(s).`);
+          }
+          render2FDieline();
+          return;
+        }
+        if (mode === 'erase-partial') {
+          if (items.length > 0 && state.dieline) {
+            const next = VectorCAD.erasePartialInBox(state.dieline, box);
+            vectorSelection = null;
+            commitVectorEdit(next);
+            vectorMessage(`Borrado parcial aplicado sobre ${items.length} línea(s).`);
+          }
+          render2FDieline();
+          return;
+        }
         if (items.length > 0) {
           vectorSelection = { type: 'multi', box, items };
           vectorRefreshControls();
@@ -3424,6 +3470,9 @@
           renderProjects();
         } else if (tabKey === 'dielines') {
           renderDrawerCatalogList();
+        } else if (tabKey === 'more') {
+          renderFoldOrderUI();
+          updateHingeSelectionUI();
         }
         render2FDieline();
       });
@@ -5282,7 +5331,9 @@
       trim:'Pulsa cerca del extremo que quieres contraer hasta la primera intersección interior.',
       chamfer:'Introduce la distancia y pulsa las dos líneas que forman la esquina.',
       fillet:'Introduce el radio y pulsa las dos líneas que forman la esquina.',
-      scale:'Elige un origen en el lienzo (opcional) y escribe el factor de multiplicación.'
+      scale:'Elige un origen en el lienzo (opcional) y escribe el factor de multiplicación.',
+      erase:'Arrastra un rectángulo para borrar todas las líneas cruzadas por él.',
+      'erase-partial':'Arrastra un rectángulo para borrar solo la parte de las líneas que queda dentro.'
     };
     for(const key of Object.keys(help)) {
       const btn = document.getElementById('vector-tool-'+key);
@@ -5497,19 +5548,20 @@
       const bx = Math.min(sx1, sx2), by = Math.min(sy1, sy2);
       const bw = Math.abs(sx2 - sx1), bh = Math.abs(sy2 - sy1);
 
+      const isEraseMode = boxSelect.mode === 'erase' || boxSelect.mode === 'erase-partial';
       ctx.save();
-      ctx.fillStyle = 'rgba(0, 192, 135, 0.14)';
+      ctx.fillStyle = isEraseMode ? 'rgba(239, 68, 68, 0.16)' : 'rgba(0, 192, 135, 0.14)';
       ctx.fillRect(bx, by, bw, bh);
-      ctx.strokeStyle = '#00c087';
+      ctx.strokeStyle = isEraseMode ? '#ef4444' : '#00c087';
       ctx.lineWidth = 1.5 * dpr;
       ctx.setLineDash([5 * dpr, 3 * dpr]);
       ctx.strokeRect(bx, by, bw, bh);
       ctx.setLineDash([]);
 
       if (boxSelect.selectedItems?.length) {
-        ctx.strokeStyle = '#00e5ff';
+        ctx.strokeStyle = isEraseMode ? '#f97316' : '#00e5ff';
         ctx.lineWidth = 2.5 * dpr;
-        ctx.shadowColor = 'rgba(0, 229, 255, 0.6)';
+        ctx.shadowColor = isEraseMode ? 'rgba(239, 68, 68, 0.6)' : 'rgba(0, 229, 255, 0.6)';
         ctx.shadowBlur = 6 * dpr;
         for (const item of boxSelect.selectedItems) {
           const s = item.s;
@@ -5771,7 +5823,9 @@
     if (typeof updateB1RetranqueosUI === 'function') updateB1RetranqueosUI(model);
   }
   function commitVectorEdit(model) {
+    const preservedFoldOrder = state.dieline?.foldOrder ? JSON.parse(JSON.stringify(state.dieline.foldOrder)) : null;
     model=VectorCAD.rebuild(model,DielineEngine);
+    if (preservedFoldOrder) model.foldOrder = preservedFoldOrder;
     recordUndoState();
     displayVectorModel(model);
     vectorMessage(model.vectorWarning||'Cambio aplicado. Exporta o guarda en la biblioteca.');
@@ -5899,7 +5953,7 @@
     if (toggleBtnEl) toggleBtnEl.onclick = () => toggle(!vectorEditing);
     const closeBtnEl = document.getElementById('vector-close');
     if (closeBtnEl) closeBtnEl.onclick = () => toggle(false);
-    for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet','scale']) {
+    for(const tool of ['select','dimension','line','circle','handle','extend','trim','chamfer','fillet','scale','erase','erase-partial']) {
       const btn = document.getElementById('vector-tool-'+tool);
       if (btn) btn.onclick = () => {
         if (!vectorEditing) toggle(true);
@@ -7486,6 +7540,7 @@
           state.hingeAngles[h.id] = val;
           state.customHingeTargetAngles[h.id] = val;
         }
+        syncFoldOrderToDieline(false);
         applyFoldAngles();
         syncHingeSlidersFromAngles();
         const selSlider = document.getElementById('selected-hinges-slider');
@@ -7530,6 +7585,7 @@
           state.hingeAngles[hId] = val;
           state.customHingeTargetAngles[hId] = val;
         }
+        syncFoldOrderToDieline(false);
         applyFoldAngles();
         syncHingeSlidersFromAngles();
       });
