@@ -163,6 +163,7 @@
     activeArtworkIndex: -1,
     artworkEditing: false,
     hingeAngles: {},
+    customHingeTargetAngles: {},
     selectedHinges: new Set(),
     hingeSelectionMode: false,
     pickingBaseMode: false,
@@ -546,6 +547,98 @@
     }
   }
 
+  function getFacesForFoldStep(step) {
+    const faceIds = [];
+    for (const [fid, st] of Object.entries(state.customFoldOrder || {})) {
+      if (st === step) faceIds.push(fid);
+    }
+    return faceIds;
+  }
+
+  function moveFoldOrderStep(fromStep, toStep) {
+    const total = state.foldOrderSteps || 0;
+    if (fromStep < 1 || fromStep > total || toStep < 1 || toStep > total || fromStep === toStep) return;
+    const nextOrder = {};
+    for (const [fid, st] of Object.entries(state.customFoldOrder || {})) {
+      if (st === fromStep) nextOrder[fid] = toStep;
+      else if (st === toStep) nextOrder[fid] = fromStep;
+      else nextOrder[fid] = st;
+    }
+    state.customFoldOrder = nextOrder;
+    if (state.activeFoldOrderStep === fromStep) state.activeFoldOrderStep = toStep;
+    else if (state.activeFoldOrderStep === toStep) state.activeFoldOrderStep = fromStep;
+    renderFoldOrderUI();
+    updateSelectionHighlight();
+    render2FDieline();
+  }
+
+  function toggleFaceInActiveFoldStep(faceId) {
+    if (!state.activeFoldOrderStep || faceId === null || faceId === undefined) return false;
+    if (String(faceId) === String(state.dieline?.rootFaceId)) return false;
+    if (state.customFoldOrder[faceId] === state.activeFoldOrderStep) {
+      delete state.customFoldOrder[faceId];
+    } else {
+      state.customFoldOrder[faceId] = state.activeFoldOrderStep;
+    }
+    state.customFoldOrderCleared = false;
+    renderFoldOrderUI();
+    updateSelectionHighlight();
+    render2FDieline();
+    return true;
+  }
+
+  function startFoldOrderFlow() {
+    if (state.activeFoldOrderStep) {
+      finishFoldOrderFlow();
+      return;
+    }
+    state.hingeSelectionMode = false;
+    updateHingeSelectionUI();
+    resetPickModes();
+    state.customFoldOrderCleared = false;
+    if (!state.foldOrderSteps || state.foldOrderSteps < 1) {
+      state.foldOrderSteps = 1;
+      state.activeFoldOrderStep = 1;
+    } else {
+      const lastHasFaces = getFacesForFoldStep(state.foldOrderSteps).length > 0;
+      if (lastHasFaces) {
+        state.foldOrderSteps += 1;
+      }
+      state.activeFoldOrderStep = state.foldOrderSteps;
+    }
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d) c2d.style.cursor = 'crosshair';
+    renderFoldOrderUI();
+    updateSelectionHighlight();
+    render2FDieline();
+  }
+
+  function advanceNextFoldStep() {
+    state.hingeSelectionMode = false;
+    updateHingeSelectionUI();
+    resetPickModes();
+    state.customFoldOrderCleared = false;
+    state.foldOrderSteps = (state.foldOrderSteps || 0) + 1;
+    state.activeFoldOrderStep = state.foldOrderSteps;
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d) c2d.style.cursor = 'crosshair';
+    renderFoldOrderUI();
+    updateSelectionHighlight();
+    render2FDieline();
+  }
+
+  function finishFoldOrderFlow() {
+    while (state.foldOrderSteps > 0 && getFacesForFoldStep(state.foldOrderSteps).length === 0) {
+      state.foldOrderSteps -= 1;
+    }
+    state.activeFoldOrderStep = null;
+    const c2d = document.getElementById('canvas-2d');
+    if (c2d) c2d.style.cursor = '';
+    renderFoldOrderUI();
+    updateSelectionHighlight();
+    render2FDieline();
+  }
+
   function deleteFoldOrderStep(stepToRemove) {
     const nextOrder = {};
     for (const [fid, st] of Object.entries(state.customFoldOrder || {})) {
@@ -562,7 +655,7 @@
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
     renderFoldOrderUI();
-    setMasterFold(state.masterFold);
+    updateSelectionHighlight();
     render2FDieline();
   }
 
@@ -570,50 +663,118 @@
     state.foldOrderSteps = 0;
     state.activeFoldOrderStep = null;
     state.customFoldOrder = {};
-    state.customFoldOrderCleared = true;
+    state.customFoldOrderCleared = false;
     const c2d = document.getElementById('canvas-2d');
     if (c2d) c2d.style.cursor = '';
     renderFoldOrderUI();
-    setMasterFold(0);
+    updateSelectionHighlight();
     render2FDieline();
   }
 
   function renderFoldOrderUI() {
     const container = document.getElementById('fold-order-steps');
+    const btnStart = document.getElementById('btn-start-fold-order');
+    const btnNext = document.getElementById('btn-next-fold-step');
+    const btnFinish = document.getElementById('btn-finish-fold-order');
+    const status = document.getElementById('fold-order-status');
+    const isEditing = Boolean(state.activeFoldOrderStep);
+
+    if (btnStart) {
+      btnStart.classList.toggle('active', isEditing);
+      btnStart.textContent = isEditing ? `Editando doblez ${state.activeFoldOrderStep}` : 'Establecer orden';
+    }
+    if (btnNext) {
+      btnNext.classList.toggle('hidden', !isEditing);
+    }
+    if (btnFinish) {
+      btnFinish.classList.toggle('hidden', !isEditing);
+    }
+    if (status) {
+      if (isEditing) {
+        const count = getFacesForFoldStep(state.activeFoldOrderStep).length;
+        status.innerHTML = `<span style="color:#0284c7;font-weight:600;">Doblez ${state.activeFoldOrderStep} activo:</span> selecciona una o varias caras en 2D o 3D (${count} asignada${count === 1 ? '' : 's'}) y pulsa «Siguiente doblez».`;
+      } else if (state.foldOrderSteps > 0) {
+        status.innerHTML = `<strong>${state.foldOrderSteps}</strong> doblez${state.foldOrderSteps === 1 ? '' : 'es'} guardado${state.foldOrderSteps === 1 ? '' : 's'}. Usa <strong>↑ / ↓</strong> para cambiar el orden o toca un doblez para editar sus caras.`;
+      } else {
+        status.textContent = 'Pulsa «Establecer orden», selecciona una o varias caras en 2D o 3D y pulsa «Siguiente doblez» hasta terminar.';
+      }
+    }
+
     if (!container) return;
     container.innerHTML = '';
+    const faceMap = new Map((state.dieline?.faces || []).map(f => [String(f.id), f]));
     for (let step = 1; step <= state.foldOrderSteps; step++) {
-      const pill = document.createElement('div');
-      pill.className = 'fold-step-pill' + (state.activeFoldOrderStep === step ? ' active' : '');
+      const fids = getFacesForFoldStep(step);
+      const faceNames = fids.map(fid => {
+        const f = faceMap.get(String(fid));
+        return f ? (f.name || `Cara ${fid}`) : `Cara ${fid}`;
+      });
+      const row = document.createElement('div');
+      row.className = 'fold-order-step-row' + (state.activeFoldOrderStep === step ? ' active' : '');
 
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn-fold-step';
-      btn.textContent = String(step);
-      btn.title = `Paso ${step}: pincha en el 2D las áreas que doblan en el turno ${step}`;
-      btn.addEventListener('click', () => {
+      const mainBtn = document.createElement('button');
+      mainBtn.type = 'button';
+      mainBtn.className = 'fold-order-step-main';
+      mainBtn.title = `Doblez ${step}: pincha para seleccionar o quitar caras en 2D o 3D`;
+      mainBtn.innerHTML = `
+        <span class="fold-order-step-title">Doblez ${step} (${fids.length})</span>
+        <span class="fold-order-step-faces">${faceNames.length ? faceNames.join(', ') : 'Sin caras asignadas'}</span>
+      `;
+      mainBtn.addEventListener('click', () => {
         state.activeFoldOrderStep = state.activeFoldOrderStep === step ? null : step;
         if (state.activeFoldOrderStep) {
+          state.hingeSelectionMode = false;
+          updateHingeSelectionUI();
           resetPickModes();
         }
         const c2d = document.getElementById('canvas-2d');
         if (c2d) c2d.style.cursor = state.activeFoldOrderStep ? 'crosshair' : '';
         renderFoldOrderUI();
+        updateSelectionHighlight();
+        render2FDieline();
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'fold-order-step-actions';
+
+      const upBtn = document.createElement('button');
+      upBtn.type = 'button';
+      upBtn.className = 'fold-order-icon-btn';
+      upBtn.textContent = '↑';
+      upBtn.title = `Subir doblez ${step} antes`;
+      upBtn.disabled = step === 1;
+      upBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        moveFoldOrderStep(step, step - 1);
+      });
+
+      const downBtn = document.createElement('button');
+      downBtn.type = 'button';
+      downBtn.className = 'fold-order-icon-btn';
+      downBtn.textContent = '↓';
+      downBtn.title = `Bajar doblez ${step} después`;
+      downBtn.disabled = step === state.foldOrderSteps;
+      downBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        moveFoldOrderStep(step, step + 1);
       });
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
-      delBtn.className = 'btn-fold-step-del';
+      delBtn.className = 'fold-order-icon-btn danger';
       delBtn.textContent = '×';
-      delBtn.title = `Borrar paso ${step}`;
+      delBtn.title = `Borrar doblez ${step}`;
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteFoldOrderStep(step);
       });
 
-      pill.appendChild(btn);
-      pill.appendChild(delBtn);
-      container.appendChild(pill);
+      actions.appendChild(upBtn);
+      actions.appendChild(downBtn);
+      actions.appendChild(delBtn);
+      row.appendChild(mainBtn);
+      row.appendChild(actions);
+      container.appendChild(row);
     }
   }
 
@@ -736,6 +897,7 @@
     document.getElementById('btn-set-base')?.classList.toggle('hidden',model.isPacdoraModel);
 
     state.hingeAngles = {};
+    state.customHingeTargetAngles = {};
     for (const h of model.hinges) {
       state.hingeAngles[h.id] = 0;
     }
@@ -1456,6 +1618,29 @@
           faceHolder.add(knuckleMesh);
         }
 
+        const p1Local = new THREE.Vector3(p1_3d.x - originOffset3D.x, p1_3d.y - originOffset3D.y, 0);
+        const p2Local = new THREE.Vector3(p2_3d.x - originOffset3D.x, p2_3d.y - originOffset3D.y, 0);
+
+        // Resaltado 3D para hendidos seleccionados en 'Control de Hendidos'
+        const selHingePts = [
+          new THREE.Vector3(p1Local.x, p1Local.y, -coreRadius - 0.35),
+          new THREE.Vector3(p2Local.x, p2Local.y, -coreRadius - 0.35),
+          new THREE.Vector3(p1Local.x, p1Local.y, +coreRadius + 0.35),
+          new THREE.Vector3(p2Local.x, p2Local.y, +coreRadius + 0.35)
+        ];
+        const selHingeMat = new THREE.LineBasicMaterial({
+          color: 0x0ea5e9,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.95
+        });
+        const hingeHighlightMesh = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(selHingePts), selHingeMat);
+        hingeHighlightMesh.name = `CAD_Helper_SelHinge_${hinge.id}`;
+        hingeHighlightMesh.userData.isCADHelper = true;
+        hingeHighlightMesh.renderOrder = 25;
+        hingeHighlightMesh.visible = state.selectedHinges?.has(hinge.id) || false;
+        faceHolder.add(hingeHighlightMesh);
+
         // Grupo pivote anclado en p1_3d con z = 0 (centro exacto del espesor)
         const pivotGroup = new THREE.Group();
         pivotGroup.name = `Pivot_${hinge.id}`;
@@ -1476,6 +1661,10 @@
             p1_3d.y - originOffset3D.y,
             0
           ),
+          p1Local,
+          p2Local,
+          faceHolder,
+          hingeHighlightMesh,
           hinge,
           childFace,
           parentFace: face
@@ -1511,6 +1700,9 @@
    * Cada área móvil termina a 90° respecto a su padre, sin sobreplegado.
    */
   function computeHingeAngleAtProgress(hinge, childFace, progressT, sequenceMode) {
+    const hasCustomAngle = state.customHingeTargetAngles && state.customHingeTargetAngles[hinge.id] !== undefined;
+    const customTargetDeg = hasCustomAngle ? Number(state.customHingeTargetAngles[hinge.id]) : null;
+
     // Orden de plegado personalizado por pasos (1, 2, 3...) o reseteado por el usuario
     const hasCustomOrder = state.foldOrderSteps > 0 || state.customFoldOrderCleared;
     if (sequenceMode === 'phased' && hasCustomOrder) {
@@ -1522,20 +1714,21 @@
       const start = (step - 1) / totalSteps;
       const end = step / totalSteps;
       const t = Math.max(0, Math.min(1, (progressT - start) / Math.max(1e-5, end - start)));
-      const direction = Math.sign(hinge.defaultAngle) || 1;
-      return +(direction * 90 * t * t * (3 - 2 * t)).toFixed(2);
+      const targetDeg = hasCustomAngle ? customTargetDeg : ((Math.sign(hinge.defaultAngle) || 1) * 90);
+      return +(targetDeg * t * t * (3 - 2 * t)).toFixed(2);
     }
 
-    // Preserve catalog timing and fold direction, but enforce a quarter turn.
+    // Preserve catalog timing and fold direction, respecting custom target angle if set.
     if (sequenceMode === 'phased' && hinge.animSteps && hinge.animSteps.length > 0) {
       const start = Math.min(...hinge.animSteps.map(step => step.start));
       const end = Math.max(...hinge.animSteps.map(step => step.end));
       const direction = Math.sign(hinge.animSteps.reduce((sum, step) => sum + step.deltaDeg, 0)) || Math.sign(hinge.defaultAngle) || 1;
+      const targetDeg = hasCustomAngle ? customTargetDeg : (direction * 90);
       const t = Math.max(0, Math.min(1, (progressT-start)/Math.max(1e-5, end-start)));
-      return +(direction*90*t*t*(3-2*t)).toFixed(2);
+      return +(targetDeg * t * t * (3 - 2 * t)).toFixed(2);
     }
 
-    const maxDeg = (Math.sign(hinge.defaultAngle) || 1) * 90;
+    const maxDeg = hasCustomAngle ? customTargetDeg : ((Math.sign(hinge.defaultAngle) || 1) * 90);
 
     let localT = progressT;
     if (sequenceMode === 'phased' && childFace) {
@@ -1816,12 +2009,21 @@
     root.updateMatrixWorld(true);
     root.bind(new THREE.Skeleton(bones));
     for (const data of pivots) {
-      const angle = Math.max(-90, Math.min(90, state.hingeAngles[data.hinge.id] || 0));
+      const angle = Math.max(-180, Math.min(180, state.hingeAngles[data.hinge.id] || 0));
       boneByPivot.get(data.object).setRotationFromAxisAngle(data.axis3d, -THREE.MathUtils.degToRad(angle));
     }
     root.updateMatrixWorld(true);
     root.skeleton.update();
-    root.userData = {units:'meters', boardCode:state.boardCode, thicknessMm:UserLibrary.boardThicknessMm[state.boardCode], dimensionsMm:{length:state.paramL, width:state.paramW, height:state.paramH}};
+    root.userData = {
+      units: 'meters',
+      preserveInitialPose: true,
+      boardCode: state.boardCode,
+      thicknessMm: UserLibrary.boardThicknessMm[state.boardCode],
+      dimensionsMm: { length: state.paramL, width: state.paramW, height: state.paramH },
+      foldOrderSteps: state.foldOrderSteps || 0,
+      customFoldOrder: { ...(state.customFoldOrder || {}) },
+      customHingeTargetAngles: { ...(state.customHingeTargetAngles || {}) }
+    };
     return {root, clips:buildBlenderAnimationClips()};
   }
 
@@ -2126,14 +2328,8 @@
       }
       if (state.activeFoldOrderStep && e.button === 0) {
         const hitFace = hitTest2DCanvas(e);
-        if (hitFace && hitFace.id !== state.dieline?.rootFaceId) {
-          if (state.customFoldOrder[hitFace.id] === state.activeFoldOrderStep) {
-            delete state.customFoldOrder[hitFace.id];
-          } else {
-            state.customFoldOrder[hitFace.id] = state.activeFoldOrderStep;
-          }
-          setMasterFold(state.masterFold);
-          render2FDieline();
+        if (hitFace) {
+          toggleFaceInActiveFoldStep(hitFace.id);
         }
         return;
       }
@@ -2179,6 +2375,7 @@
               state.selectedHinges.add(closestH.id);
             }
             updateHingeSelectionUI();
+            updateSelectionHighlight();
             render2FDieline();
             return;
           }
@@ -2796,14 +2993,50 @@
     return null;
   }
 
+  function get3DHitHinge(event) {
+    if (!renderer || !camera || !dielineRootGroup || !pivotMap.size) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+    dielineRootGroup.updateMatrixWorld(true);
+
+    const p1w = new THREE.Vector3();
+    const p2w = new THREE.Vector3();
+    let bestHinge = null;
+    let bestDistPx = 24;
+
+    for (const data of pivotMap.values()) {
+      if (!data.faceHolder || !data.p1Local || !data.p2Local) continue;
+      p1w.copy(data.p1Local).applyMatrix4(data.faceHolder.matrixWorld).project(camera);
+      p2w.copy(data.p2Local).applyMatrix4(data.faceHolder.matrixWorld).project(camera);
+      if (p1w.z > 1 && p2w.z > 1) continue;
+
+      const s1 = { x: (p1w.x * 0.5 + 0.5) * rect.width, y: (-p1w.y * 0.5 + 0.5) * rect.height };
+      const s2 = { x: (p2w.x * 0.5 + 0.5) * rect.width, y: (-p2w.y * 0.5 + 0.5) * rect.height };
+      const d = distPointToSegment({ x: clickX, y: clickY }, s1, s2);
+      if (d < bestDistPx) {
+        bestDistPx = d;
+        bestHinge = data.hinge;
+      }
+    }
+    return bestHinge;
+  }
+
   let pointerDownPos = { x: 0, y: 0 };
 
   function on3DPointerMove(e) {
+    if (state.hingeSelectionMode) {
+      const h = get3DHitHinge(e);
+      renderer.domElement.style.cursor = h ? 'pointer' : 'crosshair';
+      return;
+    }
     const face = get3DHitFace(e);
     const fid = face ? face.id : null;
     if (fid !== state.hoveredFaceId) {
       state.hoveredFaceId = fid;
-      renderer.domElement.style.cursor = fid !== null ? 'pointer' : 'grab';
+      renderer.domElement.style.cursor = state.activeFoldOrderStep
+        ? (fid !== null ? 'crosshair' : 'grab')
+        : (fid !== null ? 'pointer' : 'grab');
       updateSelectionHighlight();
       render2FDieline();
     }
@@ -2815,6 +3048,27 @@
       window.removeEventListener('pointerup', onUp);
       const dist = Math.hypot(upEvt.clientX - pointerDownPos.x, upEvt.clientY - pointerDownPos.y);
       if (dist < 5) {
+        if (state.hingeSelectionMode) {
+          const hitHinge = get3DHitHinge(upEvt);
+          if (hitHinge) {
+            if (state.selectedHinges.has(hitHinge.id)) {
+              state.selectedHinges.delete(hitHinge.id);
+            } else {
+              state.selectedHinges.add(hitHinge.id);
+            }
+            updateHingeSelectionUI();
+            updateSelectionHighlight();
+            render2FDieline();
+            return;
+          }
+        }
+        if (state.activeFoldOrderStep) {
+          const face = get3DHitFace(upEvt);
+          if (face) {
+            toggleFaceInActiveFoldStep(face.id);
+            return;
+          }
+        }
         const face = get3DHitFace(upEvt);
         if (face) {
           selectFace(face.id, upEvt.shiftKey);
@@ -2876,7 +3130,13 @@
 
   function updateSelectionHighlight() {
     for (const [fid, item] of faceMeshMap.entries()) {
-      item.cutOutline.visible = state.showCutLines3D || (state.selectingChamferFlaps && state.selectedFaceIds.includes(fid));
+      const inActiveFoldStep = Boolean(state.activeFoldOrderStep && state.customFoldOrder?.[fid] === state.activeFoldOrderStep);
+      item.cutOutline.visible = state.showCutLines3D || inActiveFoldStep || (state.selectingChamferFlaps && state.selectedFaceIds.includes(fid));
+    }
+    for (const [hingeId, data] of pivotMap.entries()) {
+      if (data.hingeHighlightMesh) {
+        data.hingeHighlightMesh.visible = Boolean(state.selectedHinges?.has(hingeId));
+      }
     }
   }
 
@@ -3502,15 +3762,9 @@
       if (c2d) c2d.style.cursor = state.pickingSupportMode ? 'crosshair' : '';
     });
 
-    document.getElementById('btn-add-fold-step')?.addEventListener('click', () => {
-      state.foldOrderSteps = (state.foldOrderSteps || 0) + 1;
-      state.activeFoldOrderStep = state.foldOrderSteps;
-      resetPickModes();
-      const c2d = document.getElementById('canvas-2d');
-      if (c2d) c2d.style.cursor = 'crosshair';
-      renderFoldOrderUI();
-    });
-
+    document.getElementById('btn-start-fold-order')?.addEventListener('click', startFoldOrderFlow);
+    document.getElementById('btn-next-fold-step')?.addEventListener('click', advanceNextFoldStep);
+    document.getElementById('btn-finish-fold-order')?.addEventListener('click', finishFoldOrderFlow);
     document.getElementById('btn-reset-fold-order')?.addEventListener('click', resetFoldOrder);
     document.getElementById('btn-rotate-dieline')?.addEventListener('click', rotateWholeDieline90);
     document.getElementById('btn-b1-retranqueos')?.addEventListener('click', () => {
@@ -3734,6 +3988,7 @@
     state.selectingChamferFlaps = false;
     state.partTargetFaceId = null;
     state.hingeAngles = {};
+    state.customHingeTargetAngles = {};
     if (state.selectedHinges && typeof state.selectedHinges.clear === 'function') state.selectedHinges.clear();
     state.foldOrderSteps = 0;
     state.activeFoldOrderStep = null;
@@ -6983,6 +7238,7 @@
         state.isPlaying = false;
         updatePlayButtonUI();
         state.hingeAngles[h.id] = val;
+        state.customHingeTargetAngles[h.id] = val;
         applyFoldAngles();
       });
 
@@ -7020,11 +7276,11 @@
 
     if (status) {
       if (state.hingeSelectionMode) {
-        status.innerHTML = `<span style="color:#0284c7;font-weight:600;">Modo selección activo:</span> Toca líneas rojas en el plano 2D para seleccionarlas (${count} de ${total}).`;
+        status.innerHTML = `<span style="color:#0284c7;font-weight:600;">Modo selección activo:</span> Toca líneas rojas en el plano 2D o en el visor 3D para seleccionarlas (${count} de ${total}).`;
       } else if (count > 0) {
         status.innerHTML = `<strong>${count}</strong> hendido(s) seleccionado(s) de ${total}.`;
       } else {
-        status.textContent = 'Pulsa «Seleccionar» y toca las líneas de hendido (rojas) en el plano 2D para elegirlas.';
+        status.textContent = 'Pulsa «Seleccionar» y toca las líneas de hendido (rojas) en el plano 2D o en el visor 3D para elegirlas.';
       }
     }
     if (label) {
@@ -7061,6 +7317,7 @@
         if (!state.dieline?.hinges) return;
         state.selectedHinges = new Set(state.dieline.hinges.map(h => h.id));
         updateHingeSelectionUI();
+        updateSelectionHighlight();
         render2FDieline();
       };
     }
@@ -7074,6 +7331,7 @@
         updatePlayButtonUI();
         for (const h of state.dieline.hinges) {
           state.hingeAngles[h.id] = val;
+          state.customHingeTargetAngles[h.id] = val;
         }
         applyFoldAngles();
         syncHingeSlidersFromAngles();
@@ -7088,8 +7346,13 @@
     if (btnSelectTool) {
       btnSelectTool.onclick = () => {
         state.hingeSelectionMode = !state.hingeSelectionMode;
+        if (state.hingeSelectionMode && state.activeFoldOrderStep) {
+          state.activeFoldOrderStep = null;
+          renderFoldOrderUI();
+        }
         btnSelectTool.classList.toggle('active', state.hingeSelectionMode);
         updateHingeSelectionUI();
+        updateSelectionHighlight();
       };
     }
 
@@ -7098,6 +7361,7 @@
       btnClear.onclick = () => {
         state.selectedHinges.clear();
         updateHingeSelectionUI();
+        updateSelectionHighlight();
         render2FDieline();
       };
     }
@@ -7111,6 +7375,7 @@
         updatePlayButtonUI();
         for (const hId of state.selectedHinges) {
           state.hingeAngles[hId] = val;
+          state.customHingeTargetAngles[hId] = val;
         }
         applyFoldAngles();
         syncHingeSlidersFromAngles();

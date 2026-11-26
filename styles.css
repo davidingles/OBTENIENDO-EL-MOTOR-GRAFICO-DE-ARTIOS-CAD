@@ -3176,3 +3176,111 @@ html[data-theme="dark"] .header-active-model-modified {
     max-width: 240px;
   }
 }
+
+/* ============================================================================
+   ORDEN DE PLEGADO POR CARAS (EN CONTROL DE HENDIDOS)
+   ============================================================================ */
+.fold-order-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.fold-order-step-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-canvas, rgba(148, 163, 184, 0.08));
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.fold-order-step-row.active {
+  border-color: #0284c7;
+  background: rgba(2, 132, 199, 0.12);
+}
+
+.fold-order-step-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.fold-order-step-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.fold-order-step-row.active .fold-order-step-title {
+  color: #0284c7;
+}
+
+.fold-order-step-faces {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.fold-order-step-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.fold-order-icon-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.fold-order-icon-btn:hover:not(:disabled) {
+  background: rgba(2, 132, 199, 0.14);
+  border-color: #0284c7;
+  color: #0284c7;
+}
+
+.fold-order-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.fold-order-icon-btn.danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+html[data-theme="dark"] .fold-order-step-row.active .fold-order-step-title {
+  color: #38bdf8;
+}
+
