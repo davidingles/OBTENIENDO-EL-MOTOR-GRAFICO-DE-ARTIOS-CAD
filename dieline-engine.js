@@ -6738,6 +6738,82 @@
     };
   }
 
+  function repairSingleSegmentEndpoints(cutSegments, foldSegments, targetKind, targetIndex, opts = {}) {
+    const connectTol = opts.connectTol ?? 0.35;
+    const minRemain = opts.minRemain ?? 0.5;
+    const segs = [];
+    const cutList = [];
+    const foldList = [];
+    let targetSegIdx = -1;
+
+    (cutSegments || []).forEach((s, idx) => {
+      const c = normalizeSegCoords(s);
+      if (!c) return;
+      const entry = { ...s, ...c, kind: 'cut', type: s.type || 'CUT' };
+      if (targetKind === 'cut' && idx === targetIndex) targetSegIdx = segs.length;
+      segs.push(entry);
+      cutList.push(entry);
+    });
+    (foldSegments || []).forEach((s, idx) => {
+      const c = normalizeSegCoords(s);
+      if (!c) return;
+      const entry = { ...s, ...c, kind: 'fold', type: s.type || 'FOLD' };
+      if (targetKind === 'fold' && idx === targetIndex) targetSegIdx = segs.length;
+      segs.push(entry);
+      foldList.push(entry);
+    });
+
+    if (targetSegIdx < 0) {
+      return {
+        cutSegments: cutList.map(({ kind, ...rest }) => rest),
+        foldSegments: foldList.map(({ kind, ...rest }) => rest),
+        changed: false,
+        actions: []
+      };
+    }
+
+    const actions = [];
+    const endsToCheck = ['start', 'end'];
+    // Evaluar ambos extremos del segmento objetivo; aplicar primero el movimiento más cercano
+    const remaining = [...endsToCheck];
+    while (remaining.length > 0) {
+      let bestK = -1;
+      let bestRes = null;
+      for (let k = remaining.length - 1; k >= 0; k--) {
+        const endKey = remaining[k];
+        const res = findBestEndpointRepair(segs, targetSegIdx, endKey, connectTol, minRemain);
+        if (!res || (res.action !== 'extend' && res.action !== 'trim')) {
+          remaining.splice(k, 1);
+          continue;
+        }
+        if (!bestRes || res.dist < bestRes.dist - 1e-6) {
+          bestRes = res;
+          bestK = k;
+        }
+      }
+      if (!bestRes) break;
+      remaining.splice(bestK, 1);
+      if (bestRes.endKey === 'start') {
+        segs[targetSegIdx].x1 = +bestRes.hitX.toFixed(4);
+        segs[targetSegIdx].y1 = +bestRes.hitY.toFixed(4);
+        if (segs[targetSegIdx].p1) segs[targetSegIdx].p1 = { x: segs[targetSegIdx].x1, y: segs[targetSegIdx].y1 };
+      } else {
+        segs[targetSegIdx].x2 = +bestRes.hitX.toFixed(4);
+        segs[targetSegIdx].y2 = +bestRes.hitY.toFixed(4);
+        if (segs[targetSegIdx].p2) segs[targetSegIdx].p2 = { x: segs[targetSegIdx].x2, y: segs[targetSegIdx].y2 };
+      }
+      actions.push(bestRes);
+    }
+
+    const keepNonDegenerate = (s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 1e-3;
+    return {
+      cutSegments: cutList.filter(keepNonDegenerate).map(({ kind, ...rest }) => rest),
+      foldSegments: foldList.filter(keepNonDegenerate).map(({ kind, ...rest }) => rest),
+      changed: actions.length > 0,
+      actions
+    };
+  }
+
   function buildDielineModelFromParsed(parsed) {
     const sub = buildPlanarSubdivision(parsed);
 
@@ -6902,6 +6978,7 @@
     buildDielineModel,
     inspectOpenEndpoints,
     repairOpenEndpoints,
+    repairSingleSegmentEndpoints,
     repairDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,

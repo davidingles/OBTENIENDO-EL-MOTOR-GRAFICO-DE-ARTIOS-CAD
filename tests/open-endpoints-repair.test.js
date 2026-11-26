@@ -110,6 +110,30 @@ test('los 4 casos de las fotos: estirar, recortar sobrante, recortar si está m�
   assert.equal(f3Split.foldSegments[0].x1, 40);
 });
 
+test('repairSingleSegmentEndpoints (tecla F) extiende ambos extremos si ambos están sueltos y recorta/estira según cercanía', () => {
+  const cuts = [
+    { x1: 0, y1: 0, x2: 0, y2: 100, type: 'CUT' },
+    { x1: 100, y1: 0, x2: 100, y2: 100, type: 'CUT' }
+  ];
+  // Línea flotante entre x=15 y x=85 (ambos extremos sueltos) -> debe estirarse hasta x=0 y x=100
+  const folds = [
+    { x1: 15, y1: 50, x2: 85, y2: 50, type: 'FOLD' }
+  ];
+  const rBoth = DielineEngine.repairSingleSegmentEndpoints(cuts, folds, 'fold', 0);
+  assert.equal(rBoth.changed, true);
+  assert.equal(rBoth.foldSegments[0].x1, 0);
+  assert.equal(rBoth.foldSegments[0].x2, 100);
+
+  // Línea con un extremo sobresaliendo (-10) y el otro corto (90) -> recorta a 0 y alarga a 100
+  const folds2 = [
+    { x1: -10, y1: 50, x2: 90, y2: 50, type: 'FOLD' }
+  ];
+  const rMix = DielineEngine.repairSingleSegmentEndpoints(cuts, folds2, 'fold', 0);
+  assert.equal(rMix.changed, true);
+  assert.equal(rMix.foldSegments[0].x1, 0);
+  assert.equal(rMix.foldSegments[0].x2, 100);
+});
+
 test('libraryStore.replace sobreescribe un troquel existente conservando su identificador', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tv-lib-replace-'));
   try {

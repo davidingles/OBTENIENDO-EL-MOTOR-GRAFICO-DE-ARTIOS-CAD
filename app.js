@@ -2577,6 +2577,16 @@
     });
 
     window.addEventListener('pointermove', (e) => {
+      if (state.dieline && canvas) {
+        const cRect = canvas.getBoundingClientRect();
+        const isOver = e.clientX >= cRect.left && e.clientX <= cRect.right && e.clientY >= cRect.top && e.clientY <= cRect.bottom;
+        if (isOver) {
+          const wp = vectorWorldPoint(e, canvas);
+          lastCanvas2DMouse = { x: wp.x, y: wp.y, over: true };
+        } else {
+          lastCanvas2DMouse.over = false;
+        }
+      }
       if (holeDrag) {
         const p = vectorWorldPoint(e, canvas);
         let dx = p.x - holeDrag.startX, dy = p.y - holeDrag.startY;
@@ -5157,6 +5167,7 @@
   // Edits are applied to a private model snapshot until explicitly saved.
   let vectorEditing=false, vectorSelection=null;
   let vectorTool='select', vectorDraft=null, vectorPointer=null, holeDrag=null, boxSelect=null, boxSelectCandidate=null;
+  let lastCanvas2DMouse = { x: 0, y: 0, over: false };
   function vectorInside(p, poly) {
     let inside=false;
     for(let i=0,j=poly.length-1;i<poly.length;j=i++) { const a=poly[i],b=poly[j]; if ((a.y>p.y)!==(b.y>p.y) && p.x<(b.x-a.x)*(p.y-a.y)/(b.y-a.y)+a.x) inside=!inside; }
@@ -6271,6 +6282,33 @@
       if (vectorEditing && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
         e.preventDefault();
         applyBoxMoveOrCopy();
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'f' || e.key === 'F')) {
+        const activeTag = document.activeElement ? document.activeElement.tagName : '';
+        if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+        if (lastCanvas2DMouse.over && state.dieline) {
+          const hit = VectorCAD.hit(state.dieline, lastCanvas2DMouse, Infinity);
+          if (hit) {
+            e.preventDefault();
+            const res = DielineEngine.repairSingleSegmentEndpoints(
+              state.dieline.cutSegments,
+              state.dieline.foldSegments,
+              hit.kind,
+              hit.index
+            );
+            if (res.changed) {
+              const next = {
+                ...state.dieline,
+                cutSegments: res.cutSegments,
+                foldSegments: res.foldSegments
+              };
+              commitVectorEdit(next);
+              vectorMessage('Tecla F: línea ajustada hasta la intersección más cercana.');
+            } else {
+              vectorMessage('Tecla F: la línea más cercana ya está conectada o no tiene cruce alcanzable.');
+            }
+          }
+        }
       }
       const isDeleteKey = e.key === 'Delete' || e.key === 'Del' || e.code === 'Delete' || e.key === 'Supr' || e.code === 'NumpadDecimal';
       if (vectorEditing && (isDeleteKey || e.key === 'Backspace')) {
