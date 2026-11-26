@@ -6494,8 +6494,251 @@
     return reconcileDimensionMeasurements(model);
   }
 
-  function buildDielineModel(svgText) {
-    const parsed = parseSVGDieline(svgText);
+  // ============================================================================
+  // DETECCIÓN Y REPARACIÓN DE EXTREMOS SUELTOS (RECORTAR O PROLONGAR AL CRUCE MÁS CERCANO)
+  // ============================================================================
+  function distPointToSeg2D(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-12) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  function normalizeSegCoords(seg) {
+    if (!seg) return null;
+    const x1 = seg.p1 ? Number(seg.p1.x) : Number(seg.x1);
+    const y1 = seg.p1 ? Number(seg.p1.y) : Number(seg.y1);
+    const x2 = seg.p2 ? Number(seg.p2.x) : Number(seg.x2);
+    const y2 = seg.p2 ? Number(seg.p2.y) : Number(seg.y2);
+    if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+    if (Math.hypot(x2 - x1, y2 - y1) < 1e-4) return null;
+    return { x1, y1, x2, y2 };
+  }
+
+  function findBestEndpointRepair(segs, segIdx, endKey, connectTol, minRemain) {
+    const seg = segs[segIdx];
+    const px = endKey === 'start' ? seg.x1 : seg.x2;
+    const py = endKey === 'start' ? seg.y1 : seg.y2;
+    const ox = endKey === 'start' ? seg.x2 : seg.x1;
+    const oy = endKey === 'start' ? seg.y2 : seg.y1;
+
+    // Comprobar si este extremo ya contacta con algún otro segmento
+    for (let j = 0; j < segs.length; j++) {
+      if (j === segIdx) continue;
+      const other = segs[j];
+      if (distPointToSeg2D(px, py, other.x1, other.y1, other.x2, other.y2) <= connectTol) {
+        return null; // Ya conectado
+      }
+    }
+
+    const dx = px - ox;
+    const dy = py - oy;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) {
+      return { segIdx, kind: seg.kind, endKey, action: 'none', dist: Infinity };
+    }
+    const ux = dx / len;
+    const uy = dy / len;
+    // Un rabillo ya partido en una intersección tiene otro segmento colineal continuando tras el extremo opuesto O
+    let isSplitOvershootStub = false;
+    for (let j = 0; j < segs.length; j++) {
+      if (j === segIdx) continue;
+      const other = segs[j];
+      const oTouch = distPointToSeg2D(ox, oy, other.x1, other.y1, other.x2, other.y2) <= connectTol;
+      if (!oTouch) continue;
+      const vx = other.x2 - other.x1, vy = other.y2 - other.y1;
+      const vLen = Math.hypot(vx, vy) || 1;
+      const cross = Math.abs(ux * (vy / vLen) - uy * (vx / vLen));
+      if (cross < 0.05) {
+        // Colineal tocando O: comprobar que continúa hacia el lado opuesto de P
+        const dot1 = (other.x1 - ox) * (-ux) + (other.y1 - oy) * (-uy);
+        const dot2 = (other.x2 - ox) * (-ux) + (other.y2 - oy) * (-uy);
+        if (Math.max(dot1, dot2) > minRemain) {
+          isSplitOvershootStub = true;
+          break;
+        }
+      }
+    }
+    const maxTrim = isSplitOvershootStub ? (len + connectTol) : Math.max(0, len - minRemain);
+
+    let best = null;
+    const consider = (s, hitX, hitY) => {
+      let action = null;
+      let dist = Infinity;
+      if (s > connectTol * 0.25) {
+        action = 'extend';
+        dist = s;
+      } else if (s < -connectTol * 0.25 && -s <= maxTrim) {
+        action = 'trim';
+        dist = -s;
+      } else {
+        return;
+      }
+      if (!best || dist < best.dist - 1e-6) {
+        best = { segIdx, kind: seg.kind, endKey, action, dist, hitX, hitY };
+      }
+    };
+
+    for (let j = 0; j < segs.length; j++) {
+      if (j === segIdx) continue;
+      const other = segs[j];
+      const vx = other.x2 - other.x1;
+      const vy = other.y2 - other.y1;
+      const denom = ux * vy - uy * vx;
+
+      if (Math.abs(denom) > 1e-9) {
+        const rx = other.x1 - px;
+        const ry = other.y1 - py;
+        const s = (rx * vy - ry * vx) / denom;
+        const t = (rx * uy - ry * ux) / denom;
+        const otherLen = Math.hypot(vx, vy) || 1;
+        const tPad = Math.min(0.05, connectTol / otherLen);
+        if (t >= -tPad && t <= 1 + tPad) {
+          const clampedT = Math.max(0, Math.min(1, t));
+          const hitX = other.x1 + clampedT * vx;
+          const hitY = other.y1 + clampedT * vy;
+          consider(s, hitX, hitY);
+        }
+      } else {
+        // Segmentos paralelos/colineales: comprobar si algún extremo cae sobre la misma recta
+        const perp1 = Math.abs((other.x1 - px) * uy - (other.y1 - py) * ux);
+        if (perp1 <= connectTol) {
+          const s1 = (other.x1 - px) * ux + (other.y1 - py) * uy;
+          const s2 = (other.x2 - px) * ux + (other.y2 - py) * uy;
+          consider(s1, other.x1, other.y1);
+          consider(s2, other.x2, other.y2);
+        }
+      }
+    }
+
+    return best || { segIdx, kind: seg.kind, endKey, action: 'none', dist: Infinity };
+  }
+
+  function inspectOpenEndpoints(cutSegments, foldSegments, opts = {}) {
+    return repairOpenEndpoints(cutSegments, foldSegments, opts).report;
+  }
+
+  function repairOpenEndpoints(cutSegments, foldSegments, opts = {}) {
+    const connectTol = opts.connectTol ?? 0.35;
+    const minRemain = opts.minRemain ?? 0.5;
+    const segs = [];
+    const cutList = [];
+    const foldList = [];
+
+    for (const s of (cutSegments || [])) {
+      const c = normalizeSegCoords(s);
+      if (!c) continue;
+      const entry = { ...s, ...c, kind: 'cut', type: s.type || 'CUT' };
+      segs.push(entry);
+      cutList.push(entry);
+    }
+    for (const s of (foldSegments || [])) {
+      const c = normalizeSegCoords(s);
+      if (!c) continue;
+      const entry = { ...s, ...c, kind: 'fold', type: s.type || 'FOLD' };
+      segs.push(entry);
+      foldList.push(entry);
+    }
+
+    // 1. Detectar en una sola pasada O(N^2) únicamente los extremos realmente sueltos
+    const looseQueue = [];
+    for (let i = 0; i < segs.length; i++) {
+      for (const endKey of ['start', 'end']) {
+        const res = findBestEndpointRepair(segs, i, endKey, connectTol, minRemain);
+        if (res) looseQueue.push({ segIdx: i, endKey });
+      }
+    }
+
+    if (looseQueue.length === 0) {
+      return {
+        cutSegments: cutList.map(({ kind, ...rest }) => rest),
+        foldSegments: foldList.map(({ kind, ...rest }) => rest),
+        report: {
+          totalLoose: 0, cutLoose: 0, foldLoose: 0,
+          repairableCount: 0, extendCount: 0, trimCount: 0, unchangedCount: 0, details: []
+        }
+      };
+    }
+
+    // 2. Reparar solo los extremos sueltos en orden de distancia más corta primero
+    let cutLoose = 0;
+    let foldLoose = 0;
+    let extendCount = 0;
+    let trimCount = 0;
+    let unchangedCount = 0;
+    const details = [];
+    const remaining = [...looseQueue];
+
+    while (remaining.length > 0) {
+      let bestIdx = -1;
+      let bestCandidate = null;
+      for (let k = remaining.length - 1; k >= 0; k--) {
+        const { segIdx, endKey } = remaining[k];
+        const res = findBestEndpointRepair(segs, segIdx, endKey, connectTol, minRemain);
+        if (!res) {
+          // Ya quedó conectado gracias a una reparación anterior
+          remaining.splice(k, 1);
+          continue;
+        }
+        if ((res.action === 'extend' || res.action === 'trim') && (!bestCandidate || res.dist < bestCandidate.dist - 1e-6)) {
+          bestCandidate = res;
+          bestIdx = k;
+        }
+      }
+      if (!bestCandidate) break;
+
+      remaining.splice(bestIdx, 1);
+      const { segIdx: i, endKey } = bestCandidate;
+      details.push(bestCandidate);
+      if (bestCandidate.kind === 'cut') cutLoose++;
+      else foldLoose++;
+
+      if (endKey === 'start') {
+        segs[i].x1 = +bestCandidate.hitX.toFixed(4);
+        segs[i].y1 = +bestCandidate.hitY.toFixed(4);
+        if (segs[i].p1) segs[i].p1 = { x: segs[i].x1, y: segs[i].y1 };
+      } else {
+        segs[i].x2 = +bestCandidate.hitX.toFixed(4);
+        segs[i].y2 = +bestCandidate.hitY.toFixed(4);
+        if (segs[i].p2) segs[i].p2 = { x: segs[i].x2, y: segs[i].y2 };
+      }
+      if (bestCandidate.action === 'extend') extendCount++;
+      else trimCount++;
+    }
+
+    // 3. Contabilizar los extremos que siguieron sueltos sin cruce alcanzable
+    for (const { segIdx, endKey } of remaining) {
+      const res = findBestEndpointRepair(segs, segIdx, endKey, connectTol, minRemain);
+      if (!res) continue;
+      details.push(res);
+      if (res.kind === 'cut') cutLoose++;
+      else foldLoose++;
+      unchangedCount++;
+    }
+
+    const keepNonDegenerate = (s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 1e-3;
+    const cleanCut = cutList.filter(keepNonDegenerate).map(({ kind, ...rest }) => rest);
+    const cleanFold = foldList.filter(keepNonDegenerate).map(({ kind, ...rest }) => rest);
+
+    return {
+      cutSegments: cleanCut,
+      foldSegments: cleanFold,
+      report: {
+        totalLoose: details.length,
+        cutLoose,
+        foldLoose,
+        repairableCount: extendCount + trimCount,
+        extendCount,
+        trimCount,
+        unchangedCount,
+        details
+      }
+    };
+  }
+
+  function buildDielineModelFromParsed(parsed) {
     const sub = buildPlanarSubdivision(parsed);
 
     const roleMap = {
@@ -6564,6 +6807,49 @@
     return reconcileDimensionMeasurements(built);
   }
 
+  function buildDielineModel(svgText) {
+    const parsed = parseSVGDieline(svgText);
+    return buildDielineModelFromParsed(parsed);
+  }
+
+  function repairDielineModel(model, opts = {}) {
+    if (!model) return { model, report: { totalLoose: 0, cutLoose: 0, foldLoose: 0, repairableCount: 0, extendCount: 0, trimCount: 0, unchangedCount: 0, details: [] } };
+    const { cutSegments, foldSegments, report } = repairOpenEndpoints(model.cutSegments || [], model.foldSegments || [], opts);
+    if (!report.repairableCount) return { model, report };
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of [...cutSegments, ...foldSegments]) {
+      minX = Math.min(minX, s.x1, s.x2);
+      minY = Math.min(minY, s.y1, s.y2);
+      maxX = Math.max(maxX, s.x1, s.x2);
+      maxY = Math.max(maxY, s.y1, s.y2);
+    }
+    const shiftX = Number.isFinite(minX) ? minX : 0;
+    const shiftY = Number.isFinite(minY) ? minY : 0;
+    const blankWidthMm = Number.isFinite(maxX - minX) ? Math.max(1, maxX - minX) : (model.bounds?.width || 100);
+    const blankHeightMm = Number.isFinite(maxY - minY) ? Math.max(1, maxY - minY) : (model.bounds?.height || 100);
+    const shiftSeg = (s, type) => ({
+      ...s,
+      x1: s.x1 - shiftX,
+      y1: s.y1 - shiftY,
+      x2: s.x2 - shiftX,
+      y2: s.y2 - shiftY,
+      type
+    });
+
+    const parsed = {
+      cutSegmentsMm: cutSegments.map(s => shiftSeg(s, 'CUT')),
+      foldSegmentsMm: foldSegments.map(s => shiftSeg(s, 'FOLD')),
+      blankWidthMm,
+      blankHeightMm,
+      mmPerUnit: model.calibration?.mmPerUnit || 1,
+      cotaMmValue: model.calibration?.detectedCotaMM || null,
+      scaleSource: model.calibration?.source || 'repaired'
+    };
+    const rebuilt = buildDielineModelFromParsed(parsed);
+    return { model: rebuilt, report };
+  }
+
   // Rotate actual geometry so picking, export and editing share the same coordinates.
   function rotateDieline90(model) {
     if (!model) return model;
@@ -6612,7 +6898,11 @@
     isChamferFlap,
     parseSVGDieline,
     buildPlanarSubdivision,
+    buildDielineModelFromParsed,
     buildDielineModel,
+    inspectOpenEndpoints,
+    repairOpenEndpoints,
+    repairDielineModel,
     buildDielineModelFromPacdora,
     resizeDielineParametric,
     measureDimensionArrow,

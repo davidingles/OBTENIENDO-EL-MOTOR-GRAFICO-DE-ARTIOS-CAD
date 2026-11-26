@@ -1116,8 +1116,24 @@
       <option value="C8">C8 · 7,0 mm</option>
     </select></label>
     <p>Se guarda el troquel con su geometría actual. Elegir el cartón no modifica sus retranqueos ni tolerancias.</p>
+    <label id="library-model-overwrite-row" style="display:none;align-items:center;gap:8px;font-size:12.5px;margin:8px 0;cursor:pointer;color:var(--text-primary);">
+      <input id="library-model-overwrite" type="checkbox" />
+      <span>Sobreescribir el troquel existente en la biblioteca</span>
+    </label>
     <p id="library-model-status" role="status"></p>
     <div class="cad-import-actions"><button id="library-model-cancel" class="btn-outline">Cancelar</button><button id="library-model-save" class="btn-primary-blue">Añadir a biblioteca</button></div>
+  </dialog>
+
+  <dialog id="open-endpoints-dialog" class="cad-import-dialog" aria-labelledby="open-endpoints-title">
+    <h3 id="open-endpoints-title">Líneas sin conectar detectadas</h3>
+    <p id="open-endpoints-summary"></p>
+    <p style="font-size:12px;color:var(--text-secondary);margin-top:6px;">
+      Se recortará o prolongará cada extremo suelto hacia el trazado más cercano en su trayectoria. Si no alcanza ningún cruce, ese extremo quedará donde está.
+    </p>
+    <div class="cad-import-actions">
+      <button id="open-endpoints-keep" type="button" class="btn-outline">Abrir sin modificar</button>
+      <button id="open-endpoints-repair" type="button" class="btn-primary-blue">Reparar y abrir</button>
+    </div>
   </dialog>
 
   <!-- Modal accesible: Nueva Caja B1 (Largo, Ancho y Alto) -->

@@ -927,20 +927,101 @@
     if (state.activeTab === 'details') renderDetailsTabUI();
   }
 
+  function hasInteractiveRepairModal() {
+    if (typeof HTMLDialogElement === 'undefined') return false;
+    const dlg = document.getElementById('open-endpoints-dialog');
+    return Boolean(dlg && dlg instanceof HTMLDialogElement && typeof dlg.showModal === 'function');
+  }
+
+  function promptOpenEndpointsRepair(report) {
+    if (!report || !report.totalLoose || !hasInteractiveRepairModal()) {
+      return Promise.resolve(false);
+    }
+    const dialog = document.getElementById('open-endpoints-dialog');
+    const summary = document.getElementById('open-endpoints-summary');
+    const btnKeep = document.getElementById('open-endpoints-keep');
+    const btnRepair = document.getElementById('open-endpoints-repair');
+    if (summary) {
+      const parts = [];
+      if (report.cutLoose > 0) parts.push(`${report.cutLoose} de corte`);
+      if (report.foldLoose > 0) parts.push(`${report.foldLoose} de hendido`);
+      const detail = parts.length ? ` (${parts.join(' y ')})` : '';
+      let msg = `Se han detectado ${report.totalLoose} extremo${report.totalLoose === 1 ? '' : 's'} sin conectar${detail}.`;
+      if (report.repairableCount > 0) {
+        const actions = [];
+        if (report.extendCount > 0) actions.push(`${report.extendCount} prolongación${report.extendCount === 1 ? '' : 'es'}`);
+        if (report.trimCount > 0) actions.push(`${report.trimCount} recorte${report.trimCount === 1 ? '' : 's'}`);
+        msg += ` Se pueden reparar ${report.repairableCount} (${actions.join(', ')}).`;
+      }
+      if (report.unchangedCount > 0) {
+        msg += ` ${report.unchangedCount} sin cruce alcanzable quedará${report.unchangedCount === 1 ? '' : 'n'} donde está${report.unchangedCount === 1 ? '' : 'n'}.`;
+      }
+      msg += ' ¿Deseas proceder con la reparación antes de abrir el troquel?';
+      summary.textContent = msg;
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (value) => {
+        if (settled) return;
+        settled = true;
+        btnKeep.onclick = null;
+        btnRepair.onclick = null;
+        dialog.oncancel = null;
+        if (dialog.open && typeof dialog.close === 'function') dialog.close();
+        resolve(value);
+      };
+      btnKeep.onclick = () => done(false);
+      btnRepair.onclick = () => done(true);
+      dialog.oncancel = (ev) => { ev.preventDefault(); done(false); };
+      dialog.showModal();
+    });
+  }
+
+  function applyRepairedParsedSegments(parsed) {
+    const repaired = DielineEngine.repairOpenEndpoints(parsed.cutSegmentsMm, parsed.foldSegmentsMm);
+    return {
+      ...parsed,
+      cutSegmentsMm: repaired.cutSegments,
+      foldSegmentsMm: repaired.foldSegments
+    };
+  }
+
   function loadSVGString(svgString, fileName, animateIntro = false) {
     try {
-      modelRevision++;
+      const revision = ++modelRevision;
       state.svgText = svgString;
       state.activeFefcoEntry = null;
-    state.activeModelDisplayName = '';
-    state.isModelModified = false;
-    updateHeaderActiveModelUI();
+      state.activeModelDisplayName = '';
+      state.isModelModified = false;
+      updateHeaderActiveModelUI();
       const quickSel = document.getElementById('fefco-quick-select');
       if (quickSel) quickSel.value = '__SVG__';
 
-      const model = DielineEngine.buildDielineModel(svgString);
-      state.boardCode='C1';state.caliper=1.5;
-      applyNewDielineModel(model, fileName || 'troquel.svg', animateIntro, true);
+      const parsed = DielineEngine.parseSVGDieline(svgString);
+      const report = DielineEngine.inspectOpenEndpoints(parsed.cutSegmentsMm, parsed.foldSegmentsMm);
+
+      const finish = (shouldRepair) => {
+        if (revision !== modelRevision) return;
+        try {
+          const finalParsed = shouldRepair ? applyRepairedParsedSegments(parsed) : parsed;
+          const model = DielineEngine.buildDielineModelFromParsed(finalParsed);
+          state.boardCode = 'C1'; state.caliper = 1.5;
+          applyNewDielineModel(model, fileName || 'troquel.svg', animateIntro, true);
+          if (shouldRepair) {
+            state.isModelModified = true;
+            updateHeaderActiveModelUI();
+          }
+        } catch (err) {
+          console.error('Error procesando el archivo SVG:', err);
+          alert('Error al procesar el archivo SVG: ' + err.message);
+        }
+      };
+
+      if (report.totalLoose > 0 && hasInteractiveRepairModal()) {
+        promptOpenEndpointsRepair(report).then(finish);
+      } else {
+        finish(false);
+      }
     } catch (err) {
       console.error('Error procesando el archivo SVG:', err);
       alert('Error al procesar el archivo SVG: ' + err.message);
@@ -1010,7 +1091,22 @@
         state.svgText=fefcoEntry.svgText || '';
         state.boardCode=fefcoEntry.boardCode;
         state.caliper=UserLibrary.boardThicknessMm[fefcoEntry.boardCode]||1.5;
-        applyNewDielineModel(JSON.parse(JSON.stringify(fefcoEntry.geometry)),fefcoEntry.name,animateIntro);
+        let model = JSON.parse(JSON.stringify(fefcoEntry.geometry));
+        let repaired = false;
+        const report = DielineEngine.inspectOpenEndpoints(model.cutSegments, model.foldSegments);
+        if (report.totalLoose > 0 && hasInteractiveRepairModal()) {
+          const shouldRepair = await promptOpenEndpointsRepair(report);
+          if (revision !== modelRevision) return;
+          if (shouldRepair) {
+            model = DielineEngine.repairDielineModel(model).model;
+            repaired = true;
+          }
+        }
+        applyNewDielineModel(model, fefcoEntry.name, animateIntro, repaired);
+        if (repaired) {
+          state.isModelModified = true;
+          updateHeaderActiveModelUI();
+        }
         return;
       }
       const fullEntry = await resolveFullPacdoraModel(fefcoEntry);
@@ -1036,10 +1132,24 @@
         quickSel.value = String(fullEntry.num);
       }
 
-      const model = DielineEngine.buildDielineModelFromPacdora(fullEntry.knifeData, fullEntry);
+      let model = DielineEngine.buildDielineModelFromPacdora(fullEntry.knifeData, fullEntry);
+      let repaired = false;
+      const report = DielineEngine.inspectOpenEndpoints(model.cutSegments, model.foldSegments);
+      if (report.totalLoose > 0 && hasInteractiveRepairModal()) {
+        const shouldRepair = await promptOpenEndpointsRepair(report);
+        if (revision !== modelRevision) return;
+        if (shouldRepair) {
+          model = DielineEngine.repairDielineModel(model).model;
+          repaired = true;
+        }
+      }
       const codePrefix = fullEntry.fefcoCode ? `${fullEntry.fefcoCode} (#${fullEntry.num})` : `#${fullEntry.num}`;
       const title = `${codePrefix} · ${nombreModelo(fullEntry)}`;
-      applyNewDielineModel(model, title, animateIntro);
+      applyNewDielineModel(model, title, animateIntro, repaired);
+      if (repaired) {
+        state.isModelModified = true;
+        updateHeaderActiveModelUI();
+      }
     } catch (err) {
       console.error('Error cargando modelo del catálogo:', err);
       alert('Error al construir el modelo: ' + err.message);
@@ -6210,47 +6320,80 @@
   function initUserLibraryUI(){
     const dialog=document.getElementById('add-library-dialog'),status=document.getElementById('library-model-status');
     const profile=document.getElementById('library-model-board');
+    const nameInput=document.getElementById('library-model-name');
+    const overwriteRow=document.getElementById('library-model-overwrite-row');
+    const overwriteChk=document.getElementById('library-model-overwrite');
+    const saveBtn=document.getElementById('library-model-save');
     const showProfile=()=>{
       const mm=UserLibrary.boardThicknessMm[profile.value];
       status.textContent='Espesor: '+String(mm).replace('.',',')+' mm. Se conservan los retranqueos y tolerancias del archivo.';
+    };
+    const syncOverwriteUI=()=>{
+      const existing=UserLibrary.findByName?UserLibrary.findByName(userLibraryModels,nameInput?.value||''):null;
+      if(overwriteRow?.style) overwriteRow.style.display=existing?'flex':'none';
+      if(!existing && overwriteChk) overwriteChk.checked=false;
+      if(saveBtn) saveBtn.textContent=(existing && overwriteChk?.checked)?'Sobreescribir en biblioteca':'Añadir a biblioteca';
     };
     const openAddLibraryModal=()=>{
       if(!state.dieline) {
         alert('No hay ningún troquel cargado para añadir a la biblioteca.');
         return;
       }
-      document.getElementById('library-model-name').value=(state.fileName||'Mi troquel').replace(/\.[^.]+$/,'').slice(0,100);
-      profile.value=state.boardCode||'C1';showProfile();dialog.showModal();
+      if(nameInput) nameInput.value=(state.fileName||'Mi troquel').replace(/\.[^.]+$/,'').slice(0,100);
+      profile.value=state.boardCode||'C1';
+      if(overwriteChk) overwriteChk.checked=false;
+      syncOverwriteUI();
+      showProfile();dialog.showModal();
     };
     const btnAddLib = document.getElementById('btn-add-library');
     if (btnAddLib) btnAddLib.onclick = openAddLibraryModal;
     const btnHeaderAdd = document.getElementById('btn-header-add-die');
     if (btnHeaderAdd) btnHeaderAdd.onclick = openAddLibraryModal;
     profile.onchange=showProfile;
+    if(nameInput) nameInput.oninput=syncOverwriteUI;
+    if(overwriteChk) overwriteChk.onchange=syncOverwriteUI;
     document.getElementById('library-model-cancel').onclick=()=>dialog.close();
-    document.getElementById('library-model-save').onclick=async()=>{
-      const button=document.getElementById('library-model-save');button.disabled=true;
+    saveBtn.onclick=async()=>{
+      const button=saveBtn;button.disabled=true;
       try{
         await userLibraryReady;
         finishPartEditing();
-        const name=document.getElementById('library-model-name').value;
+        const name=nameInput.value;
         const existing=UserLibrary.findByName?UserLibrary.findByName(userLibraryModels,name):null;
-        if(existing) throw new Error('Ese nombre ya existe. Usa otro nombre para guardar una copia; el modelo original se conserva.');
+        const shouldOverwrite=Boolean(existing && overwriteChk?.checked);
+        if(existing && !shouldOverwrite) {
+          syncOverwriteUI();
+          throw new Error('Ese nombre ya existe. Usa otro nombre o marca «Sobreescribir el troquel existente» para reemplazarlo.');
+        }
         const thumbnail3dDataUrl=captureCurrent3DCanvasThumbnail();
         const item=UserLibrary.create(
           name,
           profile.value,
           state.dieline,
           state.fileName,
-          undefined,
+          shouldOverwrite ? existing.num : undefined,
           {thumbnail3dDataUrl}
         );
-        if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke('add_library_model',{model:item});
-        else if (/^https?:$/.test(window.location.protocol)) {
-          const response = await fetch('/api/library-models', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)});
-          if (!response.ok) throw new Error((await response.json()).error || 'No se pudo guardar el modelo en el proyecto.');
-        } else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
-        userLibraryModels.unshift(item);
+        if(shouldOverwrite){
+          if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke('replace_library_model',{model:item});
+          else if (/^https?:$/.test(window.location.protocol)) {
+            const response = await fetch('/api/library-models', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)});
+            if (!response.ok) throw new Error((await response.json()).error || 'No se pudo sobreescribir el modelo en el proyecto.');
+          } else {
+            const nextList = userLibraryModels.map(m => Number(m.num) === Number(item.num) ? item : m);
+            window.localStorage.setItem(USER_LIBRARY_KEY, JSON.stringify(nextList));
+          }
+          const idx = userLibraryModels.findIndex(m => Number(m.num) === Number(item.num));
+          if (idx >= 0) userLibraryModels[idx] = item;
+          else userLibraryModels.unshift(item);
+        } else {
+          if(window.__TAURI__?.core?.invoke) await window.__TAURI__.core.invoke('add_library_model',{model:item});
+          else if (/^https?:$/.test(window.location.protocol)) {
+            const response = await fetch('/api/library-models', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)});
+            if (!response.ok) throw new Error((await response.json()).error || 'No se pudo guardar el modelo en el proyecto.');
+          } else window.localStorage.setItem(USER_LIBRARY_KEY,JSON.stringify([item,...userLibraryModels]));
+          userLibraryModels.unshift(item);
+        }
         catalogPreviewCache.delete(Number(item.num));
         state.activeFefcoEntry=item;state.fileName=item.name;
         setHeaderActiveModel(item.name, false);
@@ -6864,17 +7007,27 @@
         select.value=group.role;roles[group.id]=group.role;select.onchange=()=>{roles[group.id]=select.value;};row.append(title,select);list.appendChild(row);
       }
       document.getElementById('cad-import-cancel').onclick=()=>dialog.close();
-      document.getElementById('cad-import-apply').onclick=()=>{
+      document.getElementById('cad-import-apply').onclick=async()=>{
         try{
           const svg=CadIO.toSvg(cad,roles,Number(document.getElementById('cad-unit-scale').value));
-          const model=DielineEngine.buildDielineModel(svg);
+          const parsed=DielineEngine.parseSVGDieline(svg);
+          const report=DielineEngine.inspectOpenEndpoints(parsed.cutSegmentsMm,parsed.foldSegmentsMm);
+          let shouldRepair=false;
+          if(report.totalLoose>0 && hasInteractiveRepairModal()){
+            dialog.close();
+            shouldRepair=await promptOpenEndpointsRepair(report);
+          }
+          const finalParsed=shouldRepair?applyRepairedParsedSegments(parsed):parsed;
+          const model=DielineEngine.buildDielineModelFromParsed(finalParsed);
           if(!model.faces.length)throw new Error('No se encontraron paneles cerrados. Revisa los cortes y los hendidos.');
           model.boxDimensionsMm=DielineEngine.dimensionsFromBase(model);
           state.svgText=svg;state.activeFefcoEntry=null;
           state.boardCode='C1';state.caliper=1.5;
-          applyNewDielineModel(model,filename,true,true);dialog.close();
+          applyNewDielineModel(model,filename,true,true);
+          if(shouldRepair){state.isModelModified=true;updateHeaderActiveModelUI();}
+          if(dialog.open)dialog.close();
           if(model.hinges.length<model.faces.length-1)document.getElementById('param-sync-status').textContent='DXF abierto · hay paneles sin unión: revisa los hendidos';
-        }catch(error){status.textContent=error.message;}
+        }catch(error){if(!dialog.open)dialog.showModal();status.textContent=error.message;}
       };
       dialog.showModal();
     }catch(error){alert('No se pudo abrir el DXF: '+error.message);}

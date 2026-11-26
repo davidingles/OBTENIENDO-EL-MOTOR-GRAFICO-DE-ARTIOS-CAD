@@ -18,4 +18,13 @@ function add(directory,model){
   try{fs.writeFileSync(temporary,bytes,{flag:'wx'});fs.linkSync(temporary,destination);}
   finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
 }
-module.exports={read,add};
+function replace(directory,model){
+  Library.validate(model);const bytes=JSON.stringify(model,null,2)+'\n';
+  if(Buffer.byteLength(bytes)>8000000)throw Error('El modelo supera 8 MB.');
+  fs.mkdirSync(directory,{recursive:true});
+  const destination=path.join(directory,model.num+'.json');
+  const temporary=destination+'.'+process.pid+'.'+Date.now()+'.tmp';
+  try{fs.writeFileSync(temporary,bytes,{flag:'wx'});fs.renameSync(temporary,destination);}
+  finally{if(fs.existsSync(temporary))fs.unlinkSync(temporary);}
+}
+module.exports={read,add,replace};

@@ -138,6 +138,45 @@ async fn add_library_model(app: tauri::AppHandle, model: Value) -> Result<(), St
     }).await.map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn replace_library_model(app: tauri::AppHandle, model: Value) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let directory = match repository_library() {
+            Some(directory) => directory,
+            None => app.path().app_data_dir().map_err(|e| e.to_string())?.join("library"),
+        };
+        store_library_model_overwrite(&directory, &model)
+    }).await.map_err(|e| e.to_string())?
+}
+
+fn store_library_model_overwrite(directory: &std::path::Path, model: &Value) -> Result<(), String> {
+    let id = validate_library_model(&model)?;
+    let bytes = serde_json::to_vec(&model).map_err(|e| e.to_string())?;
+    if bytes.len() > 8_000_000 {
+        return Err("El modelo supera el límite de 8 MB".into());
+    }
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let destination = directory.join(format!("{}.json", id));
+    let temporary = directory.join(format!("{}.replace.tmp", id));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&temporary)
+        .map_err(|e| e.to_string())?;
+    let written = file.write_all(&bytes).and_then(|_| file.sync_all());
+    drop(file);
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    let renamed = std::fs::rename(&temporary, &destination).map_err(|e| e.to_string());
+    if renamed.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    renamed
+}
+
 fn store_library_model(directory: &std::path::Path, model: &Value) -> Result<(), String> {
     let id = validate_library_model(&model)?;
     let bytes = serde_json::to_vec(&model).map_err(|e| e.to_string())?;
@@ -341,7 +380,8 @@ fn main() {
             save_project,
             load_projects,
             load_library_models,
-            add_library_model
+            add_library_model,
+            replace_library_model
         ])
         .run(tauri::generate_context!())
         .expect("No se pudo iniciar Troqueles Vicente");
